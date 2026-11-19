@@ -17,6 +17,7 @@ import (
 	"pier/internal/board"
 	"pier/internal/deploy"
 	"pier/internal/hook"
+	"pier/internal/requests"
 	"pier/internal/store"
 )
 
@@ -26,7 +27,8 @@ type API struct {
 	Deployer *deploy.Deployer
 	Token    string // the server's own token, from pierd token; still accepted for the CLI
 	Log      *slog.Logger
-	Web      http.Handler // the dashboard's files; nil serves the API only
+	Web      http.Handler  // the dashboard's files; nil serves the API only
+	Requests *requests.Log // every request the sites answered; nil keeps none
 }
 
 // BoardRow is a board row with the address's full URL.
@@ -53,6 +55,8 @@ func (a *API) Public() http.Handler {
 	mux.Handle("POST /api/projects/{project}/promote", a.auth(http.HandlerFunc(a.promote)))
 	mux.Handle("POST /api/projects/{project}/redeploy", a.auth(http.HandlerFunc(a.redeploy)))
 	mux.Handle("GET /api/projects/{project}/variables", a.auth(http.HandlerFunc(a.variables)))
+	mux.Handle("GET /api/projects/{project}/requests", a.auth(http.HandlerFunc(a.requestLines)))
+	mux.Handle("GET /api/projects/{project}/requests/chart", a.auth(http.HandlerFunc(a.requestChart)))
 	mux.Handle("PUT /api/projects/{project}/variables", a.auth(http.HandlerFunc(a.setVariable)))
 	mux.Handle("POST /api/projects/{project}/variables/delete", a.auth(http.HandlerFunc(a.deleteVariable)))
 	mux.Handle("POST /api/projects/{project}/variables/reveal", a.auth(http.HandlerFunc(a.revealVariable)))

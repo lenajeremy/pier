@@ -1316,3 +1316,188 @@ select.input {
   display: flex;
   gap: 6px;
 }
+
+/* ---- Logs (H1): the Range control, Requests over time, the Log viewer -- */
+
+.range {
+  display: flex;
+  padding: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--d-well);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  flex: none;
+}
+.range button {
+  display: flex;
+  align-items: center;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: var(--radius-pill);
+  font-family: var(--d-mono);
+  font-size: 12.5px;
+  color: var(--d-muted);
+}
+.range button:hover {
+  color: var(--d-text);
+}
+.range button.on {
+  background: var(--d-text);
+  color: var(--d-bg);
+  font-weight: 500;
+}
+.requests-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px 20px 16px;
+}
+.chart-row {
+  display: flex;
+  gap: 12px;
+}
+.chart-stat {
+  width: 150px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.chart-stat .value {
+  font-size: 20px;
+  line-height: 28px;
+}
+.chart-axis {
+  width: 32px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: flex-end;
+}
+.chart-plot {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+  cursor: crosshair;
+}
+.chart-grid {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+.chart-grid > div {
+  height: 1px;
+  background: var(--d-line-faint);
+}
+.chart-grid > div.base {
+  background: rgba(255, 255, 255, 0.14);
+}
+.chart-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.crosshair {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: rgba(255, 255, 255, 0.22);
+  pointer-events: none;
+}
+.marker {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  margin: -5px 0 0 -5px;
+  border-radius: 50%;
+  border: 2px solid #0e121c;
+  pointer-events: none;
+}
+.chart-tip {
+  position: absolute;
+  top: 8px;
+  width: 170px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--d-tooltip);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+  z-index: 2;
+}
+.chart-ticks {
+  flex: 1;
+  position: relative;
+  height: 19px;
+}
+.chart-ticks > span {
+  position: absolute;
+  top: 0;
+  white-space: nowrap;
+}
+.log-viewer {
+  overflow: hidden;
+}
+.following {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  line-height: 19px;
+}
+.following i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--d-teal);
+}
+.requests-log {
+  max-height: 520px;
+}
+.requests-log .line {
+  display: flex;
+  gap: 14px;
+}
+.requests-log .when {
+  color: var(--d-note);
+  flex: none;
+}
+.requests-log .method {
+  width: 44px;
+  flex: none;
+  color: var(--d-muted);
+}
+.requests-log .code {
+  width: 40px;
+  flex: none;
+}
+.requests-log .code.s2 {
+  color: var(--d-teal);
+}
+.requests-log .code.s3 {
+  color: var(--d-muted);
+}
+.requests-log .code.s4,
+.requests-log .code.s5 {
+  color: var(--d-red-text);
+}
+.requests-log .text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.requests-log .line.error .text {
+  color: var(--d-text);
+}
+.requests-log .took {
+  color: var(--d-note);
+  flex: none;
+}

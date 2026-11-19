@@ -23,6 +23,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -33,6 +34,7 @@ import (
 	"pier/internal/deploy"
 	"pier/internal/gitssh"
 	"pier/internal/hook"
+	"pier/internal/requests"
 	"pier/internal/router"
 	"pier/internal/secrets"
 	"pier/internal/store"
@@ -161,7 +163,7 @@ func serve(args []string) int {
 		Secrets: box,
 		Domain:  *domain, ProductionBranch: *prod, Runner: runner, Log: log, BuildTimeout: 15 * time.Minute,
 		PierHost: *address, PierUpstream: dialable(*apiAddr),
-		Router: router.Caddy{Admin: *caddyAdmin, Listen: []string{*httpAddr}, HTTPS: *https},
+		Router: router.Caddy{Admin: *caddyAdmin, Listen: []string{*httpAddr}, HTTPS: *https, AccessLog: paths.accessSock},
 		URL: func(host string) string {
 			if port == "" || (scheme == "http" && port == "80") || (scheme == "https" && port == "443") {
 				return scheme + "://" + host
@@ -178,7 +180,19 @@ func serve(args []string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	a := &api.API{Store: st, Deployer: dep, Token: tok, Log: log, Web: web.Handler()}
+	reqs, err := requests.Open(paths.requestsDB, projectOf(st), log)
+	if err != nil {
+		log.Error("open the requests database", "err", err)
+		return 1
+	}
+	defer reqs.Close()
+	go func() {
+		if err := reqs.Listen(ctx, paths.accessSock); err != nil {
+			log.Error("request log socket", "err", err)
+		}
+	}()
+
+	a := &api.API{Store: st, Deployer: dep, Token: tok, Log: log, Web: web.Handler(), Requests: reqs}
 	go func() {
 		t := time.NewTicker(time.Hour)
 		defer t.Stop()
@@ -257,14 +271,38 @@ pierd is running
 
 type paths struct {
 	db, repos, deployments, logs, sources, tmp, token, keys, hostKey, socket, secretKey string
+	requestsDB, accessSock                                                              string
 }
 
 func layout(data string) paths {
 	j := func(p string) string { return filepath.Join(data, p) }
 	return paths{
 		db: j("pier.db"), repos: j("repos"), deployments: j("deployments"), logs: j("logs"), sources: j("sources"), tmp: j("tmp"),
-		secretKey: j("secret.key"),
-		token:     j("api.token"), keys: j("authorized_keys"), hostKey: j("ssh_host_ed25519_key"), socket: j("pierd.sock"),
+		secretKey: j("secret.key"), requestsDB: j("requests.db"), accessSock: j("access.sock"),
+		token: j("api.token"), keys: j("authorized_keys"), hostKey: j("ssh_host_ed25519_key"), socket: j("pierd.sock"),
+	}
+}
+
+// projectOf finds which project a deployment belongs to, remembering the
+// answers: the request log asks for every request.
+func projectOf(st *store.Store) func(string) string {
+	var mu sync.Mutex
+	known := map[string]string{}
+	return func(id string) string {
+		mu.Lock()
+		p, ok := known[id]
+		mu.Unlock()
+		if ok {
+			return p
+		}
+		d, err := st.Deployment(context.Background(), id)
+		if err != nil {
+			return ""
+		}
+		mu.Lock()
+		known[id] = d.Project
+		mu.Unlock()
+		return d.Project
 	}
 }
 

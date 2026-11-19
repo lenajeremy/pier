@@ -42,7 +42,10 @@ type Caddy struct {
 	Admin  string   // admin API base URL, e.g. http://127.0.0.1:2019
 	Listen []string // where sites are served, e.g. [":8088"] in development
 	HTTPS  bool     // false in development: plain HTTP, no certificates
-	Client *http.Client
+	// AccessLog is a unix socket pierd listens on; Caddy streams every
+	// request there as JSON. Empty keeps no request log.
+	AccessLog string
+	Client    *http.Client
 }
 
 // Config builds Caddy's complete JSON config for these routes.
@@ -83,6 +86,18 @@ func (c Caddy) Config(routes []Route) ([]byte, error) {
 	cfg := map[string]any{
 		"admin": map[string]any{"listen": u.Host},
 		"apps":  map[string]any{"http": map[string]any{"servers": map[string]any{"pier": server}}},
+	}
+	if c.AccessLog != "" {
+		server["logs"] = map[string]any{"default_logger_name": "pier_access"}
+		cfg["logging"] = map[string]any{"logs": map[string]any{
+			"pier_access": map[string]any{
+				// soft_start: Caddy serves even while pierd isn't listening.
+				"writer":  map[string]any{"output": "net", "address": "unix/" + c.AccessLog, "soft_start": true},
+				"encoder": map[string]any{"format": "json"},
+				"include": []string{"http.log.access.pier_access"},
+			},
+			"default": map[string]any{"exclude": []string{"http.log.access.pier_access"}},
+		}}
 	}
 	return json.MarshalIndent(cfg, "", "  ")
 }

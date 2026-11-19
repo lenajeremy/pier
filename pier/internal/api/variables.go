@@ -55,7 +55,9 @@ func (a *API) variables(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, n := range order {
 		vs := byName[n]
-		sort.Slice(vs, func(i, j int) bool { return vs[i].Scope == store.TargetProduction && vs[j].Scope != store.TargetProduction })
+		sort.Slice(vs, func(i, j int) bool {
+			return vs[i].Scope == store.TargetProduction && vs[j].Scope != store.TargetProduction
+		})
 		if len(vs) == 2 && a.sameValue(name, vs[0], vs[1]) {
 			e := varEntry{Name: n, Scopes: []string{store.TargetProduction, store.TargetPreview}, UpdatedAt: vs[0].UpdatedAt}
 			if vs[1].UpdatedAt.After(e.UpdatedAt) {

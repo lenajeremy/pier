@@ -203,6 +203,15 @@ curl -fsS -b "$JAR" "$API/api/projects/greet/variables" | grep -q '"production":
 cd "$WORK"
 echo "variables are scoped, kept out of the log, and a redeploy picks up a change"
 
+step "every request a site answers is in its Logs"
+for p in / /missing-page; do curl -s -o /dev/null --resolve "greet.$DOMAIN:$HTTP_PORT:127.0.0.1" "http://greet.$DOMAIN:$HTTP_PORT$p"; done
+sleep 2.5 # pierd writes requests down once a second
+curl -fsS -b "$JAR" "$API/api/projects/greet/requests" | grep -q '"path":"/missing-page"' || fail "a request didn't reach the Logs"
+curl -fsS -b "$JAR" "$API/api/projects/greet/requests?status=errors" | grep -q '"status":404' || fail "the errors filter lost a 404"
+curl -fsS -b "$JAR" "$API/api/projects/greet/requests/chart" | grep -Eq '"errors":[1-9]' || fail "the chart didn't count the error"
+curl -fsS -b "$JAR" "$API/api/projects/docs/requests" | grep -q '/missing-page' && fail "one project's requests showed in another's Logs"
+echo "requests are kept per project, filtered and charted"
+
 step "pierd reset-password signs everyone out"
 echo "another long password" | "$PIERD" reset-password -data "$DATA" -password-stdin > /dev/null
 code=$(curl -s -o /dev/null -w '%{http_code}' -b "$JAR" "$API/api/projects")

@@ -13,6 +13,7 @@ import { Approve } from './pages/Approve'
 import { Members } from './pages/Members'
 import { ProjectSettings } from './pages/ProjectSettings'
 import { Variables } from './pages/Variables'
+import { Logs } from './pages/Logs'
 
 type Auth = { state: 'loading' } | { state: 'out'; address: string } | { state: 'in'; session: Session }
 
@@ -49,7 +50,6 @@ const globals: Record<string, [string, string]> = {
 
 const projectTabs: Record<string, [string, string]> = {
   domains: ['Domains', 'Custom domains, with the DNS records to add and a live check of each one.'],
-  logs: ['Logs', 'Requests to the site, live, with a chart of requests and errors over time.'],
 }
 
 function Dashboard({ session }: { session: Session }) {
@@ -79,6 +79,8 @@ function Signed({ session, path, now }: { session: Session; path: string; now: n
         {(project, reload) =>
           deployment ? (
             <DeploymentPage project={name} id={deployment.id} now={now} />
+          ) : tab?.tab === 'logs' ? (
+            <Logs project={name} address={project.address} />
           ) : tab?.tab === 'variables' ? (
             <Variables project={name} now={now} />
           ) : tab?.tab === 'settings' ? (
