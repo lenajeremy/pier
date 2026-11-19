@@ -4,6 +4,7 @@ import { ago, plural, seconds, short, size } from '../lib/format'
 import { Link, navigate } from '../lib/router'
 import { Branch, ChevronLeft, ChevronRight, Search, SortDown } from '../components/Icons'
 import { Badge, Empty } from '../components/ui'
+import { Flaps } from '../flap/Flaps'
 
 type Filter = 'all' | 'production' | 'previews'
 const PAGE = 20
@@ -198,16 +199,26 @@ function AddressRow({ kind, address, fallbackHost, now, prodBranch }: {
           </span>
         )}
         {d && (
-          <span className="t-note">
-            <span
-              className="mono"
-              style={{ cursor: 'pointer' }}
-              onClick={() => navigate(`/projects/${d.project}/deployments/${d.id}`)}
-            >
-              {d.id}
-            </span>{' '}
-            from {d.branch}
-            {d.message ? `: ${d.message}` : ''}
+          <span className="t-note serving">
+            {kind === 'production' ? (
+              // Production's deployment is set in tiles: a deploy, promote or
+              // rollback flips only this, while the address stays put.
+              <button className="serving-id" onClick={() => navigate(`/projects/${d.project}/deployments/${d.id}`)}>
+                <Flaps size="sm" columns={[{ width: 6 }]} values={[d.id]} label={`Deployment ${d.id}`} />
+              </button>
+            ) : (
+              <span
+                className="mono"
+                style={{ cursor: 'pointer' }}
+                onClick={() => navigate(`/projects/${d.project}/deployments/${d.id}`)}
+              >
+                {d.id}
+              </span>
+            )}
+            <span>
+              from {d.branch}
+              {d.message ? `: ${d.message}` : ''}
+            </span>
           </span>
         )}
       </div>

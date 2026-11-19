@@ -709,7 +709,7 @@
   align-items: baseline;
 }
 .project-row .status {
-  width: 110px;
+  width: 190px;
   flex: none;
   display: flex;
   align-items: center;
@@ -757,6 +757,14 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.address-row .serving {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.serving-id {
+  display: flex;
 }
 .address-row .where a:hover {
   text-decoration: underline;
@@ -948,8 +956,10 @@ a.t-row:hover,
 }
 .details-row {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 20px;
+  grid-template-columns: repeat(4, auto);
+  justify-content: start;
+  column-gap: 40px;
+  row-gap: 18px;
 }
 .detail {
   display: flex;

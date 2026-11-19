@@ -122,8 +122,8 @@ function ProjectPage({ name, path, visit, children }: {
 }) {
   const { data, error } = useData<Project>(
     `/api/projects/${encodeURIComponent(name)}`,
-    (p) => p.deployments.some((d) => d.status === 'building'),
-    2000,
+    () => true,
+    3000,
   )
   if (error) {
     return (

@@ -6,6 +6,7 @@ import { ago, exact, plural, seconds, short, size } from '../lib/format'
 import { Link } from '../lib/router'
 import * as I from '../components/Icons'
 import { deploymentStatus } from '../components/ui'
+import { StatusFlaps } from '../flap/Flaps'
 
 type Detail = { deployment: Deployment; addresses: Address[] }
 
@@ -57,10 +58,7 @@ export function DeploymentPage({ project, id, session, now }: { project: string;
                 <span title={exact(d.created_at)}>{ago(d.created_at, now)}</span>
               </Field>
               <Field label="Status">
-                <span className="line">
-                  <i className={'swatch ' + st.swatch} />
-                  {st.word}
-                </span>
+                <StatusFlaps status={st.swatch} word={st.word} />
               </Field>
               <Field label="Duration">
                 {building ? `${seconds(now - new Date(d.created_at).getTime())} so far` : seconds(d.build_ms)}

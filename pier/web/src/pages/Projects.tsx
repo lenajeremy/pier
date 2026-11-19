@@ -4,6 +4,7 @@ import { Link } from '../lib/router'
 import { Branch, Check } from '../components/Icons'
 import { ProjectMark } from '../components/ProjectMark'
 import { statusWord } from '../components/ui'
+import { StatusFlaps } from '../flap/Flaps'
 
 // Projects is the home: every project with what it's serving, or, before
 // the first deploy, the getting-started checklist (B2).
@@ -57,8 +58,11 @@ function ProjectRow({ p, now }: { p: ProjectSummary; now: number }) {
         )}
       </div>
       <span className="status">
-        <i className={'swatch ' + p.status} />
-        {statusWord[p.status]}
+        {p.status === 'none' ? (
+          <span className="t-caption t-muted">{statusWord.none}</span>
+        ) : (
+          <StatusFlaps status={p.status} word={statusWord[p.status]} />
+        )}
       </span>
     </Link>
   )
