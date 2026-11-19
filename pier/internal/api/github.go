@@ -30,7 +30,7 @@ type pendingManifest struct {
 
 func (a *API) githubRoutes(m *http.ServeMux) {
 	for route, fn := range map[string]http.HandlerFunc{
-		"GET /api/github": a.ghInfo, "POST /api/github/manifest": a.ghManifest, "GET /github/callback": a.ghCallback,
+		"GET /api/github": a.ghInfo, "GET /api/github/activity": a.ghActivity, "POST /api/github/manifest": a.ghManifest, "GET /github/callback": a.ghCallback,
 		"GET /api/github/repositories": a.ghList, "POST /api/github/import": a.ghImport,
 		"POST /api/github/jobs/{id}/resume": a.ghResume,
 	} {
@@ -171,16 +171,54 @@ func (a *API) ghList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if app.ID == 0 {
-		writeJSON(w, 200, map[string]any{"repositories": []githubRepo{}})
+		writeJSON(w, 200, githubCatalog{Repositories: []githubRepo{}, Installations: []githubInstallation{}})
 		return
 	}
-	repos, err := a.ghRepos(r.Context(), app)
+	catalog, err := a.ghRepos(r.Context(), app)
 	if err != nil {
 		githubError(w, 502, err.Error())
 		return
 	}
-	writeJSON(w, 200, map[string]any{"repositories": repos})
+	writeJSON(w, 200, catalog)
 }
+
+// ghActivity reads only App and delivery metadata, never delivery bodies.
+func (a *API) ghActivity(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	app, err := a.loadApp(ctx)
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	if app.ID == 0 {
+		githubError(w, 404, "Connect GitHub first.")
+		return
+	}
+	jwt, err := app.jwt()
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	var meta struct {
+		Created string `json:"created_at"`
+	}
+	if err := a.ghJSON(ctx, "GET", "/app", jwt, nil, &meta); err != nil {
+		githubError(w, 502, err.Error())
+		return
+	}
+	var deliveries []struct {
+		At       string  `json:"delivered_at"`
+		Event    string  `json:"event"`
+		Status   int     `json:"status_code"`
+		Duration float64 `json:"duration"`
+	}
+	if err := a.ghJSON(ctx, "GET", "/app/hook/deliveries?per_page=8", jwt, nil, &deliveries); err != nil {
+		githubError(w, 502, err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"created_at": meta.Created, "deliveries": nonNil(deliveries)})
+}
+
 func (a *API) ghImport(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name               string

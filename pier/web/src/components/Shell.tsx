@@ -26,7 +26,9 @@ type Props = {
 // Shell is the sidebar and the content beside it: the sidebar answers
 // "which project", the project's tabs answer "which part of it".
 export function Shell({ session, projects, path, project, children }: Props) {
+  const [menuOpen, setMenuOpen] = useState(false)
   const [query, setQuery] = useState('')
+  useEffect(() => setMenuOpen(false), [path])
   const search = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -45,7 +47,16 @@ export function Shell({ session, projects, path, project, children }: Props) {
 
   return (
     <div className="app">
-      <aside className="sidebar">
+      <button
+        className="mobile-nav-toggle"
+        aria-expanded={menuOpen}
+        aria-controls="server-navigation"
+        onClick={() => setMenuOpen(!menuOpen)}
+      >
+        <I.Mark size={16} />
+        {menuOpen ? 'Close menu' : 'Menu'}
+      </button>
+      <aside id="server-navigation" className={'sidebar' + (menuOpen ? ' mobile-open' : '')}>
         <Switcher session={session} projects={projects} project={project} />
         <label className="side-search">
           <I.Search />

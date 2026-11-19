@@ -1,4 +1,5 @@
-import { GitHubImport, Integrations } from './pages/GitHub'
+import { GitHubImport } from './pages/GitHub'
+import { Integrations } from './pages/Integrations'
 import { useCallback, useEffect, useState } from 'react'
 import { api, ApiError, type Project, type ProjectSummary, type Session } from './lib/api'
 import { useData, useNow } from './lib/data'

@@ -28,7 +28,24 @@ type githubApp struct {
 	Secret string `json:"webhook_secret"`
 	Hook   string `json:"hook"`
 }
+type githubInstallation struct {
+	ID      int64 `json:"id"`
+	Account struct {
+		Login string `json:"login"`
+		Type  string `json:"type"`
+	} `json:"account"`
+	URL       string  `json:"html_url"`
+	Suspended *string `json:"suspended_at,omitempty"`
+}
+
+type githubCatalog struct {
+	Repositories  []githubRepo         `json:"repositories"`
+	Installations []githubInstallation `json:"installations"`
+}
+
 type githubRepo struct {
+	Language     string `json:"language"`
+	PushedAt     string `json:"pushed_at"`
 	ID           int64  `json:"id"`
 	Name         string `json:"full_name"`
 	Branch       string `json:"default_branch"`
@@ -131,40 +148,39 @@ func (a *API) ghToken(ctx context.Context, app githubApp, install, repo int64) (
 	}
 	return out.Token, err
 }
-func (a *API) ghRepos(ctx context.Context, app githubApp) ([]githubRepo, error) {
+func (a *API) ghRepos(ctx context.Context, app githubApp) (githubCatalog, error) {
+	catalog := githubCatalog{Repositories: []githubRepo{}, Installations: []githubInstallation{}}
 	jwt, err := app.jwt()
 	if err != nil {
-		return nil, err
+		return catalog, err
 	}
-	repos := []githubRepo{}
+
 	for page := 1; ; page++ {
-		var installs []struct {
-			ID        int64
-			Suspended *string `json:"suspended_at"`
-		}
+		var installs []githubInstallation
 		if err := a.ghJSON(ctx, "GET", fmt.Sprintf("/app/installations?per_page=100&page=%d", page), jwt, nil, &installs); err != nil {
-			return nil, err
+			return catalog, err
 		}
 		for _, inst := range installs {
 			if inst.Suspended != nil {
 				continue
 			}
+			catalog.Installations = append(catalog.Installations, inst)
 			token, err := a.ghToken(ctx, app, inst.ID, 0)
 			if err != nil {
-				return nil, err
+				return catalog, err
 			}
 			for p := 1; ; p++ {
 				var list struct{ Repositories []githubRepo }
 				if err := a.ghJSON(ctx, "GET", fmt.Sprintf("/installation/repositories?per_page=100&page=%d", p), token, nil, &list); err != nil {
-					return nil, err
+					return catalog, err
 				}
 				for _, r := range list.Repositories {
 					r.Installation = inst.ID
 					r.Project, err = a.Store.GitHubProject(ctx, r.ID)
 					if err != nil {
-						return nil, err
+						return catalog, err
 					}
-					repos = append(repos, r)
+					catalog.Repositories = append(catalog.Repositories, r)
 				}
 				if len(list.Repositories) < 100 {
 					break
@@ -175,7 +191,7 @@ func (a *API) ghRepos(ctx context.Context, app githubApp) ([]githubRepo, error) 
 			break
 		}
 	}
-	return repos, nil
+	return catalog, nil
 }
 
 func (a *API) ghRepo(ctx context.Context, token string, id int64) (githubRepo, error) {
