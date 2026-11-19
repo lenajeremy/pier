@@ -35,6 +35,7 @@ import (
 	"pier/internal/hook"
 	"pier/internal/router"
 	"pier/internal/store"
+	"pier/internal/web"
 )
 
 func main() {
@@ -46,6 +47,10 @@ func main() {
 	switch cmd {
 	case "serve":
 		os.Exit(serve(args))
+	case "init":
+		os.Exit(initCmd(args))
+	case "reset-password":
+		os.Exit(resetPassword(args))
 	case "hook":
 		os.Exit(hook.Run(os.Stdin, os.Stdout))
 	case "keys":
@@ -53,9 +58,14 @@ func main() {
 	case "token":
 		os.Exit(token(args))
 	default:
-		fmt.Fprintf(os.Stderr, "pierd: unknown command %q (serve, keys, token)\n", cmd)
+		fmt.Fprintf(os.Stderr, "pierd: unknown command %q (serve, init, reset-password, keys, token)\n", cmd)
 		os.Exit(2)
 	}
+}
+
+// signalContext is cancelled by Ctrl-C or SIGTERM.
+func signalContext() (context.Context, context.CancelFunc) {
+	return signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 }
 
 func env(key, def string) string {
@@ -72,7 +82,8 @@ func dataFlag(fs *flag.FlagSet) *string {
 func serve(args []string) int {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	data := dataFlag(fs)
-	domain := fs.String("domain", env("PIER_DOMAIN", "pier.localhost"), "the domain every address goes under")
+	domain := fs.String("domain", env("PIER_DOMAIN", "pier.localhost"), "the domain every address goes under (pierd init's base domain wins)")
+	address := fs.String("address", env("PIER_ADDRESS", ""), "where the dashboard is reached (pierd init's address wins; default: the domain itself)")
 	sshAddr := fs.String("ssh", env("PIER_SSH", ":2222"), "where to accept git pushes")
 	apiAddr := fs.String("api", env("PIER_API", "127.0.0.1:7777"), "where to serve the API")
 	caddyAdmin := fs.String("caddy-admin", env("PIER_CADDY_ADMIN", "http://127.0.0.1:2019"), "Caddy's admin API")
@@ -93,7 +104,7 @@ func serve(args []string) int {
 	}
 	*data = abs
 	paths := layout(*data)
-	for _, dir := range []string{paths.repos, paths.deployments, paths.tmp} {
+	for _, dir := range []string{paths.repos, paths.deployments, paths.logs, paths.tmp} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			log.Error("create data folder", "err", err)
 			return 1
@@ -114,6 +125,23 @@ func serve(args []string) int {
 		os.WriteFile(paths.keys, nil, 0o600)
 	}
 
+	// What pierd init chose wins over the development defaults.
+	setup := context.Background()
+	if base, _ := st.Setting(setup, store.SettingBaseDomain); base != "" && !flagSet(fs, "domain") {
+		*domain = base
+	}
+	if addr, _ := st.Setting(setup, store.SettingAddress); addr != "" && !flagSet(fs, "address") {
+		*address = addr
+	}
+	if *address == "" {
+		*address = *domain
+	}
+	owners, err := st.UserCount(setup)
+	if err != nil {
+		log.Error("read accounts", "err", err)
+		return 1
+	}
+
 	var runner build.Runner = build.Docker{Image: *image, CacheVolume: "pier-build-cache"}
 	if *builder == "local" {
 		runner = build.Local{}
@@ -123,8 +151,9 @@ func serve(args []string) int {
 		scheme = "https"
 	}
 	dep := &deploy.Deployer{
-		Store: st, Repos: paths.repos, Deployments: paths.deployments, Tmp: paths.tmp,
+		Store: st, Repos: paths.repos, Deployments: paths.deployments, Logs: paths.logs, Tmp: paths.tmp,
 		Domain: *domain, ProductionBranch: *prod, Runner: runner, Log: log, BuildTimeout: 15 * time.Minute,
+		PierHost: *address, PierUpstream: dialable(*apiAddr),
 		Router: router.Caddy{Admin: *caddyAdmin, Listen: []string{*httpAddr}, HTTPS: *https},
 		URL: func(host string) string {
 			if port == "" || (scheme == "http" && port == "80") || (scheme == "https" && port == "443") {
@@ -142,7 +171,21 @@ func serve(args []string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	a := &api.API{Store: st, Deployer: dep, Token: tok, Log: log}
+	a := &api.API{Store: st, Deployer: dep, Token: tok, Log: log, Web: web.Handler()}
+	go func() {
+		t := time.NewTicker(time.Hour)
+		defer t.Stop()
+		for {
+			if err := st.DeleteExpiredSessions(ctx); err != nil && ctx.Err() == nil {
+				log.Warn("clear expired sessions", "err", err)
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+			}
+		}
+	}()
 
 	os.Remove(paths.socket)
 	sock, err := net.Listen("unix", paths.socket)
@@ -182,12 +225,16 @@ func serve(args []string) int {
 
 	fmt.Fprintf(os.Stderr, `
 pierd is running
-  push     git remote add pier ssh://git@localhost%s/<project>
-  sites    %s
-  api      http://%s   (token: pierd token -data %s)
-  builds   %s
+  dashboard  %s   (or http://%s)
+  push       git remote add pier ssh://git@localhost%s/<project>
+  sites      %s
+  api        http://%s   (token: pierd token -data %s)
+  builds     %s
 
-`, *sshAddr, dep.URL("<project>."+*domain), *apiAddr, *data, runner.Name())
+`, dep.URL(*address), *apiAddr, *sshAddr, dep.URL("<project>."+*domain), *apiAddr, *data, runner.Name())
+	if owners == 0 {
+		fmt.Fprintf(os.Stderr, "Nobody can sign in yet. Create the owner's account:  pierd init -data %s\n\n", *data)
+	}
 	if fi, _ := os.Stat(paths.keys); fi != nil && fi.Size() == 0 {
 		fmt.Fprintf(os.Stderr, "No SSH keys can push yet. Add yours:  pierd keys add -data %s ~/.ssh/id_ed25519.pub\n\n", *data)
 	}
@@ -201,14 +248,41 @@ pierd is running
 	return 0
 }
 
-type paths struct{ db, repos, deployments, tmp, token, keys, hostKey, socket string }
+type paths struct{ db, repos, deployments, logs, tmp, token, keys, hostKey, socket string }
 
 func layout(data string) paths {
 	j := func(p string) string { return filepath.Join(data, p) }
 	return paths{
-		db: j("pier.db"), repos: j("repos"), deployments: j("deployments"), tmp: j("tmp"),
+		db: j("pier.db"), repos: j("repos"), deployments: j("deployments"), logs: j("logs"), tmp: j("tmp"),
 		token: j("api.token"), keys: j("authorized_keys"), hostKey: j("ssh_host_ed25519_key"), socket: j("pierd.sock"),
 	}
+}
+
+// flagSet reports whether a flag was given on the command line or through
+// its environment variable, rather than left at its default.
+func flagSet(fs *flag.FlagSet, name string) bool {
+	set := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			set = true
+		}
+	})
+	if set {
+		return true
+	}
+	return os.Getenv("PIER_"+strings.ToUpper(strings.ReplaceAll(name, "-", "_"))) != ""
+}
+
+// dialable turns a listen address like ":7777" into one the router can dial.
+func dialable(addr string) string {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return addr
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "127.0.0.1"
+	}
+	return net.JoinHostPort(host, port)
 }
 
 func portOf(addr string) string {

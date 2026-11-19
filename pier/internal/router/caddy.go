@@ -18,11 +18,13 @@ import (
 	"time"
 )
 
-// Route serves one deployment's files at one host.
+// Route serves one deployment's files at one host, or, with Upstream set,
+// passes the host's requests on to a local server (Pier's own dashboard).
 type Route struct {
 	Host         string
 	Root         string // the deployment's folder on disk
 	DeploymentID string
+	Upstream     string // host:port to proxy to instead of serving files
 }
 
 // Caddy talks to a running Caddy's admin API.
@@ -44,9 +46,13 @@ func (c Caddy) Config(routes []Route) ([]byte, error) {
 
 	var handlers []any
 	for _, r := range sorted {
+		h := siteHandler(r)
+		if r.Upstream != "" {
+			h = map[string]any{"handler": "reverse_proxy", "upstreams": []any{map[string]any{"dial": r.Upstream}}}
+		}
 		handlers = append(handlers, map[string]any{
 			"match":    []any{map[string]any{"host": []string{r.Host}}},
-			"handle":   []any{siteHandler(r)},
+			"handle":   []any{h},
 			"terminal": true,
 		})
 	}

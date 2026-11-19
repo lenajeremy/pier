@@ -1,0 +1,103 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--d-bg);
+  color: var(--d-text);
+  font-family: var(--d-sans);
+  font-size: 14px;
+  line-height: 20px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+input {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: default;
+}
+
+:focus-visible {
+  outline: 2px solid var(--d-focus);
+  outline-offset: 2px;
+}
+
+svg {
+  display: block;
+  flex: none;
+}
+
+.mono {
+  font-family: var(--d-mono);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* Type, from Foundations 3. */
+.t-title {
+  font-size: 20px;
+  line-height: 28px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+}
+.t-small {
+  font-size: 15px;
+  line-height: 24px;
+}
+.t-caption {
+  font-size: 14px;
+  line-height: 20px;
+}
+.t-note {
+  font-size: 13px;
+  line-height: 19px;
+  color: var(--d-note);
+}
+.t-muted {
+  color: var(--d-muted);
+}
+.t-strong {
+  font-weight: 500;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

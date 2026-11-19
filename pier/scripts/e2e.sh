@@ -92,4 +92,28 @@ fetch docs.$DOMAIN / | grep -q "Pier docs" || fail "docs went down after a faile
 step "pier board"
 PIER_SERVER=http://127.0.0.1:$API_PORT PIER_TOKEN=$("$PIERD" token -data "$DATA") "$PIER" board
 
+step "pierd init creates the owner, and the dashboard signs them in"
+echo "correct horse battery" | "$PIERD" init -data "$DATA" -email owner@example.com -password-stdin \
+	-address pier.localhost -base-domain pier.localhost -ip 127.0.0.1 > "$WORK/init.log" 2>&1 || { cat "$WORK/init.log"; fail "pierd init failed"; }
+grep -q "Account created" "$WORK/init.log" || fail "init didn't create the account"
+"$PIERD" init -data "$DATA" -yes > /dev/null 2>&1 && fail "a second pierd init should refuse"
+API=http://127.0.0.1:$API_PORT
+JAR=$WORK/cookies
+code=$(curl -s -o /dev/null -w '%{http_code}' -H 'X-Pier: 1' -d '{"email":"owner@example.com","password":"wrong one"}' "$API/api/session")
+[[ $code == 401 ]] || fail "a wrong password answered $code"
+curl -fsS -c "$JAR" -H 'X-Pier: 1' -d '{"email":"owner@example.com","password":"correct horse battery"}' "$API/api/session" | grep -q '"email":"owner@example.com"' || fail "sign in failed"
+curl -fsS -b "$JAR" "$API/api/projects" | grep -q '"name":"docs"' || fail "/api/projects doesn't list docs"
+curl -fsS -b "$JAR" "$API/api/projects/docs" | grep -q '"production":{' || fail "docs has no production address"
+DEP=$(curl -fsS -b "$JAR" "$API/api/projects/blog" | sed -n 's/.*"deployments":\[{"id":"\([0-9a-f]*\)".*/\1/p')
+[[ -n $DEP ]] || fail "blog has no deployments"
+curl -fsS -b "$JAR" "$API/api/projects/blog/deployments/$DEP/log" | grep -q '"tag":"build"' || fail "blog's build log wasn't kept"
+curl -fsS "$API/" | grep -q '<div id="root">' || fail "pierd doesn't serve the dashboard"
+curl -fsS "$API/projects/blog" | grep -q '<div id="root">' || fail "the dashboard's own routes don't load"
+echo "signed in, and the dashboard's API answers"
+
+step "pierd reset-password signs everyone out"
+echo "another long password" | "$PIERD" reset-password -data "$DATA" -password-stdin > /dev/null
+code=$(curl -s -o /dev/null -w '%{http_code}' -b "$JAR" "$API/api/projects")
+[[ $code == 401 ]] || fail "the old session still works after a reset ($code)"
+
 printf '\n\033[32mAll checks passed.\033[0m\n'

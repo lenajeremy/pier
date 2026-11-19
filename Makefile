@@ -1,12 +1,14 @@
 .PHONY: help test clean \
 	site site-deps site-run site-api site-v2-dev site-v3-dev site-test \
-	pier pier-test pier-e2e pier-caddy pier-dev
+	pier pier-web pier-web-deps pier-web-dev pier-test pier-e2e pier-caddy pier-dev
 
 help:
 	@echo "Pier monorepo"
 	@echo ""
 	@echo "  The product (pier/)"
-	@echo "    make pier          build pierd and pier into pier/bin"
+	@echo "    make pier          build the dashboard, then pierd and pier into pier/bin"
+	@echo "    make pier-web-deps install the dashboard's dependencies (first time)"
+	@echo "    make pier-web-dev  the dashboard with live reload on :5175 (pierd on :7777)"
 	@echo "    make pier-test     go vet and unit tests"
 	@echo "    make pier-e2e      push real projects through Caddy, pierd and Docker"
 	@echo "    make pier-caddy    run Caddy for development (one terminal)"
@@ -27,11 +29,22 @@ clean:
 
 # ---- The product -------------------------------------------------------------
 
-pier:
+pier: pier-web
 	cd pier && go build -trimpath -o bin/ ./cmd/...
+
+# The dashboard is built into pier/internal/web/dist and embedded in pierd.
+pier-web:
+	cd pier/web && npm run build
+
+pier-web-deps:
+	cd pier/web && npm ci
+
+pier-web-dev:
+	cd pier/web && npm run dev
 
 pier-test:
 	cd pier && go vet ./... && go test ./...
+	cd pier/web && npm run typecheck
 
 pier-e2e:
 	pier/scripts/e2e.sh docker

@@ -10,21 +10,22 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 
 	"pier/internal/board"
 	"pier/internal/deploy"
 	"pier/internal/hook"
-	"pier/internal/names"
 	"pier/internal/store"
 )
 
 type API struct {
 	Store    *store.Store
 	Deployer *deploy.Deployer
-	Token    string
+	Token    string // the server's own token, from pierd token; still accepted for the CLI
 	Log      *slog.Logger
+	Web      http.Handler // the dashboard's files; nil serves the API only
 }
 
 // BoardRow is a board row with the address's full URL.
@@ -33,14 +34,30 @@ type BoardRow struct {
 	URL string `json:"url"`
 }
 
-// Public serves the authenticated API.
+// Public serves the dashboard and the authenticated API.
 func (a *API) Public() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "ok\n") })
+
+	mux.HandleFunc("POST /api/session", a.signIn)
+	mux.Handle("GET /api/session", a.auth(http.HandlerFunc(a.session)))
+	mux.Handle("DELETE /api/session", a.auth(http.HandlerFunc(a.signOut)))
+
 	mux.Handle("GET /api/board", a.auth(http.HandlerFunc(a.board)))
 	mux.Handle("GET /api/projects", a.auth(http.HandlerFunc(a.projects)))
+	mux.Handle("GET /api/projects/{project}", a.auth(http.HandlerFunc(a.project)))
+	mux.Handle("GET /api/projects/{project}/favicon", a.auth(http.HandlerFunc(a.favicon)))
 	mux.Handle("GET /api/projects/{project}/deployments", a.auth(http.HandlerFunc(a.deployments)))
-	return mux
+	mux.Handle("GET /api/projects/{project}/deployments/{id}", a.auth(http.HandlerFunc(a.deployment)))
+	mux.Handle("GET /api/projects/{project}/deployments/{id}/log", a.auth(http.HandlerFunc(a.deploymentLog)))
+
+	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such API endpoint"})
+	})
+	if a.Web != nil {
+		mux.Handle("/", a.Web)
+	}
+	return securityHeaders(mux)
 }
 
 // Internal serves the git hook, on pierd's local socket only.
@@ -50,14 +67,53 @@ func (a *API) Internal() http.Handler {
 	return mux
 }
 
+type ctxKey int
+
+const (
+	userKey ctxKey = iota
+	sessionKey
+)
+
+// userFrom returns the signed-in user, or a zero User for the server token.
+func userFrom(ctx context.Context) store.User {
+	u, _ := ctx.Value(userKey).(store.User)
+	return u
+}
+
+// auth lets a request through with a session cookie (the dashboard), a
+// session token (the CLI), or the server's own token. Cookie requests that
+// change something must carry X-Pier, which another site's page can't send
+// without permission, so a signed-in browser can't be tricked into acting.
 func (a *API) auth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		got, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if !ok || subtle.ConstantTimeCompare([]byte(got), []byte(a.Token)) != 1 {
-			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "missing or wrong token; run `pierd token` on the server and `pier login`"})
+		ctx := r.Context()
+		if bearer, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); ok {
+			if a.Token != "" && subtle.ConstantTimeCompare([]byte(bearer), []byte(a.Token)) == 1 {
+				next.ServeHTTP(w, r)
+				return
+			}
+			if u, se, ok := a.lookupSession(ctx, bearer, r); ok {
+				ctx = context.WithValue(context.WithValue(ctx, userKey, u), sessionKey, se)
+				next.ServeHTTP(w, r.WithContext(ctx))
+				return
+			}
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "that token isn't valid any more; run pier login"})
 			return
 		}
-		next.ServeHTTP(w, r)
+		c, err := r.Cookie(cookieName)
+		if err == nil {
+			if u, se, ok := a.lookupSession(ctx, c.Value, r); ok {
+				if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Header.Get("X-Pier") == "" {
+					writeJSON(w, http.StatusForbidden, map[string]string{"error": "missing the X-Pier header"})
+					return
+				}
+				a.refreshCookie(w, r, c.Value)
+				ctx = context.WithValue(context.WithValue(ctx, userKey, u), sessionKey, se)
+				next.ServeHTTP(w, r.WithContext(ctx))
+				return
+			}
+		}
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "sign in first"})
 	})
 }
 
@@ -79,40 +135,11 @@ func (a *API) board(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"domain": a.Deployer.Domain, "rows": rows})
 }
 
-func (a *API) projects(w http.ResponseWriter, r *http.Request) {
-	ps, err := a.Store.Projects(r.Context())
-	if err != nil {
-		a.fail(w, err)
-		return
-	}
-	if ps == nil {
-		ps = []string{}
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"projects": ps})
-}
-
-func (a *API) deployments(w http.ResponseWriter, r *http.Request) {
-	project := r.PathValue("project")
-	if !names.ValidProject(project) {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "that isn't a project name"})
-		return
-	}
-	ds, err := a.Store.Deployments(r.Context(), project)
-	if err != nil {
-		a.fail(w, err)
-		return
-	}
-	if ds == nil {
-		ds = []store.Deployment{}
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"project": project, "deployments": ds})
-}
-
 // push deploys one pushed branch and streams the narration back to the hook.
 // The build carries on if the pusher disconnects.
 func (a *API) push(w http.ResponseWriter, r *http.Request) {
 	var p hook.Push
-	if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&p); err != nil || !names.ValidProject(p.Project) || p.Branch == "" || p.Commit == "" {
+	if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&p); err != nil || !validProject(p.Project) || p.Branch == "" || p.Commit == "" {
 		http.Error(w, "pier    bad push request\n", http.StatusBadRequest)
 		return
 	}
@@ -154,6 +181,46 @@ func (a *API) fail(w http.ResponseWriter, err error) {
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(v)
+}
+
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("Referrer-Policy", "same-origin")
+		h.Set("X-Frame-Options", "DENY")
+		next.ServeHTTP(w, r)
+	})
+}
+
+// clientIP is the address a request came from. Behind the router (a proxy on
+// this machine) it's the first address in X-Forwarded-For.
+func clientIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
+			first, _, _ := strings.Cut(fwd, ",")
+			return strings.TrimSpace(first)
+		}
+	}
+	return host
+}
+
+// secure says whether the request reached Pier over HTTPS, directly or
+// through the router on this machine.
+func secure(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	host, _, _ := net.SplitHostPort(r.RemoteAddr)
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		return r.Header.Get("X-Forwarded-Proto") == "https"
+	}
+	return false
 }

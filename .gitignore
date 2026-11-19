@@ -21,3 +21,7 @@ site/server/data/
 # Design work: board references, generated images and their prompts. It
 # lives on the Screenshotter board and on disk, not in the code's history.
 design/
+
+# The dashboard's build, embedded into pierd. Built by `make pier`.
+pier/internal/web/dist/*
+!pier/internal/web/dist/.gitkeep

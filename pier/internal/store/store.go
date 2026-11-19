@@ -85,6 +85,36 @@ CREATE TABLE IF NOT EXISTS aliases (
 );
 `
 
+// migrations run in order, once each, after the base schema. The database's
+// user_version records how many have run. Only ever append to this list.
+var migrations = []string{
+	// 1: the server's settings, the owner's account, and signed-in sessions.
+	`CREATE TABLE settings (
+		key   TEXT PRIMARY KEY,
+		value TEXT NOT NULL
+	);
+	CREATE TABLE users (
+		id            INTEGER PRIMARY KEY,
+		email         TEXT NOT NULL UNIQUE COLLATE NOCASE,
+		name          TEXT NOT NULL DEFAULT '',
+		password_hash TEXT NOT NULL,
+		failed_logins INTEGER NOT NULL DEFAULT 0,
+		locked_until  INTEGER NOT NULL DEFAULT 0,
+		created_at    INTEGER NOT NULL
+	);
+	CREATE TABLE sessions (
+		token_hash   TEXT PRIMARY KEY,
+		user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		kind         TEXT NOT NULL,
+		name         TEXT NOT NULL DEFAULT '',
+		ip           TEXT NOT NULL DEFAULT '',
+		created_at   INTEGER NOT NULL,
+		last_seen_at INTEGER NOT NULL,
+		expires_at   INTEGER NOT NULL
+	);
+	CREATE INDEX sessions_by_user ON sessions(user_id);`,
+}
+
 // Open opens (and if needed creates) the database at path.
 func Open(path string) (*Store, error) {
 	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)")
@@ -96,7 +126,37 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("create schema: %w", err)
 	}
+	if err := migrate(db); err != nil {
+		db.Close()
+		return nil, err
+	}
 	return &Store{db: db}, nil
+}
+
+func migrate(db *sql.DB) error {
+	var version int
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+		return fmt.Errorf("read schema version: %w", err)
+	}
+	for i := version; i < len(migrations); i++ {
+		tx, err := db.Begin()
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(migrations[i]); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("migration %d: %w", i+1, err)
+		}
+		// PRAGMA doesn't take parameters; i is our own integer.
+		if _, err := tx.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, i+1)); err != nil {
+			tx.Rollback()
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("migration %d: %w", i+1, err)
+		}
+	}
+	return nil
 }
 
 func (s *Store) Close() error { return s.db.Close() }

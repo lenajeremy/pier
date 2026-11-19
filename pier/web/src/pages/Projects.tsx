@@ -1,0 +1,111 @@
+import type { ProjectSummary, Session } from '../lib/api'
+import { ago, short } from '../lib/format'
+import { Link } from '../lib/router'
+import { Branch, Check } from '../components/Icons'
+import { ProjectMark } from '../components/ProjectMark'
+import { statusWord } from '../components/ui'
+
+// Projects is the home: every project with what it's serving, or, before
+// the first deploy, the getting-started checklist (B2).
+export function Projects({ session, projects, now }: { session: Session; projects: ProjectSummary[]; now: number }) {
+  if (projects.length === 0) return <GettingStarted session={session} />
+  return (
+    <main className="main global">
+      <div className="page-heading">
+        <div>
+          <h1 className="t-title" style={{ margin: 0 }}>
+            Projects
+          </h1>
+          <span className="t-caption t-muted">
+            {projects.length === 1 ? 'One project' : `${projects.length} projects`} on {session.server.address}
+          </span>
+        </div>
+      </div>
+      <div className="panel">
+        {projects.map((p) => (
+          <ProjectRow key={p.name} p={p} now={now} />
+        ))}
+      </div>
+    </main>
+  )
+}
+
+function ProjectRow({ p, now }: { p: ProjectSummary; now: number }) {
+  // What the project serves, or its newest build if nothing is live yet.
+  const d = p.production ?? p.latest
+  return (
+    <Link to={`/projects/${p.name}`} className="project-row">
+      <ProjectMark key={p.name} name={p.name} size={36} />
+      <div className="who">
+        <span className="t-small t-strong">{p.name}</span>
+        <span className="mono t-caption t-muted">{p.address}</span>
+      </div>
+      <div className="what">
+        {d ? (
+          <>
+            <span className="t-small">{d.message || short(d.commit)}</span>
+            <span className="meta">
+              <span className="branch mono t-caption">
+                <Branch size={13} color="#8A92A8" />
+                {d.branch}
+              </span>
+              <span className="t-note">{ago(d.created_at, now)}</span>
+            </span>
+          </>
+        ) : (
+          <span className="t-small t-muted">Nothing deployed yet</span>
+        )}
+      </div>
+      <span className="status">
+        <i className={'swatch ' + p.status} />
+        {statusWord[p.status]}
+      </span>
+    </Link>
+  )
+}
+
+function GettingStarted({ session }: { session: Session }) {
+  const { address, base_domain: base } = session.server
+  const host = address.split(':')[0]
+  return (
+    <main className="main global" style={{ paddingTop: 36, gap: 20 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <h1 className="t-title" style={{ margin: 0 }}>
+          Welcome to Pier
+        </h1>
+        <span className="t-caption t-muted">Nothing is deployed yet. One step to your first live project.</span>
+      </div>
+      <div className="panel">
+        <div className="checklist-row done">
+          <img src="/steps/1.png" alt="1" />
+          <div>
+            <span className="t-small t-strong">Set up the server</span>
+            <span className="t-caption t-muted">
+              {base
+                ? `${address} is live, and projects get addresses under ${base}.`
+                : `Pier is at ${address}. Projects need a base domain for their addresses.`}
+            </span>
+          </div>
+          <span className="checklist-done">
+            <Check />
+            Done
+          </span>
+        </div>
+        <div className="checklist-row">
+          <img src="/steps/2.png" alt="2" />
+          <div>
+            <span className="t-small t-strong">Push your first project</span>
+            <span className="t-caption t-muted">
+              Add Pier as a git remote and push. The project is created on the first push, and main goes to production.
+            </span>
+            <span className="command" style={{ alignSelf: 'flex-start', marginTop: 8 }}>
+              git remote add pier ssh://git@{host}:2222/blog
+              <br />
+              git push pier main
+            </span>
+          </div>
+        </div>
+      </div>
+    </main>
+  )
+}

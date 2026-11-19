@@ -29,8 +29,11 @@ type Deployer struct {
 	Store            *store.Store
 	Repos            string // bare git repositories, one per project
 	Deployments      string // one folder per deployment, never changed once written
+	Logs             string // one build log per deployment, <id>.log
 	Tmp              string // scratch space for checkouts, on the same disk as Deployments
 	Domain           string // e.g. pier.example.com
+	PierHost         string // where the dashboard is reached, e.g. pier.example.com; empty for none
+	PierUpstream     string // the dashboard's own listener, e.g. 127.0.0.1:7777
 	ProductionBranch string // e.g. main
 	Runner           build.Runner
 	Router           router.Caddy
@@ -88,6 +91,13 @@ func (d *Deployer) Deploy(ctx context.Context, project, branch, commit string, o
 	}
 	if err := d.Store.CreateDeployment(ctx, dep); err != nil {
 		return err
+	}
+	if logFile, err := d.createLog(dep.ID); err != nil {
+		d.Log.Warn("build log can't be kept", "deployment", dep.ID, "err", err)
+	} else {
+		tl := &timedLog{w: logFile, start: start}
+		defer func() { tl.Flush(); logFile.Close() }()
+		out = io.MultiWriter(out, tl)
 	}
 	say(out, "pier", "received %s at %s", branch, short(commit))
 
@@ -272,6 +282,9 @@ func (d *Deployer) Routes(ctx context.Context) ([]router.Route, error) {
 	}
 	for _, a := range aliases {
 		routes = append(routes, router.Route{Host: a.Host, Root: root(a.DeploymentID), DeploymentID: a.DeploymentID})
+	}
+	if d.PierHost != "" && d.PierUpstream != "" {
+		routes = append(routes, router.Route{Host: d.PierHost, Upstream: d.PierUpstream})
 	}
 	return routes, nil
 }

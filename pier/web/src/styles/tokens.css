@@ -1,0 +1,55 @@
+/* Dashboard tokens, from the V3 design system on the board (the --d-* set).
+   Type follows V3 Foundations 3, "In the dashboard":
+     Title 20/28 500    page titles; KPI figures at 500 in the strip
+     Small 15/24        panel headings, row names, values
+     Caption 14/20      sidebar, tabs, table cells, form labels
+     Note 13/19         meta lines, table headers, detail labels
+     Mono ID 14/20      IDs, addresses, commits
+     Mono output 13/21  logs
+   Buttons, badges, fields and the segmented control keep their own sizes. */
+:root {
+  --d-bg: #07090f;
+  --d-sidebar: #0b0e16;
+  --d-panel: rgba(14, 18, 28, 0.92);
+  --d-input: rgba(14, 18, 28, 0.9);
+  --d-well: rgba(7, 9, 15, 0.72);
+  --d-popover: #111522;
+  --d-tooltip: #161b28;
+
+  --d-line: rgba(255, 255, 255, 0.09);
+  --d-line-soft: rgba(255, 255, 255, 0.07);
+  --d-line-faint: rgba(255, 255, 255, 0.06);
+  --d-line-control: rgba(255, 255, 255, 0.16);
+  --d-line-input: rgba(255, 255, 255, 0.14);
+  --d-hover: rgba(255, 255, 255, 0.04);
+  --d-active: rgba(255, 255, 255, 0.06);
+
+  --d-text: #eceef4;
+  --d-muted: #a3abbe;
+  --d-note: #8a92a8;
+  --d-faint: #5e667b;
+
+  --d-pink: #f49ccb; /* production, live */
+  --d-violet: #bcaef8; /* preview, building */
+  --d-teal: #62d8c6; /* done, healthy */
+  --d-red: #ff8080; /* failed */
+  --d-red-text: #ffb4b4;
+  --d-amber: #f0b85c; /* warning */
+  --d-asleep: #8e96aa; /* nothing deployed */
+  --d-blue: #3987e5; /* charts */
+  --d-blue-muted: rgba(57, 135, 229, 0.55);
+  --d-info: #8db2f8;
+  --d-focus: rgba(141, 178, 248, 0.7);
+  --d-focus-ring: 0 0 0 4px rgba(141, 178, 248, 0.16);
+
+  --d-ground: radial-gradient(60% 55% at 12% 0%, rgba(30, 44, 98, 0.55), transparent 70%),
+    radial-gradient(45% 60% at 96% 28%, rgba(52, 34, 104, 0.42), transparent 70%),
+    radial-gradient(40% 45% at 0% 62%, rgba(70, 24, 66, 0.3), transparent 70%),
+    radial-gradient(80% 50% at 50% 105%, rgba(22, 40, 92, 0.55), transparent 70%), #07090f;
+
+  --d-sans: 'Schibsted Grotesk', ui-sans-serif, system-ui, sans-serif;
+  --d-mono: 'Red Hat Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  --radius-panel: 14px;
+  --radius-pill: 999px;
+}

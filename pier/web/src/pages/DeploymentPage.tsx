@@ -1,0 +1,244 @@
+import { useEffect, useRef, useState } from 'react'
+import type { Address, Deployment, LogLine, Session } from '../lib/api'
+import { api } from '../lib/api'
+import { useData } from '../lib/data'
+import { ago, exact, plural, seconds, short, size } from '../lib/format'
+import { Link } from '../lib/router'
+import * as I from '../components/Icons'
+import { deploymentStatus } from '../components/ui'
+
+type Detail = { deployment: Deployment; addresses: Address[] }
+
+// DeploymentPage is one deployment (D3, D4, E3): what it is, where it's
+// served, and its build log, which follows the build while it runs.
+export function DeploymentPage({ project, id, session, now }: { project: string; id: string; session: Session; now: number }) {
+  const { data, error } = useData<Detail>(
+    `/api/projects/${project}/deployments/${id}`,
+    (d) => d.deployment.status === 'building',
+    1500,
+  )
+  if (error) return <main className="main"><span className="t-note">{error.message}</span></main>
+  if (!data) return <div className="loading">Loading {id}…</div>
+  const d = data.deployment
+  const st = deploymentStatus(d)
+  const building = d.status === 'building'
+  const env = d.branch === session.server.production_branch ? 'Production' : 'Preview'
+  const live = data.addresses.find((a) => a.kind !== 'deployment')
+
+  return (
+    <main className="main" style={{ gap: 24 }}>
+      <nav className="breadcrumb" aria-label="Breadcrumb">
+        <Link to={`/projects/${project}`}>{project}</Link>
+        <I.ChevronRight />
+        <Link to={`/projects/${project}`}>Deployments</Link>
+        <I.ChevronRight />
+        <span className="mono" style={{ color: 'var(--d-text)' }}>
+          {d.id}
+        </span>
+      </nav>
+
+      <section className="panel">
+        <div className="card-head">
+          <span className="t-small t-strong">Deployment details</span>
+          <div className="card-actions">
+            {d.status === 'ready' && (
+              <a className="btn quiet visit" href={(live ?? data.addresses[0])?.url} target="_blank" rel="noreferrer">
+                Visit
+                <I.Visit />
+              </a>
+            )}
+          </div>
+        </div>
+        <div className="card-body">
+          <Preview d={d} url={data.addresses.find((a) => a.kind === 'deployment')?.url} />
+          <div className="details">
+            <div className="details-row">
+              <Field label="Created">
+                <span title={exact(d.created_at)}>{ago(d.created_at, now)}</span>
+              </Field>
+              <Field label="Status">
+                <span className="line">
+                  <i className={'swatch ' + st.swatch} />
+                  {st.word}
+                </span>
+              </Field>
+              <Field label="Duration">
+                {building ? `${seconds(now - new Date(d.created_at).getTime())} so far` : seconds(d.build_ms)}
+              </Field>
+              <Field label="Environment">{env}</Field>
+            </div>
+            <Field label="Domains">
+              {data.addresses.length === 0 ? (
+                <span className="t-muted">{building ? 'Given once the build works.' : 'None. A failed build gets no address.'}</span>
+              ) : (
+                data.addresses.map((a, i) => (
+                  <a
+                    key={a.host}
+                    className="mono"
+                    href={a.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{ color: i === 0 ? 'var(--d-text)' : 'var(--d-muted)', alignSelf: 'flex-start' }}
+                  >
+                    {a.host}
+                  </a>
+                ))
+              )}
+            </Field>
+            <Field label="Source">
+              <span className="line">
+                <I.Branch />
+                <span className="mono">{d.branch}</span>
+              </span>
+              <span className="line">
+                <I.Commit />
+                <span className="mono t-muted">{short(d.commit)}</span>
+                <span>{d.message}</span>
+              </span>
+            </Field>
+          </div>
+        </div>
+      </section>
+
+      <Sections project={project} d={d} />
+    </main>
+  )
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="detail">
+      <span className="t-note">{label}</span>
+      <div className="t-caption" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {children}
+      </div>
+    </div>
+  )
+}
+
+function Preview({ d, url }: { d: Deployment; url?: string }) {
+  if (d.status === 'failed') {
+    return (
+      <div className="preview-box failed">
+        <span className="t-caption t-strong" style={{ color: 'var(--d-red-text)' }}>
+          Build failed
+        </span>
+        <span className="t-caption t-muted" style={{ marginTop: 4 }}>
+          {d.error}
+        </span>
+      </div>
+    )
+  }
+  if (d.status === 'building' || !url) {
+    return (
+      <div className="preview-box">
+        <span className="t-note">The preview appears once it's live</span>
+      </div>
+    )
+  }
+  return (
+    <a className="preview-box" href={url} target="_blank" rel="noreferrer" aria-label={`Open ${d.id}`}>
+      <iframe src={url} title={`Preview of ${d.id}`} tabIndex={-1} loading="lazy" sandbox="allow-scripts allow-same-origin" />
+    </a>
+  )
+}
+
+function Sections({ project, d }: { project: string; d: Deployment }) {
+  const building = d.status === 'building'
+  const [open, setOpen] = useState(d.status !== 'ready')
+  const [lines, setLines] = useState<LogLine[]>([])
+  const next = useRef(0)
+
+  useEffect(() => {
+    setLines([])
+    next.current = 0
+  }, [d.id])
+
+  useEffect(() => {
+    let stopped = false
+    let timer: number | undefined
+    const pull = async () => {
+      try {
+        const r = await api<{ lines: LogLine[]; next: number; done: boolean }>(
+          `/api/projects/${project}/deployments/${d.id}/log?from=${next.current}`,
+        )
+        if (stopped) return
+        if (r.lines.length) {
+          next.current = r.next
+          setLines((ls) => [...ls, ...r.lines])
+        }
+        if (!r.done) timer = window.setTimeout(pull, 1000)
+      } catch {
+        if (!stopped) timer = window.setTimeout(pull, 3000)
+      }
+    }
+    pull()
+    return () => {
+      stopped = true
+      window.clearTimeout(timer)
+    }
+  }, [project, d.id, building])
+
+  useEffect(() => {
+    if (d.status === 'failed') setOpen(true)
+  }, [d.status])
+
+  const errors = lines.filter(isError).length
+  const meta = lines.length === 0 ? '' : plural(lines.length, 'line') + (errors ? `, ${plural(errors, 'error')}` : '')
+
+  return (
+    <section className="sections">
+      <button className={'section-row' + (open ? ' open' : '')} onClick={() => setOpen(!open)} aria-expanded={open}>
+        <I.Disclosure />
+        <span className="title">Build log</span>
+        <span className="t-note">{meta}</span>
+        <span className="mono t-caption" style={{ color: 'var(--d-note)' }}>
+          {building ? '' : seconds(d.build_ms)}
+        </span>
+        {building ? <I.Working /> : d.status === 'failed' ? <I.FailedMark /> : <I.Done />}
+      </button>
+      {open && (
+        <div className="section-body">
+          <Log lines={lines} following={building} />
+        </div>
+      )}
+      <div className="section-row" style={{ cursor: 'default', opacity: d.status === 'ready' ? 1 : 0.6 }}>
+        <span style={{ width: 14 }} />
+        <span className="title">Output</span>
+        <span className="t-note">
+          {d.status === 'ready'
+            ? `${plural(d.files, 'file')}, ${size(d.bytes)}${d.framework ? `, built with ${d.framework}` : ''}`
+            : d.status === 'building'
+              ? 'Waiting for the build'
+              : 'Skipped'}
+        </span>
+      </div>
+    </section>
+  )
+}
+
+function isError(l: LogLine) {
+  return (l.tag === 'build' || l.tag === 'pier') && /\b(error|ERR!|failed|fatal)\b/i.test(l.text) && !/\b0 errors?\b/i.test(l.text)
+}
+
+function Log({ lines, following }: { lines: LogLine[]; following: boolean }) {
+  const box = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const el = box.current
+    if (el && following) el.scrollTop = el.scrollHeight
+  }, [lines.length, following])
+  if (lines.length === 0) {
+    return <div className="log-empty">{following ? 'Waiting for the first line…' : 'This build kept no log.'}</div>
+  }
+  return (
+    <div className="log" ref={box}>
+      {lines.map((l, i) => (
+        <div key={i} className={'line' + (isError(l) ? ' error' : '')}>
+          <span className="time">{(l.ms / 1000).toFixed(2)}</span>
+          <span className={'tag ' + l.tag}>{l.tag}</span>
+          <span className={'text' + (l.text.startsWith('$ ') ? ' cmd' : '')}>{l.text}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
