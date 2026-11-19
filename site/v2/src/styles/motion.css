@@ -1,0 +1,171 @@
+/* Scroll-triggered motion.
+ *
+ * Every hidden starting state is scoped to html.motion, which main.tsx adds
+ * only when JavaScript runs and the visitor hasn't asked for reduced motion.
+ * Without it, everything simply shows in its final state.
+ *
+ * An element plays when an ancestor (or itself) gets [data-in], set by
+ * useInView the first time it scrolls into view. Loops also need [data-live],
+ * which is only present while the element is on screen.
+ *
+ * Timing: --d is the element's own delay, --i its index in a row, and
+ * --stagger the gap between siblings.
+ */
+:root {
+  --ease-out: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+}
+
+.m-rise,
+.m-fade,
+.m-pop,
+.m-wipe,
+.m-wipe-down,
+.m-type,
+.m-grow,
+.m-draw {
+  --delay: calc(var(--i, 0) * var(--stagger, 90ms) + var(--d, 0ms));
+}
+
+.motion .m-rise {
+  opacity: 0;
+  transform: translateY(16px);
+}
+
+.motion .m-fade {
+  opacity: 0;
+}
+
+.motion .m-pop {
+  opacity: 0;
+  transform: scale(0.86);
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.motion .m-wipe,
+.motion .m-type {
+  clip-path: inset(0 100% 0 0);
+}
+
+.motion .m-wipe-down {
+  clip-path: inset(0 0 100% 0);
+}
+
+.motion .m-grow {
+  transform: scaleX(0);
+  transform-box: fill-box;
+  transform-origin: left center;
+}
+
+.motion .m-draw {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+}
+
+.motion [data-in] .m-rise,
+.motion .m-rise[data-in] {
+  animation: m-rise var(--dur, 700ms) var(--ease-out) var(--delay) both;
+}
+
+.motion [data-in] .m-fade,
+.motion .m-fade[data-in] {
+  animation: m-fade var(--dur, 600ms) ease var(--delay) both;
+}
+
+.motion [data-in] .m-pop {
+  animation: m-pop var(--dur, 560ms) var(--ease-out) var(--delay) both;
+}
+
+.motion [data-in] .m-wipe {
+  animation: m-wipe var(--dur, 900ms) var(--ease-out) var(--delay) both;
+}
+
+.motion [data-in] .m-wipe-down {
+  animation: m-wipe-down var(--dur, 700ms) var(--ease-out) var(--delay) both;
+}
+
+/* Text that types itself, one character per step. */
+.motion [data-in] .m-type {
+  animation: m-wipe var(--dur, 700ms) steps(var(--steps, 24), end) var(--delay) both;
+}
+
+.motion [data-in] .m-grow {
+  animation: m-grow var(--dur, 700ms) var(--ease-out) var(--delay) both;
+}
+
+.motion [data-in] .m-draw {
+  animation: m-draw var(--dur, 500ms) var(--ease-out) var(--delay) both;
+}
+
+@keyframes m-rise {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes m-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes m-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.86);
+  }
+  60% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes m-wipe {
+  from {
+    clip-path: inset(0 100% 0 0);
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+  }
+}
+
+@keyframes m-wipe-down {
+  from {
+    clip-path: inset(0 0 100% 0);
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+  }
+}
+
+@keyframes m-grow {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+@keyframes m-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+/* Loops pause while their element is off screen. */
+.motion [data-in]:not([data-live]) .m-loop {
+  animation-play-state: paused;
+}

@@ -1,0 +1,614 @@
+.section {
+  padding-top: var(--section-y);
+  border-top: 1px solid var(--navy-100);
+}
+
+.cells {
+  margin-top: 40px;
+}
+
+.tile,
+.tileSmall {
+  gap: 12px;
+  padding: 28px var(--gutter);
+}
+
+.tileHead {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.iconBox {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--navy-100);
+  background: var(--navy-25);
+  color: var(--navy-900);
+}
+
+.title {
+  font-size: 18px;
+  line-height: 26px;
+  font-weight: 500;
+}
+
+.titleSmall {
+  font-size: 17px;
+  line-height: 24px;
+  font-weight: 500;
+}
+
+.text {
+  flex: 1;
+  font-size: 15px;
+  line-height: 24px;
+  color: var(--navy-600);
+}
+
+.mini {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 6px;
+  padding: 16px;
+  background: var(--navy-25);
+  border: 1px solid var(--navy-100);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chip {
+  padding: 3px 9px;
+  background: var(--white);
+  border: 1px solid var(--navy-100);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.buildLine {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--navy-600);
+}
+
+.demo {
+  display: flex;
+  flex-direction: column;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  margin-top: 6px;
+  background: var(--navy-25);
+  border: 1px solid var(--navy-100);
+}
+
+.plain {
+  background: var(--white);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 40px;
+  padding: 8px 14px;
+}
+
+.row + .row {
+  border-top: 1px solid var(--navy-100);
+}
+
+.rowName {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--navy-900);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rowLabel,
+.state,
+.scope {
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--navy-600);
+  white-space: nowrap;
+}
+
+.value {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--navy-900);
+  white-space: nowrap;
+}
+
+.state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dotIdle,
+.dotLive {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--navy-300);
+}
+
+.dotLive {
+  background: var(--docker);
+}
+
+.healthy {
+  padding: 1px 8px;
+  background: var(--docker-tint);
+  color: var(--docker-ink);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.logs {
+  margin: 6px 0 0;
+  padding: 12px 14px;
+  background: var(--navy-900);
+  color: var(--navy-300);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 20px;
+}
+
+.window {
+  display: block;
+  height: 60px;
+  overflow: hidden;
+}
+
+.tail {
+  display: flex;
+  flex-direction: column;
+}
+
+.logLine {
+  display: block;
+  height: 20px;
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.time {
+  color: #8f9ab6;
+}
+
+@media (min-width: 768px) {
+  .cells {
+    margin-top: 56px;
+  }
+
+  .tile {
+    gap: 14px;
+    padding: 36px 32px;
+  }
+
+  .tileSmall {
+    padding: 32px 32px 40px;
+  }
+
+  .tileHead {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 14px;
+  }
+
+  .iconBox {
+    width: 36px;
+    height: 36px;
+  }
+
+  .title {
+    font-size: 20px;
+    line-height: 28px;
+  }
+}
+
+/* Frontends: the build runs, then reports. */
+.buildTrack {
+  display: block;
+  height: 3px;
+  background: var(--navy-100);
+}
+
+.buildFill {
+  display: block;
+  height: 100%;
+  background: var(--docker);
+}
+
+/* Shared: labels that swap in place, right-aligned in one grid cell. */
+.swap {
+  display: inline-grid;
+  justify-items: end;
+}
+
+.swap > * {
+  grid-area: 1 / 1;
+}
+
+/* Functions: rows take turns waking for a request and going back to sleep. */
+.isAwake .asleepLabel,
+.isAsleep .awakeLabel {
+  opacity: 0;
+}
+
+.isAwake .sleepDot {
+  background: var(--docker);
+}
+
+:global(.motion) [data-in] .sleeper .awakeLabel {
+  animation: wake-label 6s linear var(--phase) infinite both;
+}
+
+:global(.motion) [data-in] .sleeper .asleepLabel {
+  animation: sleep-label 6s linear var(--phase) infinite both;
+}
+
+:global(.motion) [data-in] .sleeper .sleepDot {
+  animation: wake-dot 6s linear var(--phase) infinite both;
+}
+
+@keyframes wake-label {
+  0%,
+  8% {
+    opacity: 0;
+  }
+  12%,
+  58% {
+    opacity: 1;
+  }
+  62%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes sleep-label {
+  0%,
+  8% {
+    opacity: 1;
+  }
+  12%,
+  58% {
+    opacity: 0;
+  }
+  62%,
+  100% {
+    opacity: 1;
+  }
+}
+
+@keyframes wake-dot {
+  0%,
+  8% {
+    background: var(--navy-300);
+    box-shadow: 0 0 0 0 rgba(14, 147, 132, 0.4);
+  }
+  12% {
+    background: var(--docker);
+    box-shadow: 0 0 0 4px rgba(14, 147, 132, 0);
+  }
+  58% {
+    background: var(--docker);
+  }
+  62%,
+  100% {
+    background: var(--navy-300);
+  }
+}
+
+/* Services: the health check's heartbeat. */
+.healthy {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.beat {
+  position: relative;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--docker);
+}
+
+:global(.motion) [data-in] .beat::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1px solid var(--docker);
+  animation: beat 2s ease-out 0.8s infinite both;
+}
+
+@keyframes beat {
+  0% {
+    opacity: 0.8;
+    transform: scale(1);
+  }
+  70%,
+  100% {
+    opacity: 0;
+    transform: scale(3);
+  }
+}
+
+/* Domains: DNS resolves, Caddy gets the certificate, then it starts over. */
+.certIssuing,
+.certIssued {
+  opacity: 0;
+}
+
+:global(.motion) [data-in] .certWaiting {
+  animation: cert-waiting 8s linear 1s infinite both;
+}
+
+:global(.motion) [data-in] .certIssuing {
+  animation: cert-issuing 8s linear 1s infinite both;
+}
+
+:global(.motion) [data-in] .certIssued {
+  animation: cert-issued 8s linear 1s infinite both;
+}
+
+:global(.motion) [data-in] .certDot {
+  animation: cert-dot 8s linear 1s infinite both;
+}
+
+@keyframes cert-waiting {
+  0%,
+  38% {
+    opacity: 1;
+  }
+  42%,
+  92% {
+    opacity: 0;
+  }
+  96%,
+  100% {
+    opacity: 1;
+  }
+}
+
+@keyframes cert-issuing {
+  0%,
+  38% {
+    opacity: 0;
+  }
+  42%,
+  60% {
+    opacity: 1;
+  }
+  64%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes cert-issued {
+  0%,
+  60% {
+    opacity: 0;
+  }
+  64%,
+  92% {
+    opacity: 1;
+  }
+  96%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes cert-dot {
+  0%,
+  38% {
+    background: var(--navy-300);
+    opacity: 1;
+  }
+  42% {
+    background: var(--pierd);
+    opacity: 1;
+  }
+  47% {
+    opacity: 0.3;
+  }
+  52% {
+    opacity: 1;
+  }
+  57% {
+    opacity: 0.3;
+  }
+  60% {
+    background: var(--pierd);
+    opacity: 1;
+  }
+  64%,
+  92% {
+    background: var(--docker);
+  }
+  96%,
+  100% {
+    background: var(--navy-300);
+  }
+}
+
+/* Logs: a new line every 1.3s, like following the live log. */
+:global(.motion) [data-in] .tail {
+  animation: tail 7.8s ease-in-out 1.2s infinite both;
+}
+
+@keyframes tail {
+  0%,
+  13% {
+    transform: translateY(0);
+  }
+  16.6%,
+  30% {
+    transform: translateY(-20px);
+  }
+  33.3%,
+  46% {
+    transform: translateY(-40px);
+  }
+  50%,
+  63% {
+    transform: translateY(-60px);
+  }
+  66.6%,
+  80% {
+    transform: translateY(-80px);
+  }
+  83.3%,
+  96% {
+    transform: translateY(-100px);
+  }
+  100% {
+    transform: translateY(-120px);
+  }
+}
+
+/* Railway's specifics: icon + text, hairlines between, under each tile. */
+.specs {
+  display: flex;
+  flex-direction: column;
+  margin-top: 4px;
+}
+
+.spec {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--navy-600);
+}
+
+.spec + .spec {
+  border-top: 1px solid var(--navy-100);
+}
+
+.spec code {
+  font-size: 12.5px;
+  color: var(--navy-900);
+}
+
+.specIcon {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--navy-500);
+}
+
+/* Railway's band between the two rows, on the diagram canvas. */
+.strip {
+  grid-column: 1 / -1;
+  align-items: center;
+  padding: 18px var(--gutter);
+  background-color: var(--navy-25);
+  background-image: var(--dots-canvas);
+  background-size: 16px 16px;
+  text-align: center;
+}
+
+.strip p {
+  max-width: 720px;
+  font-size: 15px;
+  line-height: 24px;
+  color: var(--navy-600);
+}
+
+.strip code {
+  padding: 1px 6px;
+  background: var(--white);
+  border: 1px solid var(--navy-100);
+  font-size: 13px;
+  color: var(--navy-900);
+}
+
+/* Env vars: values stay hidden. */
+.secret {
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.mask {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  color: var(--navy-400);
+}
+
+/* Domains: Replit's "link a domain" card, shrunk. */
+.addDomain {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  margin-bottom: 8px;
+  padding: 4px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--navy-200);
+}
+
+.addField {
+  flex: 1;
+  min-width: 0;
+  padding-left: 10px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--navy-900);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.addButton {
+  flex-shrink: 0;
+  padding: 5px 12px;
+  border-radius: var(--radius-pill);
+  background: var(--navy-900);
+  color: var(--white);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.addDomain + .list {
+  margin-top: 0;
+}
+
+@media (min-width: 768px) and (max-width: 1023px) {
+  /* With two columns the band closes the grid instead of splitting it. */
+  .strip {
+    order: 99;
+  }
+}
+
+@media (min-width: 768px) {
+  .strip {
+    padding: 20px 32px;
+  }
+}

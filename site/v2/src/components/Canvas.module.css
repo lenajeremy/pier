@@ -1,0 +1,36 @@
+.canvas {
+  position: relative;
+  background-color: var(--navy-25);
+  background-image: var(--dots-canvas);
+  background-size: 16px 16px;
+  border: 1px solid var(--navy-100);
+}
+
+.handle {
+  position: absolute;
+  z-index: 1;
+  width: 9px;
+  height: 9px;
+  background: var(--white);
+  border: 1px solid var(--navy-200);
+}
+
+.tl {
+  top: -5px;
+  left: -5px;
+}
+
+.tr {
+  top: -5px;
+  right: -5px;
+}
+
+.bl {
+  bottom: -5px;
+  left: -5px;
+}
+
+.br {
+  bottom: -5px;
+  right: -5px;
+}

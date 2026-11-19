@@ -1,0 +1,98 @@
+/* Pier design tokens. Source of truth: the "Pier website" Screenshotter board,
+   Design system page. Names match the board so the two stay comparable. */
+:root {
+  /* Navy, the neutral scale */
+  --navy-25: #f8fafd;
+  --navy-50: #f1f4f9;
+  --navy-100: #e3e7ef;
+  --navy-150: #dce1ea;
+  --navy-200: #c9d0dd;
+  --navy-300: #b9c2d4;
+  --navy-400: #8c95ad;
+  --navy-500: #646f8c;
+  --navy-600: #56617f;
+  --navy-700: #3a4566;
+  --navy-800: #22305a;
+  --navy-900: #142047;
+  --navy-950: #0b1330;
+  --white: #ffffff;
+
+  /* Part colours: tint, soft, line, ink, on navy */
+  --git-tint: #f4f1ff;
+  --git-soft: #eae4ff;
+  --git: #6e56cf;
+  --git-ink: #5b44b8;
+  --git-on-dark: #9c88f0;
+  --pierd-tint: #eef4ff;
+  --pierd-soft: #e0eaff;
+  --pierd: #2f6feb;
+  --pierd-ink: #1f57c9;
+  --pierd-on-dark: #6e9bf5;
+  --docker-tint: #eaf8f5;
+  --docker-soft: #d9f2ec;
+  --docker: #0e9384;
+  --docker-ink: #0b7468;
+  --docker-on-dark: #3cc2b0;
+  --caddy-tint: #fdf0f6;
+  --caddy-soft: #fbe2ee;
+  --caddy: #c53d8c;
+  --caddy-ink: #a92f75;
+  --caddy-on-dark: #e57ab6;
+
+  /* States */
+  --warn: #c27803;
+  --warn-tint: #fff6e5;
+  --warn-ink: #8f5800;
+  --danger: #d93a3a;
+  --danger-tint: #fff0f0;
+  --danger-ink: #b42323;
+
+  /* Type */
+  --sans: 'Instrument Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --mono: 'Red Hat Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* Spacing, 4px base */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 40px;
+  --space-9: 56px;
+  --space-10: 80px;
+  --space-11: 120px;
+
+  /* Shape and elevation */
+  --radius-pill: 999px;
+  --radius-field: 14px;
+  --shadow-1: 0 1px 2px rgba(20, 32, 71, 0.05);
+  --shadow-2: 0 12px 40px rgba(20, 32, 71, 0.08);
+  --focus: 0 0 0 2px var(--white), 0 0 0 4px var(--pierd);
+  --focus-on-dark: 0 0 0 2px var(--navy-900), 0 0 0 4px var(--pierd-on-dark);
+  --ring: 0 0 0 3px rgba(47, 111, 235, 0.18);
+
+  /* Surfaces */
+  --dots-page: radial-gradient(circle at 2px 2px, var(--navy-150) 1px, transparent 1.2px);
+  --dots-canvas: radial-gradient(circle at 1.5px 1.5px, #e3e8f1 0.9px, transparent 1.1px);
+
+  /* Layout: phone first, see the Breakpoints table on the board */
+  --column: 100%;
+  --gutter: 20px;
+  --section-y: 80px;
+}
+
+@media (min-width: 768px) {
+  :root {
+    --gutter: 32px;
+    --section-y: 96px;
+  }
+}
+
+@media (min-width: 1024px) {
+  :root {
+    --column: min(1160px, calc(100% - 64px));
+    --section-y: 120px;
+  }
+}

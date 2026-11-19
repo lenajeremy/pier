@@ -1,0 +1,334 @@
+/* Firecrawl's frame: hairline box, tab list | terminal, then a row of cells. */
+.frame {
+  display: grid;
+  grid-template-columns: 1fr;
+  margin: 40px var(--gutter) 0;
+  border: 1px solid var(--navy-100);
+}
+
+.tabs {
+  display: flex;
+  flex-direction: column;
+  background: var(--navy-25);
+}
+
+.tab {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 18px 20px 20px;
+  border-bottom: 1px solid var(--navy-100);
+  text-align: left;
+  transition: background-color 200ms ease;
+}
+
+.tab:last-child {
+  border-bottom: 0;
+}
+
+.tab:hover {
+  background: var(--navy-50);
+}
+
+.tab:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--pierd);
+}
+
+.tabOn,
+.tabOn:hover {
+  background: var(--white);
+}
+
+.edge_git {
+  box-shadow: inset 2px 0 0 var(--git);
+}
+
+.edge_docker {
+  box-shadow: inset 2px 0 0 var(--docker);
+}
+
+.edge_pierd {
+  box-shadow: inset 2px 0 0 var(--pierd);
+}
+
+.edge_caddy {
+  box-shadow: inset 2px 0 0 var(--caddy);
+}
+
+.tabHead {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.num {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  font-size: 12px;
+  font-weight: 500;
+  border: 1.2px solid;
+}
+
+.git {
+  background: var(--git-tint);
+  border-color: var(--git);
+  color: var(--git-ink);
+}
+
+.docker {
+  background: var(--docker-tint);
+  border-color: var(--docker);
+  color: var(--docker-ink);
+}
+
+.pierd {
+  background: var(--pierd-tint);
+  border-color: var(--pierd);
+  color: var(--pierd-ink);
+}
+
+.caddy {
+  background: var(--caddy-tint);
+  border-color: var(--caddy);
+  color: var(--caddy-ink);
+}
+
+.tabTitle {
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 500;
+  color: var(--navy-900);
+}
+
+.tabText {
+  font-size: 14px;
+  line-height: 22px;
+  color: var(--navy-600);
+}
+
+/* Auto-advance timer along the bottom of the active step. */
+.progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  transform-origin: left center;
+  transform: scaleX(0);
+}
+
+:global(.motion) [data-in] .progress {
+  animation: step-progress 4200ms linear both;
+}
+
+@keyframes step-progress {
+  to {
+    transform: scaleX(1);
+  }
+}
+
+.bar_git {
+  background: var(--git);
+}
+
+.bar_docker {
+  background: var(--docker);
+}
+
+.bar_pierd {
+  background: var(--pierd);
+}
+
+.bar_caddy {
+  background: var(--caddy);
+}
+
+/* A light terminal, like Firecrawl's. */
+.terminal {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border-top: 1px solid var(--navy-100);
+  background: var(--white);
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  height: 44px;
+  padding: 0 12px 0 16px;
+  border-bottom: 1px solid var(--navy-100);
+}
+
+.dots {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.dots span {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 1px solid var(--navy-200);
+}
+
+.barTitle {
+  flex: 1;
+  font-size: 13px;
+  color: var(--navy-500);
+}
+
+.copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: var(--radius-pill);
+  font-size: 13px;
+  color: var(--navy-600);
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
+}
+
+.copy:hover {
+  background: var(--navy-50);
+  color: var(--navy-900);
+}
+
+.log {
+  margin: 0;
+  padding: 18px 16px 22px;
+  overflow-x: auto;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 20px;
+  color: var(--navy-900);
+  white-space: pre;
+}
+
+.line {
+  opacity: 0.5;
+  transition: opacity 300ms ease;
+}
+
+.lit {
+  opacity: 1;
+}
+
+.prompt,
+.remote {
+  color: var(--navy-400);
+}
+
+.tag_git {
+  color: var(--git-ink);
+}
+
+.tag_docker {
+  color: var(--docker-ink);
+}
+
+.tag_pierd {
+  color: var(--pierd-ink);
+}
+
+.tag_caddy {
+  color: var(--caddy-ink);
+}
+
+.url {
+  color: var(--pierd-ink);
+  text-decoration: underline;
+  text-decoration-color: rgba(31, 87, 201, 0.35);
+  text-underline-offset: 2px;
+}
+
+/* Firecrawl's closing row of cells. */
+.urls {
+  display: grid;
+  grid-template-columns: 1fr;
+  margin: 0;
+  border-top: 1px solid var(--navy-100);
+}
+
+.urlCell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px 20px;
+  min-width: 0;
+}
+
+.urlCell + .urlCell {
+  border-top: 1px solid var(--navy-100);
+}
+
+.urlCell dt {
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--navy-500);
+}
+
+.urlCell dd {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--navy-900);
+  overflow-wrap: anywhere;
+}
+
+@media (min-width: 768px) {
+  .frame {
+    margin-top: 56px;
+  }
+
+  .log {
+    font-size: 13px;
+    line-height: 22px;
+    padding: 20px 22px 26px;
+  }
+
+  .urls {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .urlCell {
+    align-items: center;
+    padding: 18px 16px;
+    text-align: center;
+  }
+
+  .urlCell + .urlCell {
+    border-top: 0;
+    border-left: 1px dashed var(--navy-150);
+  }
+}
+
+@media (min-width: 1024px) {
+  .frame {
+    grid-template-columns: 380px minmax(0, 1fr);
+    margin: 56px 56px 0;
+  }
+
+  .tab {
+    padding: 22px 24px 24px;
+  }
+
+  .terminal {
+    border-top: 0;
+    border-left: 1px solid var(--navy-100);
+  }
+
+  .urls {
+    grid-column: 1 / -1;
+  }
+}

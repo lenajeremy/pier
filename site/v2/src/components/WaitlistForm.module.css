@@ -1,0 +1,172 @@
+.wrap {
+  width: 100%;
+  max-width: 440px;
+}
+
+.field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px;
+  border-radius: var(--radius-pill);
+  background: var(--white);
+  border: 1px solid #d9dee8;
+  box-shadow: var(--shadow-1);
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.field:focus-within {
+  border-color: var(--pierd);
+  box-shadow: var(--ring);
+}
+
+.field[data-invalid] {
+  border-color: var(--danger);
+  box-shadow: none;
+}
+
+.input {
+  flex: 1;
+  min-width: 0;
+  height: 44px;
+  padding: 0 0 0 16px;
+  border: 0;
+  background: transparent;
+  font-size: 15px;
+  color: var(--navy-900);
+}
+
+.input::placeholder {
+  color: var(--navy-500);
+}
+
+.input:focus,
+.input:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+.button {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+  height: 44px;
+  padding: 0 18px;
+  border-radius: var(--radius-pill);
+  background: var(--navy-900);
+  color: var(--white);
+  font-size: 15px;
+  font-weight: 500;
+  white-space: nowrap;
+  transition: background-color 120ms ease;
+}
+
+.button:hover {
+  background: var(--navy-800);
+}
+
+.button:active {
+  background: var(--navy-950);
+}
+
+.button:disabled {
+  background: var(--navy-700);
+  cursor: progress;
+}
+
+.spinner {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(255, 255, 255, 0.35);
+  border-top-color: var(--white);
+  animation: spin 800ms linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.trap {
+  position: absolute;
+  left: -10000px;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.error {
+  padding: 8px 0 0 20px;
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--danger-ink);
+  text-align: left;
+}
+
+.error:empty {
+  display: none;
+}
+
+.result {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 54px;
+  padding: 12px 20px;
+  border-radius: var(--radius-pill);
+  font-size: 15px;
+  line-height: 21px;
+  text-align: left;
+}
+
+.result svg {
+  flex-shrink: 0;
+}
+
+.joined {
+  background: var(--docker-tint);
+  border: 1px solid #bfe6de;
+  color: var(--docker-ink);
+}
+
+.already {
+  background: var(--navy-50);
+  border: 1px solid var(--navy-100);
+  color: var(--navy-700);
+}
+
+/* On the navy band the pill stays white; only the focus ring changes so it
+   reads against navy. */
+.dark .field {
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.dark .field:focus-within {
+  border-color: transparent;
+  box-shadow: 0 0 0 3px rgba(110, 155, 245, 0.55);
+}
+
+.dark .field[data-invalid] {
+  box-shadow: 0 0 0 2px var(--danger);
+}
+
+.dark .button:focus-visible {
+  box-shadow: 0 0 0 2px var(--white), 0 0 0 4px var(--pierd);
+}
+
+.dark .error {
+  color: #ffb4b4;
+}
+
+@media (min-width: 1024px) {
+  .input,
+  .button {
+    height: 40px;
+  }
+}

@@ -1,0 +1,221 @@
+.footer {
+  container-type: inline-size;
+  padding: 48px var(--gutter) 0;
+  overflow: hidden;
+}
+
+.top {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+}
+
+.brand {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 300px;
+}
+
+.tagline {
+  font-size: 15px;
+  line-height: 24px;
+  color: var(--navy-600);
+}
+
+/* Retool's calls to action in the footer. */
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.cta {
+  display: inline-flex;
+  align-items: center;
+  height: 38px;
+  padding: 0 16px;
+  border-radius: var(--radius-pill);
+  background: var(--navy-900);
+  color: var(--white);
+  font-size: 14px;
+  font-weight: 500;
+  transition: background-color 120ms ease;
+}
+
+.cta:hover {
+  background: var(--navy-800);
+}
+
+.iconLink {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--navy-200);
+  color: var(--navy-900);
+  transition: background-color 120ms ease;
+}
+
+.iconLink:hover {
+  background: var(--navy-50);
+}
+
+/* Dovetail's small chip beside a link that isn't live yet. Too wide for
+   three columns on a phone, so it starts at tablet width. */
+.soon {
+  display: none;
+  margin-left: 8px;
+  padding: 0 7px;
+  border-radius: var(--radius-pill);
+  background: var(--navy-50);
+  border: 1px solid var(--navy-100);
+  font-size: 11px;
+  line-height: 17px;
+  color: var(--navy-500);
+}
+
+.columns {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.colTitle {
+  padding-bottom: 6px;
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 500;
+}
+
+.link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  font-size: 14px;
+  color: var(--navy-600);
+  transition: color 120ms ease;
+}
+
+.link:hover {
+  color: var(--navy-900);
+}
+
+.wideOnly {
+  display: none;
+}
+
+.legalLinks {
+  display: flex;
+  gap: 20px;
+}
+
+.legalLink {
+  color: var(--navy-600);
+  text-decoration: underline;
+  text-decoration-color: var(--navy-200);
+  text-underline-offset: 3px;
+}
+
+.legalLink:hover {
+  color: var(--navy-900);
+}
+
+.legal {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 32px;
+  padding: 16px 0;
+  border-top: 1px solid var(--navy-100);
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--navy-500);
+}
+
+/* The sign-off: "pier" set to fill the column, cut off by the page's bottom
+   edge. Container query units keep it the same proportion at every width. */
+.wordmark {
+  height: 0.6em;
+  margin-top: 24px;
+  overflow: hidden;
+  font-size: 38cqi;
+  line-height: 0.8;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  color: var(--navy-900);
+  text-align: center;
+  padding-right: 0.05em;
+  user-select: none;
+}
+
+/* Retool signs off with its mark and name together. */
+.word {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 0.07em;
+}
+
+.mark {
+  width: 0.62em;
+  height: 0.62em;
+  margin-top: 0.05em;
+}
+
+/* The sign-off rises out of the page's bottom edge. */
+:global(.motion) .word {
+  transform: translateY(70%);
+}
+
+:global(.motion) [data-in] .word {
+  animation: word-rise 1100ms var(--ease-out) 100ms both;
+}
+
+@keyframes word-rise {
+  from {
+    transform: translateY(70%);
+  }
+  to {
+    transform: none;
+  }
+}
+
+@media (min-width: 768px) {
+  .footer {
+    padding: 64px 56px 0;
+  }
+
+  .top {
+    flex-direction: row;
+    justify-content: space-between;
+  }
+
+  .columns {
+    display: flex;
+    gap: 80px;
+  }
+
+  .colTitle {
+    padding-bottom: 8px;
+  }
+
+  .link {
+    min-height: 29px;
+  }
+
+  .wideOnly {
+    display: list-item;
+  }
+
+  .soon {
+    display: inline;
+  }
+
+  .legal {
+    margin-top: 56px;
+    padding: 20px 0;
+  }
+}

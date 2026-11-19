@@ -1,0 +1,37 @@
+.cells {
+  overflow: hidden;
+  border-top: 1px solid var(--navy-100);
+}
+
+.bottom {
+  border-bottom: 1px solid var(--navy-100);
+}
+
+/* Every cell draws its own top and left line; shifting the grid up and left
+   by 1px hides the ones on the outer edge. */
+.grid {
+  --stagger: 0ms;
+  display: grid;
+  grid-template-columns: repeat(var(--c1), minmax(0, 1fr));
+  margin: -1px 0 0 -1px;
+}
+
+.cell {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--navy-100);
+  border-left: 1px dashed var(--navy-150);
+}
+
+@media (min-width: 768px) {
+  .grid {
+    --stagger: var(--stagger-lg);
+    grid-template-columns: repeat(var(--c2), minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1024px) {
+  .grid {
+    grid-template-columns: repeat(var(--c3), minmax(0, 1fr));
+  }
+}

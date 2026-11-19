@@ -1,0 +1,43 @@
+.head {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 0 var(--gutter);
+}
+
+.title {
+  font-size: 32px;
+  line-height: 38px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+
+.lede {
+  max-width: 620px;
+  font-size: 17px;
+  line-height: 27px;
+  color: var(--navy-600);
+  text-wrap: pretty;
+}
+
+@media (min-width: 768px) {
+  .head {
+    align-items: center;
+    gap: 16px;
+    max-width: 760px;
+    margin: 0 auto;
+    text-align: center;
+  }
+
+  .title {
+    font-size: 44px;
+    line-height: 50px;
+    letter-spacing: -0.025em;
+  }
+
+  .lede {
+    font-size: 18px;
+    line-height: 28px;
+  }
+}

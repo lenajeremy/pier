@@ -1,0 +1,225 @@
+.section {
+  padding-top: var(--section-y);
+  border-top: 1px solid var(--navy-100);
+}
+
+.rollback {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  padding: 40px var(--gutter) var(--section-y);
+}
+
+.copy {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.rollbackTitle {
+  font-size: 24px;
+  line-height: 30px;
+  font-weight: 500;
+  letter-spacing: -0.015em;
+}
+
+.rollbackText {
+  font-size: 16px;
+  line-height: 26px;
+  color: var(--navy-600);
+  text-wrap: pretty;
+}
+
+.terminal {
+  display: grid;
+  margin: 4px 0 0;
+  padding: 14px 16px;
+  background: var(--navy-900);
+  color: var(--white);
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 22px;
+  white-space: pre-wrap;
+}
+
+/* Two command pairs share one spot; only the first shows without motion. */
+.termA,
+.termB {
+  grid-area: 1 / 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.termB {
+  display: none;
+}
+
+.line {
+  display: block;
+  width: fit-content;
+}
+
+.prompt {
+  color: var(--navy-400);
+}
+
+.output {
+  color: var(--navy-300);
+}
+
+/* In sync with the alias diagram (alias.module.css): rollback types at
+   6-14%, its result shows at 19%; promote types at 58-66%, its result shows
+   at 72%. */
+:global(.motion) .termB {
+  display: flex;
+}
+
+:global(.motion) [data-in] .a1 {
+  animation: term-a1 var(--cycle) linear var(--start) infinite both;
+}
+
+:global(.motion) [data-in] .a2 {
+  animation: term-a2 var(--cycle) linear var(--start) infinite both;
+}
+
+:global(.motion) [data-in] .b1 {
+  animation: term-b1 var(--cycle) linear var(--start) infinite both;
+}
+
+:global(.motion) [data-in] .b2 {
+  animation: term-b2 var(--cycle) linear var(--start) infinite both;
+}
+
+@keyframes term-a1 {
+  0%,
+  6% {
+    opacity: 1;
+    clip-path: inset(0 100% 0 0);
+    animation-timing-function: steps(20, end);
+  }
+  14%,
+  54% {
+    opacity: 1;
+    clip-path: inset(0 0 0 0);
+  }
+  56%,
+  100% {
+    opacity: 0;
+    clip-path: inset(0 0 0 0);
+  }
+}
+
+@keyframes term-a2 {
+  0%,
+  17% {
+    opacity: 0;
+  }
+  19%,
+  54% {
+    opacity: 1;
+  }
+  56%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes term-b1 {
+  0%,
+  57% {
+    opacity: 0;
+    clip-path: inset(0 100% 0 0);
+  }
+  58% {
+    opacity: 1;
+    clip-path: inset(0 100% 0 0);
+    animation-timing-function: steps(21, end);
+  }
+  66%,
+  98% {
+    opacity: 1;
+    clip-path: inset(0 0 0 0);
+  }
+  100% {
+    opacity: 0;
+    clip-path: inset(0 0 0 0);
+  }
+}
+
+@keyframes term-b2 {
+  0%,
+  70% {
+    opacity: 0;
+  }
+  72%,
+  98% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+.diagram {
+  align-self: center;
+  width: 100%;
+  max-width: 440px;
+}
+
+.wide {
+  display: none;
+  width: 100%;
+  height: auto;
+}
+
+.tall {
+  width: 100%;
+  height: auto;
+}
+
+@media (min-width: 768px) {
+  .rollback {
+    gap: 40px;
+    padding: 56px var(--gutter) var(--section-y);
+  }
+
+  .rollbackTitle {
+    font-size: 30px;
+    line-height: 36px;
+  }
+
+  .rollbackText {
+    font-size: 17px;
+    line-height: 27px;
+  }
+
+  .diagram {
+    max-width: 640px;
+  }
+
+  .wide {
+    display: block;
+  }
+
+  .tall {
+    display: none;
+  }
+}
+
+@media (min-width: 1100px) {
+  .rollback {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    padding: 64px 56px var(--section-y);
+  }
+
+  .copy {
+    width: 360px;
+    flex-shrink: 0;
+  }
+
+  .diagram {
+    flex: 0 1 640px;
+  }
+}

@@ -1,0 +1,119 @@
+.footer {
+  display: flex;
+  flex-direction: column;
+  padding: 72px var(--gutter) 0;
+  overflow: hidden;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  background: var(--ground);
+}
+
+.top,
+.legal {
+  width: 100%;
+  max-width: 1248px;
+  margin: 0 auto;
+}
+
+.top {
+  display: flex;
+  flex-direction: column;
+  gap: 40px;
+}
+
+.brand {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 320px;
+}
+
+.brand p {
+  font-size: 15px;
+  line-height: 24px;
+  color: var(--muted);
+}
+
+.logo {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 21px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.cols {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 40px 64px;
+}
+
+.col {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.col ul {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.colTitle {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.col a {
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.col a:hover {
+  color: var(--text);
+}
+
+.legal {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 56px;
+  padding: 20px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 13px;
+  color: var(--dim);
+}
+
+/* PIER in big tiles, cut by the bottom edge of the page. */
+.wordmark {
+  display: flex;
+  justify-content: center;
+  height: calc(min(230px, 19vw) * 1.5 * 0.64);
+  margin-top: 20px;
+  overflow: hidden;
+}
+
+.mark {
+  align-self: flex-start;
+  padding: calc(min(230px, 19vw) * 0.07);
+  border-radius: calc(min(230px, 19vw) * 0.08);
+}
+
+.mark :global(.flaps).tiles {
+  --w: min(230px, 19vw);
+  --h: calc(var(--w) * 1.5);
+  --f: calc(var(--w) * 1.22);
+  --tg: calc(var(--w) * 0.05);
+}
+
+@media (min-width: 900px) {
+  .top {
+    flex-direction: row;
+    justify-content: space-between;
+  }
+
+  .cols {
+    gap: 80px;
+  }
+}

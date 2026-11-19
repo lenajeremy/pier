@@ -1,0 +1,63 @@
+/* Pier V3 tokens. Source: the board's "V3 Direction" artboard and
+   design/v3/plan.md. */
+:root {
+  /* The world: a board at night */
+  --ground: #07090f;
+  --housing: rgba(5, 7, 12, 0.84);
+  --tile-top: #1a2030;
+  --tile-mid: #131826;
+  --tile-low: #0f131d;
+  --tile-bottom: #0c1018;
+  --flap-ink: #f1eee6;
+  --pin: #2a3042;
+
+  /* Interface */
+  --text: #eceef4;
+  --muted: #a3abbe;
+  --dim: #8a92a8;
+  --faint: #5e667b;
+  --line: rgba(255, 255, 255, 0.09);
+  --line-soft: rgba(255, 255, 255, 0.06);
+  --panel: rgba(14, 18, 28, 0.88);
+  --panel-solid: #0e121c;
+  --well: rgba(7, 9, 15, 0.72);
+
+  /* Status colours: Pier's part colours, on dark */
+  --pink: #f49ccb; /* Caddy, production */
+  --violet: #bcaef8; /* git, preview, building */
+  --teal: #62d8c6; /* Docker, healthy, awake */
+  --blue: #8db2f8; /* pierd */
+  --asleep: #8e96aa;
+
+  /* Washes behind every section */
+  --wash-navy: rgba(30, 44, 98, 0.55);
+  --wash-violet: rgba(52, 34, 104, 0.42);
+  --wash-plum: rgba(70, 24, 66, 0.3);
+  --wash-deep: rgba(22, 40, 92, 0.55);
+
+  --sans: 'Schibsted Grotesk', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --mono: 'Red Hat Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --radius-panel: 12px;
+  --radius-pill: 999px;
+  --shadow-panel: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 30px 80px rgba(0, 0, 0, 0.45);
+  --focus: 0 0 0 2px var(--ground), 0 0 0 4px var(--blue);
+
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --gutter: 20px;
+  --section-y: 96px;
+  --content: min(1248px, calc(100% - 2 * var(--gutter)));
+}
+
+@media (min-width: 768px) {
+  :root {
+    --gutter: 40px;
+    --section-y: 120px;
+  }
+}
+
+@media (min-width: 1200px) {
+  :root {
+    --gutter: 96px;
+  }
+}

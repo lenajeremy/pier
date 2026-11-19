@@ -1,0 +1,176 @@
+/* Full width: the band spans the whole window, outside the page column. */
+.band {
+  background-color: var(--navy-900);
+  color: var(--white);
+  scroll-margin-top: 16px;
+}
+
+.inner {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 18px;
+  width: var(--column);
+  margin: 0 auto;
+  padding: 72px var(--gutter) 0;
+}
+
+.signature {
+  width: 232px;
+  height: auto;
+  overflow: visible;
+}
+
+.title {
+  margin-top: 6px;
+  font-size: 32px;
+  line-height: 38px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+}
+
+.text {
+  max-width: 520px;
+  font-size: 16px;
+  line-height: 26px;
+  color: var(--navy-300);
+}
+
+.form {
+  width: 100%;
+  max-width: 440px;
+  margin-top: 8px;
+}
+
+.pulse {
+  opacity: 0;
+}
+
+/* A deploy runs through the four parts every 4 seconds. */
+:global(.motion) [data-in] .pulse {
+  animation: sig-pulse 4s ease-out calc(1.6s + var(--t)) infinite both;
+}
+
+:global(.motion) [data-in] .flow {
+  animation: sig-flow 1s linear 1.2s infinite;
+}
+
+@keyframes sig-pulse {
+  0% {
+    opacity: 0;
+  }
+  6% {
+    opacity: 1;
+  }
+  28%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes sig-flow {
+  to {
+    stroke-dashoffset: -8;
+  }
+}
+
+@media (min-width: 768px) {
+  .inner {
+    align-items: center;
+    gap: 22px;
+    padding: 96px var(--gutter) 0;
+    text-align: center;
+  }
+
+  .signature {
+    width: 332px;
+  }
+
+  .title {
+    margin-top: 10px;
+    font-size: 48px;
+    line-height: 54px;
+  }
+
+  .text {
+    font-size: 18px;
+    line-height: 28px;
+  }
+}
+
+/* From laptop width up the page sits on dots with a dashed column; the band
+   keeps both, in navy. */
+@media (min-width: 1024px) {
+  .band {
+    background-image: radial-gradient(circle at 2px 2px, rgba(255, 255, 255, 0.07) 1px, transparent 1.2px);
+    background-size: 14px 14px;
+  }
+
+  .inner {
+    background: var(--navy-900);
+    border-left: 1px dashed rgba(255, 255, 255, 0.12);
+    border-right: 1px dashed rgba(255, 255, 255, 0.12);
+  }
+}
+
+/* The product peeking up from the bottom edge. */
+.peek {
+  align-self: stretch;
+  height: 176px;
+  margin-top: 40px;
+  overflow: hidden;
+  text-align: left;
+}
+
+.window {
+  max-width: 880px;
+  margin: 0 auto;
+  background: var(--white);
+  border: 1px solid #d5dbe6;
+  border-bottom: 0;
+  box-shadow: 0 -12px 48px rgba(0, 0, 0, 0.28);
+}
+
+.panels {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+  padding: 16px;
+}
+
+.panels > div,
+.second > div {
+  border: 1px solid var(--navy-100);
+}
+
+.second {
+  display: none;
+}
+
+.barWide {
+  display: none;
+}
+
+@media (min-width: 768px) {
+  .peek {
+    height: 236px;
+    margin-top: 64px;
+  }
+
+  .panels {
+    grid-template-columns: 1fr 1fr;
+    padding: 20px 24px;
+  }
+
+  .second {
+    display: block;
+  }
+
+  .barWide {
+    display: block;
+  }
+
+  .barCompact {
+    display: none;
+  }
+}

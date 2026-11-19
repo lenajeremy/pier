@@ -1,0 +1,25 @@
+.page {
+  min-height: 100vh;
+  overflow-x: clip;
+}
+
+.column {
+  width: var(--column);
+  margin: 0 auto;
+  background: var(--white);
+}
+
+/* From laptop width up, the white column sits on a dotted page with dashed
+   edges, like a sheet on the design canvas. */
+@media (min-width: 1024px) {
+  .page {
+    background-color: var(--white);
+    background-image: var(--dots-page);
+    background-size: 14px 14px;
+  }
+
+  .column {
+    border-left: 1px dashed var(--navy-150);
+    border-right: 1px dashed var(--navy-150);
+  }
+}

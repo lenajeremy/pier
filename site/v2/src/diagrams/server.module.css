@@ -1,0 +1,171 @@
+/* Architecture diagram. Two loops share a 6s cycle: a visitor's request goes
+   through Caddy to a container, and half a cycle later a git push goes from
+   your laptop through pierd to Docker. Halos (flow.module.css) light each
+   part as a packet reaches it. */
+.part {
+  transition: opacity 250ms ease;
+}
+
+/* The parts list beside the diagram focuses one part; the rest step back. */
+.dim {
+  opacity: 0.25;
+}
+
+.packet {
+  opacity: 0;
+  pointer-events: none;
+}
+
+:global(.motion) [data-in] .reqWide {
+  animation: req-wide var(--cycle) linear var(--start) infinite both;
+}
+
+:global(.motion) [data-in] .depWide {
+  animation: dep-wide var(--cycle) linear calc(var(--start) + var(--cycle) / 2) infinite both;
+}
+
+:global(.motion) [data-in] .reqTall {
+  animation: req-tall var(--cycle) linear var(--start) infinite both;
+}
+
+:global(.motion) [data-in] .depTall {
+  animation: dep-tall var(--cycle) linear calc(var(--start) + var(--cycle) / 2) infinite both;
+}
+
+/* Visitors → Caddy, then Caddy → a container. */
+@keyframes req-wide {
+  0% {
+    opacity: 0;
+    transform: translate(0, 0);
+  }
+  3% {
+    opacity: 1;
+  }
+  30% {
+    opacity: 1;
+    transform: translate(252px, 0);
+  }
+  32% {
+    opacity: 0;
+    transform: translate(252px, 0);
+  }
+  33% {
+    opacity: 0;
+    transform: translate(338px, 28px);
+  }
+  36% {
+    opacity: 1;
+  }
+  55% {
+    opacity: 1;
+    transform: translate(338px, 110px);
+  }
+  57%,
+  100% {
+    opacity: 0;
+    transform: translate(338px, 110px);
+  }
+}
+
+/* Laptop → pierd, then pierd → Docker. */
+@keyframes dep-wide {
+  0% {
+    opacity: 0;
+    transform: translate(0, 0);
+  }
+  2% {
+    opacity: 1;
+  }
+  10% {
+    opacity: 1;
+    transform: translate(52px, 0);
+  }
+  12% {
+    opacity: 0;
+    transform: translate(52px, 0);
+  }
+  13% {
+    opacity: 0;
+    transform: translate(208px, -18px);
+  }
+  15% {
+    opacity: 1;
+  }
+  24% {
+    opacity: 1;
+    transform: translate(250px, -18px);
+  }
+  26%,
+  100% {
+    opacity: 0;
+    transform: translate(250px, -18px);
+  }
+}
+
+@keyframes req-tall {
+  0% {
+    opacity: 0;
+    transform: translate(0, 0);
+  }
+  3% {
+    opacity: 1;
+  }
+  22% {
+    opacity: 1;
+    transform: translate(0, 64px);
+  }
+  24% {
+    opacity: 0;
+    transform: translate(0, 64px);
+  }
+  25% {
+    opacity: 0;
+    transform: translate(0, 120px);
+  }
+  28% {
+    opacity: 1;
+  }
+  40% {
+    opacity: 1;
+    transform: translate(0, 158px);
+  }
+  42%,
+  100% {
+    opacity: 0;
+    transform: translate(0, 158px);
+  }
+}
+
+@keyframes dep-tall {
+  0% {
+    opacity: 0;
+    transform: translate(0, 0);
+  }
+  2% {
+    opacity: 1;
+  }
+  12% {
+    opacity: 1;
+    transform: translate(0, -64px);
+  }
+  14% {
+    opacity: 0;
+    transform: translate(0, -64px);
+  }
+  15% {
+    opacity: 0;
+    transform: translate(0, -150px);
+  }
+  17% {
+    opacity: 1;
+  }
+  26% {
+    opacity: 1;
+    transform: translate(0, -184px);
+  }
+  28%,
+  100% {
+    opacity: 0;
+    transform: translate(0, -184px);
+  }
+}

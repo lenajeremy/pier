@@ -1,0 +1,81 @@
+/* Packets travel along a diagram's connectors on a loop, and each part
+   lights up (a halo) as the packet passes. All loops share --cycle; --t is
+   when the packet reaches that part. Packets and halos only exist in motion. */
+.packet,
+.halo {
+  opacity: 0;
+  pointer-events: none;
+}
+
+:global(.motion) [data-in] .packetX {
+  animation: packet-x var(--cycle, 5s) linear var(--start, 1.8s) infinite;
+}
+
+:global(.motion) [data-in] .packetY {
+  animation: packet-y var(--cycle, 5s) linear var(--start, 1.8s) infinite;
+}
+
+:global(.motion) [data-in] .halo {
+  animation: halo var(--cycle, 5s) ease-out calc(var(--start, 1.8s) + var(--t, 0s)) infinite;
+}
+
+@keyframes packet-x {
+  0% {
+    opacity: 0;
+    transform: translateX(0);
+  }
+  4% {
+    opacity: 1;
+  }
+  58% {
+    opacity: 1;
+  }
+  60% {
+    transform: translateX(var(--travel));
+  }
+  64% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(var(--travel));
+  }
+}
+
+@keyframes packet-y {
+  0% {
+    opacity: 0;
+    transform: translateY(0);
+  }
+  4% {
+    opacity: 1;
+  }
+  58% {
+    opacity: 1;
+  }
+  60% {
+    transform: translateY(var(--travel));
+  }
+  64% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(var(--travel));
+  }
+}
+
+@keyframes halo {
+  0% {
+    opacity: 0;
+  }
+  5% {
+    opacity: 1;
+  }
+  22% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 0;
+  }
+}

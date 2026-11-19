@@ -1,0 +1,161 @@
+.hero {
+  display: flex;
+  flex-direction: column;
+}
+
+.header {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 52px var(--gutter) 36px;
+}
+
+.title {
+  max-width: 1000px;
+  font-size: clamp(38px, calc(24px + 2.4vw), 58px);
+  line-height: 1.08;
+  font-weight: 500;
+  letter-spacing: -0.03em;
+  text-wrap: balance;
+}
+
+.lede {
+  max-width: 670px;
+  font-size: 17px;
+  line-height: 27px;
+  color: var(--navy-600);
+  text-wrap: pretty;
+}
+
+.form {
+  width: 100%;
+  max-width: 440px;
+  margin-top: 8px;
+}
+
+.stage {
+  display: block;
+}
+
+/* Phones get the shorter copy from the mobile design. */
+.long {
+  display: none;
+}
+
+@media (min-width: 768px) {
+  .long {
+    display: inline;
+  }
+
+  .short {
+    display: none;
+  }
+}
+
+.canvas {
+  border-left: 0;
+  border-right: 0;
+}
+
+/* The phone canvas runs edge to edge, so its corner handles would sit off
+   the screen. */
+.canvas > span {
+  display: none;
+}
+
+.wide {
+  display: none;
+  width: 100%;
+  height: auto;
+}
+
+.tall {
+  width: 100%;
+  max-width: 440px;
+  height: auto;
+  margin: 8px auto 0;
+}
+
+.caption {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 var(--gutter);
+  padding: 20px 0 28px;
+  border-top: 1px solid var(--navy-100);
+}
+
+.captionLead {
+  font-size: 15px;
+  line-height: 23px;
+  color: var(--navy-900);
+}
+
+.captionNote {
+  font-size: 14px;
+  line-height: 22px;
+  color: var(--navy-600);
+}
+
+@media (min-width: 768px) {
+  .header {
+    align-items: center;
+    padding-top: 80px;
+    text-align: center;
+  }
+
+  .title span {
+    display: block;
+  }
+
+  .lede {
+    font-size: 18px;
+    line-height: 28px;
+  }
+}
+
+@media (min-width: 960px) {
+  .header {
+    padding-top: 96px;
+    padding-bottom: 44px;
+  }
+
+  .form {
+    margin-top: 14px;
+  }
+
+  .canvas {
+    margin: 0 6px;
+    border-left: 1px solid var(--navy-100);
+    border-right: 1px solid var(--navy-100);
+    overflow: visible;
+  }
+
+  .canvas > span {
+    display: block;
+  }
+
+  .wide {
+    display: block;
+  }
+
+  .tall {
+    display: none;
+  }
+
+  .caption {
+    margin: 0 58px;
+    padding: 22px 0 24px;
+  }
+
+  .captionLead {
+    font-size: 17px;
+    line-height: 26px;
+  }
+
+  .captionNote {
+    font-size: 15px;
+    line-height: 24px;
+  }
+}

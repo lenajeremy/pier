@@ -1,0 +1,119 @@
+/* The rollback loop. Production is an alias: `pier rollback` slides it from
+   8f3a2c to the older 41d0e9, then `pier promote` slides it back. Nothing
+   rebuilds, the pointer just moves. The terminal beside the diagram
+   (HowItWorks.module.css) runs on the same --cycle and --start, so the
+   commands type out as the alias moves.
+
+   Without motion the diagram shows its resting state: production on 8f3a2c,
+   the rollback path dashed. */
+.hiNew,
+.hintFwd {
+  opacity: 0;
+}
+
+:global(.motion) .march {
+  animation: march 900ms linear infinite;
+}
+
+@keyframes march {
+  to {
+    stroke-dashoffset: -8;
+  }
+}
+
+:global(.motion) [data-in] .move {
+  animation: alias-move var(--cycle) linear var(--start) infinite both;
+}
+
+:global(.motion) [data-in] .hiOld {
+  animation: hi-old var(--cycle) linear var(--start) infinite both;
+}
+
+:global(.motion) [data-in] .hiNew {
+  animation: hi-new var(--cycle) linear var(--start) infinite both;
+}
+
+:global(.motion) [data-in] .hintBack {
+  animation: hint-back var(--cycle) linear var(--start) infinite both;
+}
+
+:global(.motion) [data-in] .hintFwd {
+  animation: hint-fwd var(--cycle) linear var(--start) infinite both;
+}
+
+@keyframes alias-move {
+  0%,
+  18% {
+    transform: none;
+    animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1);
+  }
+  28%,
+  70% {
+    transform: var(--move);
+    animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1);
+  }
+  80%,
+  100% {
+    transform: none;
+  }
+}
+
+@keyframes hi-old {
+  0%,
+  21% {
+    opacity: 1;
+  }
+  26%,
+  75% {
+    opacity: 0;
+  }
+  80%,
+  100% {
+    opacity: 1;
+  }
+}
+
+@keyframes hi-new {
+  0%,
+  21% {
+    opacity: 0;
+  }
+  26%,
+  75% {
+    opacity: 1;
+  }
+  80%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes hint-back {
+  0%,
+  17% {
+    opacity: 1;
+  }
+  20%,
+  88% {
+    opacity: 0;
+  }
+  94%,
+  100% {
+    opacity: 1;
+  }
+}
+
+@keyframes hint-fwd {
+  0%,
+  54% {
+    opacity: 0;
+  }
+  58%,
+  72% {
+    opacity: 1;
+  }
+  76%,
+  100% {
+    opacity: 0;
+  }
+}

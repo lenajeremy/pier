@@ -1,0 +1,23 @@
+.DS_Store
+node_modules/
+
+# API keys for asset generation
+.env
+
+# Build output
+pier/bin/
+site/server/bin/
+site/server/dist/
+site/server/dist-v3/
+
+# Local data. Never commit it: the waitlist holds people's email addresses,
+# and pier/.data holds a development server's keys and token.
+pier/.data/
+site/server/data/
+*.db
+*.db-shm
+*.db-wal
+
+# Design work: board references, generated images and their prompts. It
+# lives on the Screenshotter board and on disk, not in the code's history.
+design/
