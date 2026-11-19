@@ -25,7 +25,7 @@ func span(r *http.Request) (from, to int64) {
 	if from < oldest {
 		from = oldest
 	}
-	return from, to
+	return from, max(from, to)
 }
 
 func statusFilter(s string) string {
@@ -81,16 +81,19 @@ func (a *API) requestChart(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	total, errs, busiest := 0, 0, requests.Bucket{}
+	total, errs, e4, e5 := 0, 0, 0, 0
+	var busiest requests.Bucket
 	for _, b := range buckets {
 		total += b.Requests
 		errs += b.Errors
+		e4 += b.E4xx
+		e5 += b.E5xx
 		if b.Requests > busiest.Requests {
 			busiest = b
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"from": from, "to": to, "bucket_ms": step, "buckets": nonNil(buckets),
-		"requests": total, "errors": errs, "busiest": busiest,
+		"requests": total, "errors": errs, "busiest": busiest, "e4xx": e4, "e5xx": e5,
 	})
 }

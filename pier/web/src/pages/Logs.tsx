@@ -1,7 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { localDay } from '../lib/calendar'
 import { api } from '../lib/api'
 import { Search } from '../components/Icons'
 import { RequestsChart, type ChartData } from '../components/RequestsChart'
+import { DateRangePicker, type Span } from '../components/DateRangePicker'
 
 type Line = { id: number; deployment: string; at: number; method: string; path: string; status: number; ms: number; bytes: number }
 
@@ -16,13 +18,21 @@ const ranges = [
 // the requests and errors charts; then the requests themselves, followed
 // live while the range ends now.
 export function Logs({ project, address }: { project: string; address: string }) {
-  const [range, setRange] = useState('24h')
-  const [status, setStatus] = useState('')
+  const params = new URLSearchParams(location.search)
+  const [range, setRange] = useState(params.get('day') === 'yesterday' ? 'custom' : '24h') // a key from ranges, or 'custom'
+  const [custom, setCustom] = useState<Span | null>(() => {
+    const yesterday = localDay(new Date(), -1)
+    return range === 'custom' ? { from: yesterday, to: yesterday } : null
+  })
+  const [picking, setPicking] = useState(false)
+  const closePicker = useCallback(() => setPicking(false), [])
+  const [status, setStatus] = useState(params.get('status') === 'errors' ? 'errors' : '')
   const [query, setQuery] = useState('')
   const [q, setQ] = useState('') // the query, applied a moment after typing stops
   const [chart, setChart] = useState<ChartData | null>(null)
   const [lines, setLines] = useState<Line[]>([])
   const [loaded, setLoaded] = useState(false)
+  const [error, setError] = useState(false)
   const box = useRef<HTMLDivElement>(null)
   const atBottom = useRef(true)
 
@@ -37,11 +47,22 @@ export function Logs({ project, address }: { project: string; address: string })
     let after = 0
     let all: Line[] = []
     setLoaded(false)
-    const span = ranges.find((r) => r.key === range)!.ms
+    setError(false)
+    setChart(null)
+    setLines([])
     const base = `/api/projects/${encodeURIComponent(project)}/requests`
-    const filters = () => {
+    // A custom range covers whole days; it follows live when it ends today.
+    const bounds = () => {
+      if (range === 'custom' && custom) {
+        const end = localDay(custom.to, 1).getTime()
+        return { from: custom.from.getTime(), to: Math.min(Date.now(), end), live: end > Date.now() }
+      }
       const to = Date.now()
-      const p = new URLSearchParams({ from: String(to - span), to: String(to) })
+      return { from: to - ranges.find((r) => r.key === range)!.ms, to, live: true }
+    }
+    const filters = () => {
+      const { from, to } = bounds()
+      const p = new URLSearchParams({ from: String(from), to: String(to) })
       if (status) p.set('status', status)
       if (q) p.set('q', q)
       return p
@@ -55,28 +76,35 @@ export function Logs({ project, address }: { project: string; address: string })
         ])
         if (stopped) return
         setChart(c)
-        all = first ? l.lines : [...all, ...l.lines].slice(-500)
+        all = first ? l.lines : [...all, ...l.lines].filter((line) => line.at >= Number(p.get('from'))).slice(-500)
         if (all.length) after = all[all.length - 1].id
         setLines(all)
         setLoaded(true)
+        setError(false)
       } catch {
-        // keep what's shown; try again on the next tick
+        if (!stopped) setError(true)
       }
-      if (!stopped) timer = window.setTimeout(() => tick(false), 3000)
+      if (!stopped && bounds().live) timer = window.setTimeout(() => tick(false), 3000)
     }
     tick(true)
     return () => {
       stopped = true
       window.clearTimeout(timer)
     }
-  }, [project, range, status, q])
+  }, [project, range, custom, status, q])
+  const live = range !== 'custom' || !custom || localDay(custom.to, 1).getTime() > Date.now()
+  const customLabel = custom
+    ? custom.from.getTime() === custom.to.getTime()
+      ? fmtDay(custom.from)
+      : `${fmtDay(custom.from)} to ${fmtDay(custom.to)}`
+    : 'Custom'
 
   useEffect(() => {
     const el = box.current
     if (el && atBottom.current) el.scrollTop = el.scrollHeight
   }, [lines])
 
-  const day = range === '7d'
+  const day = range === '7d' || range === 'custom'
   return (
     <main className="main" style={{ gap: 16 }}>
       <div className="toolbar">
@@ -92,22 +120,61 @@ export function Logs({ project, address }: { project: string; address: string })
           <option value="5xx">5xx</option>
           <option value="errors">Errors only</option>
         </select>
-        <div className="range" role="radiogroup" aria-label="Time range">
-          {ranges.map((r) => (
-            <button key={r.key} className={range === r.key ? 'on' : ''} role="radio" aria-checked={range === r.key} onClick={() => setRange(r.key)}>
-              {r.key}
+        <div style={{ position: 'relative' }}>
+          <div className="range" role="radiogroup" aria-label="Time range">
+            {ranges.map((r) => (
+              <button
+                key={r.key}
+                className={range === r.key ? 'on' : ''}
+                role="radio"
+                aria-checked={range === r.key}
+                onClick={() => {
+                  setRange(r.key)
+                  setPicking(false)
+                }}
+              >
+                {r.key}
+              </button>
+            ))}
+            <button
+              className={'custom' + (range === 'custom' ? ' on' : '')}
+              role="radio"
+              aria-checked={range === 'custom'}
+              aria-expanded={picking}
+              onClick={() => setPicking(!picking)}
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" width="14" height="14" aria-hidden>
+                <rect x="4" y="5.5" width="16" height="14" rx="2" />
+                <path d="M4 10H20M8.5 3.5V7M15.5 3.5V7" />
+              </svg>
+              {range === 'custom' ? customLabel : 'Custom'}
             </button>
-          ))}
+          </div>
+          {picking && (
+            <DateRangePicker
+              value={custom}
+              onCancel={closePicker}
+              onApply={(s) => {
+                setCustom(s === '24h' ? null : s)
+                setRange(s === '24h' ? '24h' : 'custom')
+                setPicking(false)
+              }}
+            />
+          )}
         </div>
       </div>
 
-      {chart && <RequestsChart data={chart} live />}
+      {error && <div role="alert">Couldn’t load request logs. {live ? 'Trying again shortly.' : 'Refresh to try again.'}</div>}
+      {range === 'custom' && custom && (q || status) && custom.from.getTime() < Date.now() - 14 * 86_400_000 && (
+        <span className="t-note">Filtered charts use the last 14 days of request lines.</span>
+      )}
+      {chart && <RequestsChart data={chart} live={live} />}
 
       <section className="panel log-viewer">
         <div className="panel-head" style={{ minHeight: 44, padding: '0 16px' }}>
-          <span className="following">
+          <span className={'following' + (live ? '' : ' paused')}>
             <i />
-            Following
+            {live ? 'Following' : 'Up to ' + (custom ? fmtDay(custom.to) : '')}
           </span>
           <span className="mono t-note">{project}</span>
           <span style={{ flex: 1 }} />
@@ -115,8 +182,8 @@ export function Logs({ project, address }: { project: string; address: string })
         </div>
         {loaded && lines.length === 0 ? (
           <div className="log-empty">
-            No requests {status || q ? 'match' : 'in this range yet'}.{' '}
-            {!status && !q && <>Open <span className="mono">{address}</span> and they show up here within a second.</>}
+            No request lines {status || q ? 'match these filters' : 'in this range'}.{' '}
+            {live && !status && !q && <>Open <span className="mono">{address}</span> and they show up here within a second.</>}
           </div>
         ) : (
           <div
@@ -142,6 +209,8 @@ export function Logs({ project, address }: { project: string; address: string })
     </main>
   )
 }
+
+const fmtDay = (d: Date) => d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
 
 function stamp(at: number, day: boolean): string {
   const d = new Date(at)

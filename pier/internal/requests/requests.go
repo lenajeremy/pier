@@ -309,9 +309,10 @@ func (l *Log) Lines(ctx context.Context, project string, f Filter) ([]Line, erro
 
 // Bucket is one point of the chart.
 type Bucket struct {
-	At       int64 `json:"at"` // ms, the bucket's start
-	Requests int   `json:"requests"`
-	Errors   int   `json:"errors"`
+	At         int64 `json:"at"` // ms, the bucket's start
+	Requests   int   `json:"requests"`
+	Errors     int   `json:"errors"`
+	E4xx, E5xx int   `json:"-"`
 }
 
 // Chart counts requests and errors over [from, to) in buckets: minutes for
@@ -335,48 +336,44 @@ func (l *Log) Chart(ctx context.Context, project string, from, to int64, status,
 	for i := range buckets {
 		buckets[i].At = start + int64(i)*step
 	}
-	add := func(at int64, reqs, errs int) {
-		i := int((at - start) / step)
-		if i >= 0 && i < n {
-			buckets[i].Requests += reqs
-			buckets[i].Errors += errs
+	// Whole hours can use retained counts. At a recent range boundary we
+	// still have individual timestamps, so count only the part of that hour
+	// inside the range (local midnight need not fall on a UTC hour).
+	where, args := Filter{From: from, To: to, Status: status, Query: query}.where(project)
+	linesSQL := `SELECT ts - ts % ? AS bucket, count(*), sum(status BETWEEN 400 AND 499), sum(status >= 500)
+		FROM requests WHERE ` + where
+	args = append([]any{step}, args...)
+	if size != time.Minute && status == "" && strings.TrimSpace(query) == "" {
+		hour := time.Hour.Milliseconds()
+		first, last := from-from%hour, to
+		cutoff := time.Now().Add(-KeepLines).UnixMilli()
+		if first < from && first >= cutoff {
+			first += hour
 		}
+		if to-to%hour >= cutoff {
+			last = to - to%hour
+		}
+		linesSQL += ` AND (ts < ? OR ts >= ?) GROUP BY bucket
+			UNION ALL SELECT hour - hour % ? AS bucket, sum(requests), sum(e4xx), sum(e5xx)
+			FROM hours WHERE project = ? AND hour >= ? AND hour < ?`
+		args = append(args, first, last, step, project, first, last)
 	}
-	// Filters by status or path need the lines; so does a minute chart.
-	if size == time.Minute || status != "" || strings.TrimSpace(query) != "" {
-		where, args := Filter{From: from, To: to, Status: status, Query: query}.where(project)
-		rows, err := l.db.QueryContext(ctx, `SELECT ts, status FROM requests WHERE `+where, args...)
-		if err != nil {
-			return nil, step, err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var ts int64
-			var st int
-			if err := rows.Scan(&ts, &st); err != nil {
-				return nil, step, err
-			}
-			e := 0
-			if st >= 400 {
-				e = 1
-			}
-			add(ts, 1, e)
-		}
-		return buckets, step, rows.Err()
-	}
-	rows, err := l.db.QueryContext(ctx, `SELECT hour, requests, e4xx + e5xx FROM hours WHERE project = ? AND hour >= ? AND hour < ?`,
-		project, from-from%time.Hour.Milliseconds(), to)
+	rows, err := l.db.QueryContext(ctx, linesSQL+" GROUP BY bucket", args...)
 	if err != nil {
 		return nil, step, err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var hour int64
-		var reqs, errs int
-		if err := rows.Scan(&hour, &reqs, &errs); err != nil {
+		var at int64
+		var count, e4, e5 int
+		if err := rows.Scan(&at, &count, &e4, &e5); err != nil {
 			return nil, step, err
 		}
-		add(hour, reqs, errs)
+		b := &buckets[(at-start)/step]
+		b.Requests += count
+		b.Errors += e4 + e5
+		b.E4xx += e4
+		b.E5xx += e5
 	}
 	return buckets, step, rows.Err()
 }

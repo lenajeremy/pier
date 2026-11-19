@@ -84,3 +84,70 @@ func TestChartAndLines(t *testing.T) {
 		t.Fatalf("path search should ignore case: %+v", found)
 	}
 }
+
+// Midnight in Kolkata falls halfway through a UTC hour. Both that partial
+// hour and the one at the end must agree with the individual request lines.
+func TestChartLocalCalendarDay(t *testing.T) {
+	ctx := context.Background()
+	l := open(t)
+	zone := time.FixedZone("IST", 5*3600+1800)
+	now := time.Now().In(zone)
+	end := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, zone)
+	start := end.AddDate(0, 0, -1)
+	for _, r := range []struct {
+		at     time.Time
+		status int
+	}{
+		{start.Add(-time.Millisecond), 500},
+		{start, 404},
+		{start.Add(12 * time.Hour), 200},
+		{end.Add(-time.Millisecond), 502},
+		{end, 404},
+	} {
+		l.Add(Line{Project: "blog", At: r.at.UnixMilli(), Status: r.status})
+	}
+	if err := l.Flush(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		status string
+		count  int
+	}{{"", 3}, {"errors", 2}} {
+		buckets, _, err := l.Chart(ctx, "blog", start.UnixMilli(), end.UnixMilli(), tc.status, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var total Bucket
+		for _, b := range buckets {
+			total.Requests += b.Requests
+			total.Errors += b.Errors
+			total.E4xx += b.E4xx
+			total.E5xx += b.E5xx
+		}
+		if total.Requests != tc.count || total.Errors != 2 || total.E4xx != 1 || total.E5xx != 1 {
+			t.Errorf("status %q: got %+v", tc.status, total)
+		}
+	}
+}
+
+func TestHistoricalChartAfterLineRetention(t *testing.T) {
+	ctx := context.Background()
+	l := open(t)
+	at := time.Now().UTC().AddDate(0, -3, 0).Truncate(time.Hour)
+	l.Add(Line{Project: "blog", At: at.UnixMilli(), Status: 500})
+	if err := l.Flush(ctx); err != nil {
+		t.Fatal(err)
+	}
+	l.cleanUp(ctx)
+	lines, err := l.Lines(ctx, "blog", Filter{From: at.UnixMilli()})
+	if err != nil || len(lines) != 0 {
+		t.Fatalf("expired request lines: %v, %v", lines, err)
+	}
+	buckets, _, err := l.Chart(ctx, "blog", at.UnixMilli(), at.Add(24*time.Hour).UnixMilli(), "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(buckets) != 24 || buckets[0].Requests != 1 || buckets[0].E5xx != 1 {
+		t.Fatalf("expected one retained server error, got %v", buckets)
+	}
+}

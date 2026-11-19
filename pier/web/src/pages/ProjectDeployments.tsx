@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { api, ApiError, type Address, type Deployment, type Project, type Session } from '../lib/api'
+import { localDay } from '../lib/calendar'
 import { ago, plural, seconds, short, size } from '../lib/format'
 import { Link, navigate } from '../lib/router'
 import { Branch, ChevronLeft, ChevronRight, Info, More, Redeploy, Search, SortDown } from '../components/Icons'
@@ -152,7 +153,7 @@ export function ProjectDeployments({ project, session, now, reload }: {
             />
           )}
         </div>
-        <Strip project={project} />
+        <Strip project={project} today={localDay(new Date(now)).getTime()} />
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -347,13 +348,66 @@ function AddressRow({ kind, address, fallbackHost, now, rolledBack, action }: {
   )
 }
 
-function Strip({ project }: { project: Project }) {
+type Day = { requests: number; e4xx: number; e5xx: number }
+
+// useTraffic counts yesterday's requests and the day before's, in the
+// viewer's own calendar days.
+function useTraffic(project: string, today: number): { yesterday: Day; before: Day } | null {
+  const [t, setT] = useState<{ yesterday: Day; before: Day } | null>(null)
+  useEffect(() => {
+    let active = true
+    setT(null)
+    const day = (n: number) => localDay(new Date(today), -n).getTime()
+    const get = (from: number, to: number) =>
+      api<Day>(`/api/projects/${encodeURIComponent(project)}/requests/chart?from=${from}&to=${to}`)
+    Promise.all([get(day(1), day(0)), get(day(2), day(1))])
+      .then(([yesterday, before]) => { if (active) setT({ yesterday, before }) })
+      .catch(() => { if (active) setT(null) })
+    return () => { active = false }
+  }, [project, today])
+  return t
+}
+
+function compared(now: number, before: number): string {
+  if (before === 0) return now === 0 ? 'None the day before either' : 'None the day before'
+  const change = Math.round(((now - before) / before) * 100)
+  if (Math.abs(change) < 3) return 'About the same as the day before'
+  return `${Math.abs(change)}% ${change > 0 ? 'more' : 'fewer'} than the day before`
+}
+
+function Strip({ project, today }: { project: Project; today: number }) {
   const { stats } = project
   const builds = stats.builds
+  const traffic = useTraffic(project.name, today)
   if (builds.length === 0) return null
   const longest = Math.max(...builds.map((b) => b.ms), 1)
+  // Traffic shows once the site has had any in the last two days.
+  const t = traffic && traffic.yesterday.requests + traffic.before.requests > 0 ? traffic : null
+  const y = t?.yesterday
+  const errors = y ? y.e4xx + y.e5xx : 0
+  const logs = `/projects/${project.name}/logs?day=yesterday`
   return (
-    <div className="panel strip" style={{ ['--cells' as string]: 2 }}>
+    <div className="panel strip" style={{ ['--cells' as string]: t ? 4 : 2 }}>
+      {t && y && (
+        <>
+          <Link to={logs} className="strip-link">
+            <span className="t-note">Requests yesterday</span>
+            <span className="value">{y.requests.toLocaleString('en-GB')}</span>
+            <span className="t-note">{compared(y.requests, t.before.requests)}</span>
+          </Link>
+          <Link to={logs + '&status=errors'} className="strip-link">
+            <span className="t-note">Errors yesterday</span>
+            <span className="value">{errors.toLocaleString('en-GB')}</span>
+            <span className="t-note">
+              {errors === 0
+                ? 'None.'
+                : y.e5xx === 0
+                  ? 'All 4xx. None from the server.'
+                  : `${y.e5xx.toLocaleString('en-GB')} from the server (5xx).`}
+            </span>
+          </Link>
+        </>
+      )}
       <div>
         <span className="t-note">Build time</span>
         <div className="figure">

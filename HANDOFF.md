@@ -12,7 +12,7 @@ and Railway, but never Railway's canvas.
 
 - **Two programs.**
   - `pierd` is the daemon on the VPS: builds, deployments, routing and the dashboard. It also has the owner-only commands, run over SSH: `pierd init`, `pierd reset-password`, `pierd domain set` (not built), `pierd status` (not built).
-  - `pier` is the CLI on a laptop: `pier login`, `pier deploy`, `pier logs` (not built), `pier rollback` (not built).
+  - `pier` is the CLI on a laptop: `pier login`, `pier deploy`, `pier logs` (not built), `pier rollback`.
 - **Two ways to deploy.**
   - **GitHub (not built yet).** Each owner creates their own GitHub App from the dashboard, through GitHub's app-manifest flow, in one click. Every push deploys: the production branch goes to production, and other branches and pull requests get previews (`pr-42--agentman.lenajeremy.xyz`). Pier posts the preview link on the pull request. Pull requests from forks wait for the owner's approval.
   - **The CLI (built).** `pier deploy` makes a preview, and `pier deploy --prod` deploys to production, as on Vercel.
@@ -160,10 +160,12 @@ The design is the source of truth. It's on the Screenshotter board **"Pier websi
 9. Request logs (H1):
    - Caddy streams its JSON access log to `data/access.sock`. pierd keeps each request (time, method, path, status, duration, size, deployment; never the visitor's IP) in `data/requests.db`: lines for 14 days, hourly counts for 6 months.
    - The Logs tab has filters (path search, status, the 15m, 1h, 24h and 7d range), the requests and errors line charts with hover, and the live list.
-   - Not built yet: H2's Custom date-range picker, which the API already supports with `?from=&to=` up to 6 months; and `pier logs`.
+   - H2’s Custom picker accepts local calendar days up to six months back. Ranges ending today follow live. Filtered charts use the 14 days of request lines.
+   - The project home shows yesterday’s requests and errors when either of the previous two days had traffic. Each number opens the matching range in Logs.
+   - The remaining Logs work is the `pier logs` CLI command.
 
 **Placeholders for now:**
-- **Pages:** Activity, Integrations, Shared variables, Server and Settings, plus the project tabs Domains, Variables and Logs. They say what they'll hold.
+- **Pages:** Activity, Integrations, Shared variables, Server and Settings, plus the project’s Domains tab. They say what they'll hold.
 
 ## 6. Running and testing
 
@@ -216,9 +218,9 @@ The brief's backend order:
 2. **Promote and rollback:** done (see §5).
 3. **Caddy embedded in pierd,** with the `_acme-challenge` DNS responder. Then wildcard and on-demand certificates, and custom domains (F1, F2: records, live checks, and what DNS returns now), with the Certificates step of A4. Then `pierd domain set`.
 4. **Variables:** done (see §5). Still to do: Shared variables (K2), linked into several projects; a project's own variable wins.
-5. **Request logs:** done (see §5), except H2's Custom picker and `pier logs`. E1's summary strip can now show Requests yesterday and Errors yesterday again, from `requests.Since`.
+5. **Request logs:** the dashboard and project summary are built (see §5). The CLI still needs `pier logs`.
 6. **Server health (I1):** disk breakdown and clean-up, CPU, memory, and services.
-7. **Activity (K1), Settings,** the install script (A1), and `pier logs` and `pier rollback`.
+7. **Activity (K1), Settings,** the install script (A1), and `pier logs`.
 
 **Known gaps:**
 - The board doesn't show the tiles or the single Visit yet. Update the frames when convenient.
