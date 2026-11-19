@@ -15,6 +15,7 @@ import { Approve } from './pages/Approve'
 import { Members } from './pages/Members'
 import { ProjectSettings } from './pages/ProjectSettings'
 import { Variables } from './pages/Variables'
+import { Domains } from './pages/Domains'
 import { Logs } from './pages/Logs'
 
 type Auth = { state: 'loading' } | { state: 'out'; address: string } | { state: 'in'; session: Session }
@@ -47,10 +48,6 @@ const globals: Record<string, [string, string]> = {
   '/shared-variables': ['Shared variables', 'Values set once and linked into several projects.'],
   '/server': ['Server', 'Disk, memory and CPU, the services Pier runs, and safe clean-up.'],
   '/settings': ["Settings", "Pier's address, the base domain, and your password."],
-}
-
-const projectTabs: Record<string, [string, string]> = {
-  domains: ['Domains', 'Custom domains, with the DNS records to add and a live check of each one.'],
 }
 
 function Dashboard({ session }: { session: Session }) {
@@ -87,10 +84,8 @@ function Signed({ session, path, now }: { session: Session; path: string; now: n
             <Variables project={name} now={now} />
           ) : tab?.tab === 'settings' ? (
             <ProjectSettings project={name} />
-          ) : tab && projectTabs[tab.tab] ? (
-            <main className="main">
-              <Later title={projectTabs[tab.tab][0]} what={projectTabs[tab.tab][1]} />
-            </main>
+          ) : tab?.tab === 'domains' ? (
+            <Domains key={name} project={name} now={now} />
           ) : (
             <ProjectDeployments project={project} session={session} now={now} reload={reload} />
           )

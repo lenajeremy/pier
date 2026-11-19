@@ -46,6 +46,9 @@ func A(ctx context.Context, host string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	if r.Rcode != dns.RcodeSuccess && r.Rcode != dns.RcodeNameError {
+		return nil, fmt.Errorf("resolver returned %s", dns.RcodeToString[r.Rcode])
+	}
 	var ips []string
 	for _, rr := range r.Answer {
 		if a, ok := rr.(*dns.A); ok {
@@ -196,4 +199,43 @@ func PublicIP() (string, error) {
 		}
 	}
 	return private, ErrNoPublicIP
+}
+
+// CheckCNAME compares the record at host itself, ignoring DNS case and the final dot.
+func CheckCNAME(ctx context.Context, host, want string) Result {
+	m := new(dns.Msg)
+	m.SetQuestion(dns.Fqdn(host), dns.TypeCNAME)
+	r, err := exchange(ctx, m, Resolvers)
+	if err != nil {
+		return Result{Err: err}
+	}
+	if r.Rcode != dns.RcodeSuccess && r.Rcode != dns.RcodeNameError {
+		return Result{Err: fmt.Errorf("resolver returned %s", dns.RcodeToString[r.Rcode])}
+	}
+	for _, rr := range r.Answer {
+		if c, ok := rr.(*dns.CNAME); ok && strings.EqualFold(c.Hdr.Name, dns.Fqdn(host)) {
+			got := strings.TrimSuffix(strings.ToLower(c.Target), ".")
+			return Result{Found: got == want, Got: got}
+		}
+	}
+	return Result{}
+}
+
+// ChallengeAuthority checks the delegated zone through a recursive resolver.
+// Seeing the responder's own SOA verifies the delegation and reachability.
+func ChallengeAuthority(ctx context.Context, base, ns string) bool {
+	name := dns.Fqdn("_acme-challenge." + base)
+	q := new(dns.Msg)
+	q.SetQuestion(name, dns.TypeSOA)
+	q.RecursionDesired = true
+	r, err := exchange(ctx, q, Resolvers)
+	if err != nil || r.Rcode != dns.RcodeSuccess {
+		return false
+	}
+	for _, rr := range r.Answer {
+		if soa, ok := rr.(*dns.SOA); ok && strings.EqualFold(soa.Hdr.Name, name) && strings.EqualFold(soa.Ns, dns.Fqdn(ns)) {
+			return true
+		}
+	}
+	return false
 }

@@ -1,7 +1,7 @@
 // Package router keeps Caddy serving the right deployment at every address.
 //
 // pierd owns Caddy's whole config: after every change it builds the complete
-// config from its database and loads it through Caddy's admin API. Caddy
+// config from its database and loads it into Caddy. Caddy
 // swaps configs gracefully, so in-flight requests finish on the old one and a
 // rollback takes effect in well under a second.
 package router
@@ -23,6 +23,7 @@ import (
 type Route struct {
 	Host         string
 	Root         string // the deployment's folder on disk
+	Redirect     string // absolute canonical URL for a permanent redirect
 	DeploymentID string
 	Upstream     string // host:port to proxy to instead of serving files
 	Fallback     string // what a path that isn't a file gets: FallbackSPA, FallbackPage, or a plain 404
@@ -37,30 +38,34 @@ const (
 	FallbackPage = "404"
 )
 
-// Caddy talks to a running Caddy's admin API.
+// Caddy serves routes in process unless an external admin URL is supplied.
 type Caddy struct {
-	Admin  string   // admin API base URL, e.g. http://127.0.0.1:2019
-	Listen []string // where sites are served, e.g. [":8088"] in development
-	HTTPS  bool     // false in development: plain HTTP, no certificates
+	Admin   string   // optional external admin API URL
+	Storage string   // embedded Caddy's certificate and key directory
+	Listen  []string // where sites are served, e.g. [":8088"] in development
+	HTTPS   bool     // false in development: plain HTTP, no certificates
 	// AccessLog is a unix socket pierd listens on; Caddy streams every
 	// request there as JSON. Empty keeps no request log.
-	AccessLog string
-	Client    *http.Client
+	BaseDomain    string
+	ACMECA        string // optional staging or private ACME directory
+	WildcardReady func() bool
+	Resolvers     []string
+	AccessLog     string
+	Client        *http.Client
 }
 
 // Config builds Caddy's complete JSON config for these routes.
 func (c Caddy) Config(routes []Route) ([]byte, error) {
-	u, err := url.Parse(c.Admin)
-	if err != nil {
-		return nil, fmt.Errorf("admin address: %w", err)
-	}
 	sorted := append([]Route(nil), routes...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Host < sorted[j].Host })
 
 	var handlers []any
 	for _, r := range sorted {
 		h := siteHandler(r)
-		if r.Upstream != "" {
+		if r.Redirect != "" {
+			h = map[string]any{"handler": "static_response", "status_code": 308,
+				"headers": map[string][]string{"Location": {r.Redirect + "{http.request.uri}"}}}
+		} else if r.Upstream != "" {
 			h = map[string]any{"handler": "reverse_proxy", "upstreams": []any{map[string]any{"dial": r.Upstream}}}
 		}
 		handlers = append(handlers, map[string]any{
@@ -84,8 +89,20 @@ func (c Caddy) Config(routes []Route) ([]byte, error) {
 		server["automatic_https"] = map[string]any{"disable": true}
 	}
 	cfg := map[string]any{
-		"admin": map[string]any{"listen": u.Host},
+		"admin": map[string]any{"disabled": true, "config": map[string]any{"persist": false}},
 		"apps":  map[string]any{"http": map[string]any{"servers": map[string]any{"pier": server}}},
+	}
+	if c.Admin == "" && c.HTTPS {
+		cfg["apps"].(map[string]any)["tls"] = c.tlsConfig(sorted)
+	}
+	if c.Admin != "" {
+		u, err := url.Parse(c.Admin)
+		if err != nil {
+			return nil, fmt.Errorf("admin address: %w", err)
+		}
+		cfg["admin"] = map[string]any{"listen": u.Host}
+	} else if c.Storage != "" {
+		cfg["storage"] = map[string]any{"module": "file_system", "root": c.Storage}
 	}
 	if c.AccessLog != "" {
 		server["logs"] = map[string]any{"default_logger_name": "pier_access"}
@@ -147,6 +164,12 @@ func (c Caddy) Apply(ctx context.Context, routes []Route) error {
 	body, err := c.Config(routes)
 	if err != nil {
 		return err
+	}
+	if c.Admin == "" {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return loadEmbedded(body)
 	}
 	client := c.Client
 	if client == nil {

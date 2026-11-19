@@ -30,7 +30,7 @@ and Railway, but never Railway's canvas.
 - **Certificates.**
   - **Wildcard:** one certificate for `*.<base>`. pierd answers the ACME DNS challenge itself, after the owner adds an NS record handing `_acme-challenge.<base>` to the Pier server. This works with any DNS provider, including Namecheap, the owner's provider, whose API is gated.
   - **On demand:** the fallback.
-  - **Caddy:** embedded in pierd as a Go library (not built yet; slice 1 still drives an external Caddy).
+  - **Caddy:** embedded in pierd as a Go library. An explicit `-caddy-admin` still connects to an external instance.
   - The DNS responder's requirements are in the dashboard brief, under "Certificate check".
 - **Docker:** the install script offers to install it.
 - **Accounts:** one owner account for now; teams and permissions come later. A forgotten password is reset over SSH with `pierd reset-password`; Pier never sends email.
@@ -171,8 +171,13 @@ The design is the source of truth. It's on the Screenshotter board **"Pier websi
     - The real registration, installation, push, PR, failed production build and recovery were exercised with one private repository on a Mac through a webhook-only HTTPS tunnel. The fork approval path was exercised against an isolated GitHub API fixture.
     - For a VPS, use a stable public HTTPS URL for `/github/events` and routable project addresses. A local test tunnel exposes the webhook alone. The server key and database together are needed to recover App credentials.
 
+11. Project domains (F1–F3):
+    - The owner can attach and remove a domain, inspect the current A/CNAME answers and check again. A registrable apex includes a permanent www redirect. Verified names follow the current production deployment.
+    - The Domains page distinguishes pending DNS, pending HTTPS, HTTP development mode and verified HTTPS. F3 on the board covers the certificate wait.
+    - Embedded Caddy restores production, branch and immutable routes from SQLite on restart. Local Pebble tests issue and serve custom and wildcard certificates. The delegated DNS responder has TCP and UDP tests. Activating that responder on public interfaces and verifying a publicly trusted certificate on a VPS are outstanding.
+
 **Placeholders for now:**
-- **Pages:** Activity, Shared variables, Server and Settings, plus the project’s Domains tab. They say what they'll hold.
+- **Pages:** Activity, Shared variables, Server and Settings. They say what they'll hold.
 
 ## 6. Running and testing
 
@@ -183,16 +188,15 @@ make pier-e2e      # end to end: pushes, init, sign-in, pier login, pier deploy,
 make pier-web-dev  # the dashboard with live reload on :5175, proxying /api to pierd on :7777
 ```
 
-**Ports.** The end-to-end script uses ports 12019, 12222, 17777 and 18088, so don't run another instance on them. A manual test instance can use 22019 for Caddy's admin, 27777 for the dashboard and API, 28088 for sites, and 22222 for SSH.
+**Ports.** The end-to-end script uses ports 12222, 17777 and 18088, so don't run another instance on them. A manual test instance can use 27777 for the dashboard and API, 28088 for sites, and 22222 for SSH.
 
 **macOS limits unix socket paths to 104 characters,** so put the data folder somewhere short, like `mktemp -d "$TMPDIR/pd.XXXX"`.
 
 **A manual instance:**
 
 ```sh
-printf '{"admin":{"listen":"127.0.0.1:22019"}}' > caddy.json && caddy run --config caddy.json &
 pier/bin/pierd serve -data $D -domain pier.localhost -http :28088 -ssh 127.0.0.1:22222 \
-  -api 127.0.0.1:27777 -caddy-admin http://127.0.0.1:22019 &
+  -api 127.0.0.1:27777 &
 echo "a long password" | pier/bin/pierd init -data $D -email you@example.com -password-stdin \
   -address pier.localhost -base-domain pier.localhost -ip 127.0.0.1
 ```
@@ -214,7 +218,7 @@ Everything so far was tested on macOS: pierd runs natively, and builds run in Do
   - `store`: SQLite, with migrations in `store.go`.
   - `deploy`: the build pipeline and its sources, plus logs.
   - `build`: detection, overrides and runners.
-  - `bundle`, `dnscheck`, `router` (the external Caddy for now), `web` (the embedded dashboard).
+  - `bundle`, `dnscheck`, `router` (embedded Caddy and external admin compatibility), `web` (the embedded dashboard).
 - **`pier/web/src`:** `App.tsx` (routes), `components/` (Shell, ui, Icons, ProjectMark), `pages/`, `flap/`, and `styles/` (tokens, base, components; the comments name the board component each style copies).
 
 ## 8. What to build next
@@ -223,7 +227,7 @@ The brief's backend order:
 
 1. **The GitHub App:** built and tested (see section 5). The older SSH push path is still available. Retiring it needs a migration for existing callers and test coverage.
 2. **Promote and rollback:** done (see §5).
-3. **Caddy embedded in pierd,** with the `_acme-challenge` DNS responder. Then wildcard and on-demand certificates, and custom domains (F1, F2: records, live checks, and what DNS returns now), with the Certificates step of A4. Then `pierd domain set`.
+3. **Domains and embedded Caddy are built.** The challenge responder and wildcard issuance have been tested with a private CA. Connect the responder to production daemon startup, verify delegated DNS and public HTTPS with an authorized VPS and domain, then finish the Certificates step of A4 and `pierd domain set`.
 4. **Variables:** done (see §5). Still to do: Shared variables (K2), linked into several projects; a project's own variable wins.
 5. **Request logs:** the dashboard and project summary are built (see §5). The CLI still needs `pier logs`.
 6. **Server health (I1):** disk breakdown and clean-up, CPU, memory, and services.

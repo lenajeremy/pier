@@ -89,7 +89,7 @@ func serve(args []string) int {
 	address := fs.String("address", env("PIER_ADDRESS", ""), "where the dashboard is reached (pierd init's address wins; default: the domain itself)")
 	sshAddr := fs.String("ssh", env("PIER_SSH", ":2222"), "where to accept git pushes")
 	apiAddr := fs.String("api", env("PIER_API", "127.0.0.1:7777"), "where to serve the API")
-	caddyAdmin := fs.String("caddy-admin", env("PIER_CADDY_ADMIN", "http://127.0.0.1:2019"), "Caddy's admin API")
+	caddyAdmin := fs.String("caddy-admin", env("PIER_CADDY_ADMIN", ""), "use an external Caddy admin API instead of the embedded router")
 	httpAddr := fs.String("http", env("PIER_HTTP", ":8088"), "where Caddy serves the sites")
 	https := fs.Bool("https", env("PIER_HTTPS", "") == "1", "serve sites over HTTPS with certificates (production)")
 	builder := fs.String("builder", env("PIER_BUILDER", "docker"), "docker, or local to build on the host without isolation")
@@ -163,7 +163,7 @@ func serve(args []string) int {
 		Secrets: box,
 		Domain:  *domain, ProductionBranch: *prod, Runner: runner, Log: log, BuildTimeout: 15 * time.Minute,
 		PierHost: *address, PierUpstream: dialable(*apiAddr),
-		Router: router.Caddy{Admin: *caddyAdmin, Listen: []string{*httpAddr}, HTTPS: *https, AccessLog: paths.accessSock},
+		Router: router.Caddy{Admin: *caddyAdmin, Storage: filepath.Join(*data, "caddy"), Listen: []string{*httpAddr}, HTTPS: *https, BaseDomain: *domain, AccessLog: paths.accessSock},
 		URL: func(host string) string {
 			if port == "" || (scheme == "http" && port == "80") || (scheme == "https" && port == "443") {
 				return scheme + "://" + host
@@ -192,8 +192,24 @@ func serve(args []string) int {
 		}
 	}()
 
-	a := &api.API{Store: st, Deployer: dep, Token: tok, Log: log, Web: web.Handler(), Requests: reqs}
+	if err := dep.Sync(ctx); err != nil {
+		if *caddyAdmin == "" {
+			log.Error("start embedded Caddy", "err", err)
+			return 1
+		}
+		log.Warn("router not reachable yet; pierd will keep trying", "err", err)
+	}
+	defer func() {
+		if err := dep.Router.Stop(); err != nil {
+			log.Error("stop router", "err", err)
+		}
+	}()
+
+	a := &api.API{Store: st, Deployer: dep, Token: tok, Log: log, Web: web.Handler(), Requests: reqs, SiteListener: dialable(*httpAddr)}
 	go a.RunGitHub(ctx)
+	domainsDone := make(chan struct{})
+	go func() { defer close(domainsDone); a.RunDomainChecks(ctx) }()
+	defer func() { stop(); <-domainsDone }()
 	go func() {
 		t := time.NewTicker(time.Hour)
 		defer t.Stop()
@@ -240,9 +256,6 @@ func serve(args []string) int {
 		}
 	}()
 
-	if err := dep.Sync(ctx); err != nil {
-		log.Warn("router not reachable yet; pierd will keep trying", "err", err)
-	}
 	go dep.KeepSynced(ctx, 5*time.Second)
 
 	fmt.Fprintf(os.Stderr, `

@@ -11,8 +11,8 @@ help:
 	@echo "    make pier-web-dev  the dashboard with live reload on :5175 (pierd on :7777)"
 	@echo "    make pier-test     go vet and unit tests"
 	@echo "    make pier-e2e      push real projects through Caddy, pierd and Docker"
-	@echo "    make pier-caddy    run Caddy for development (one terminal)"
-	@echo "    make pier-dev      run pierd for development (another terminal)"
+	@echo "    make pier-caddy    run a standalone Caddy for compatibility testing"
+	@echo "    make pier-dev      run pierd with embedded Caddy for development"
 	@echo ""
 	@echo "  The website (site/)"
 	@echo "    make site-deps     install both pages' dependencies (first time)"
@@ -49,7 +49,7 @@ pier-test:
 pier-e2e:
 	pier/scripts/e2e.sh docker
 
-# Development: Caddy with an empty config, then pierd driving it. Sites are at
+# Development: pierd runs its own Caddy. Sites are at
 # http://<project>.pier.localhost:8088 and pushes go to ssh://git@localhost:2222.
 pier-caddy:
 	caddy run

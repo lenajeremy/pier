@@ -46,9 +46,10 @@ type Deployer struct {
 	Log              *slog.Logger
 	BuildTimeout     time.Duration
 
-	mu    sync.Mutex
-	locks map[string]*sync.Mutex
-	dirty bool // the router is behind the database
+	mu      sync.Mutex
+	locks   map[string]*sync.Mutex
+	routeMu sync.Mutex // serializes snapshots and loads across projects
+	dirty   bool       // protected by routeMu
 }
 
 // RepoPath is where a project's bare repository lives.
@@ -529,8 +530,26 @@ func (d *Deployer) Routes(ctx context.Context) ([]router.Route, error) {
 		fallback[dep.ID] = fallbackFor(root(dep.ID), dep.Framework)
 		routes = append(routes, router.Route{Host: names.Deployment(dep.Project, dep.ID, d.Domain), Root: root(dep.ID), DeploymentID: dep.ID, Fallback: fallback[dep.ID]})
 	}
+	production := map[string]string{}
 	for _, a := range aliases {
+		if a.Kind == store.KindProduction {
+			production[a.Project] = a.DeploymentID
+		}
 		routes = append(routes, router.Route{Host: a.Host, Root: root(a.DeploymentID), DeploymentID: a.DeploymentID, Fallback: fallback[a.DeploymentID]})
+	}
+	domains, err := d.Store.Domains(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	for _, domain := range domains {
+		id := production[domain.Project]
+		if !domain.Verified || id == "" {
+			continue
+		}
+		routes = append(routes, router.Route{Host: domain.Host, Root: root(id), DeploymentID: id, Fallback: fallback[id]})
+		if domain.Redirect != "" {
+			routes = append(routes, router.Route{Host: domain.Redirect, Redirect: d.URL(domain.Host)})
+		}
 	}
 	if d.PierHost != "" && d.PierUpstream != "" {
 		routes = append(routes, router.Route{Host: d.PierHost, Upstream: d.PierUpstream})
@@ -554,13 +573,13 @@ func fallbackFor(root, framework string) string {
 
 // Sync loads the current routes into the router.
 func (d *Deployer) Sync(ctx context.Context) error {
+	d.routeMu.Lock()
+	defer d.routeMu.Unlock()
 	routes, err := d.Routes(ctx)
 	if err == nil {
 		err = d.Router.Apply(ctx, routes)
 	}
-	d.mu.Lock()
 	d.dirty = err != nil
-	d.mu.Unlock()
 	return err
 }
 
@@ -574,9 +593,9 @@ func (d *Deployer) KeepSynced(ctx context.Context, every time.Duration) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			d.mu.Lock()
+			d.routeMu.Lock()
 			dirty := d.dirty
-			d.mu.Unlock()
+			d.routeMu.Unlock()
 			if !dirty {
 				continue
 			}

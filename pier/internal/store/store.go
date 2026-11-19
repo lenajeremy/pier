@@ -173,6 +173,16 @@ var migrations = []string{
 		detail TEXT NOT NULL DEFAULT '', UNIQUE(project,delivery)
 	);
 	CREATE INDEX github_jobs_state ON github_jobs(state,id);`,
+	`CREATE TABLE custom_domains (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		project TEXT NOT NULL REFERENCES projects(name),
+		host TEXT NOT NULL UNIQUE,
+		redirect TEXT NOT NULL,
+		verified INTEGER NOT NULL DEFAULT 0,
+		checked INTEGER NOT NULL DEFAULT 0,
+		address_result TEXT NOT NULL DEFAULT '',
+		redirect_result TEXT NOT NULL DEFAULT ''
+	);`,
 }
 
 // Open opens (and if needed creates) the database at path.

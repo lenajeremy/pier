@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # End-to-end check of the first slice: git push -> build -> live address.
 #
-# Starts Caddy and pierd on this machine with a throwaway data folder and SSH
+# Starts pierd with embedded Caddy on this machine with a throwaway data folder and SSH
 # key, pushes a plain HTML project and a Vite project, and checks that each
-# one answers at its address. Needs git, caddy and (for the Docker builder)
+# one answers at its address. Needs git and (for the Docker builder)
 # a running Docker. Usage: scripts/e2e.sh [docker|local]
 set -euo pipefail
 
@@ -12,11 +12,11 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/pier-e2e.XXXXXX")
 DATA=$WORK/data
 DOMAIN=pier.localhost
-HTTP_PORT=18088 SSH_PORT=12222 API_PORT=17777 ADMIN_PORT=12019
-PIDS=()
+HTTP_PORT=18088 SSH_PORT=12222 API_PORT=17777
+PIERD_PID=
 
 cleanup() {
-	for p in "${PIDS[@]:-}"; do kill "$p" 2>/dev/null || true; done
+	if [[ -n $PIERD_PID ]]; then kill "$PIERD_PID" 2>/dev/null || true; fi
 	wait 2>/dev/null || true
 	if [[ ${KEEP:-} == 1 ]]; then echo "kept $WORK"; else rm -rf "$WORK"; fi
 }
@@ -29,18 +29,21 @@ step "build pierd and pier"
 (cd "$ROOT" && go build -o "$WORK/bin/" ./cmd/...)
 PIERD=$WORK/bin/pierd PIER=$WORK/bin/pier
 
-step "start caddy (admin on :$ADMIN_PORT)"
-printf '{"admin":{"listen":"127.0.0.1:%s"}}' "$ADMIN_PORT" > "$WORK/caddy.json"
-caddy run --config "$WORK/caddy.json" > "$WORK/caddy.log" 2>&1 &
-PIDS+=($!)
-for _ in $(seq 50); do curl -fs "http://127.0.0.1:$ADMIN_PORT/config/" > /dev/null && break; sleep 0.1; done
+start_pierd() {
+	PIER_CADDY_ADMIN= "$PIERD" serve -data "$DATA" -domain "$DOMAIN" -builder "$BUILDER" \
+		-http "127.0.0.1:$HTTP_PORT" -ssh "127.0.0.1:$SSH_PORT" -api "127.0.0.1:$API_PORT" >> "$WORK/pierd.log" 2>&1 &
+	PIERD_PID=$!
+	for _ in $(seq 100); do
+		kill -0 "$PIERD_PID" 2>/dev/null || break
+		if curl -fs -H "Host: $DOMAIN" "http://127.0.0.1:$HTTP_PORT/healthz" > /dev/null; then return; fi
+		sleep 0.1
+	done
+	tail -20 "$WORK/pierd.log"
+	fail "pierd did not bring up the dashboard through embedded Caddy"
+}
 
-step "start pierd (builder: $BUILDER)"
-"$PIERD" serve -data "$DATA" -domain "$DOMAIN" -builder "$BUILDER" \
-	-http ":$HTTP_PORT" -ssh "127.0.0.1:$SSH_PORT" -api "127.0.0.1:$API_PORT" \
-	-caddy-admin "http://127.0.0.1:$ADMIN_PORT" > "$WORK/pierd.log" 2>&1 &
-PIDS+=($!)
-for _ in $(seq 50); do curl -fs "http://127.0.0.1:$API_PORT/healthz" > /dev/null && break; sleep 0.1; done
+step "start pierd with embedded Caddy (builder: $BUILDER)"
+start_pierd
 
 step "authorise a throwaway key"
 ssh-keygen -q -t ed25519 -N "" -C "pier-e2e" -f "$WORK/key"
@@ -153,6 +156,15 @@ grep -q "preview ready in" "$WORK/deploy-preview.log" || fail "the preview didn'
 PREVIEW=$(sed -n 's|.*alias   http://\(site-[0-9a-f]*\.[a-z.]*\):.*|\1|p' "$WORK/deploy-preview.log" | tail -1)
 fetch "$PREVIEW" / | grep -q "Version two" || fail "the preview's own address doesn't serve it"
 fetch site.$DOMAIN / | grep -q "Version one" || fail "a preview changed production"
+
+step "restart pierd and recover production, branch and immutable addresses"
+kill "$PIERD_PID"
+wait "$PIERD_PID" || fail "pierd failed to shut down"
+PIERD_PID=
+start_pierd
+fetch site.$DOMAIN / | grep -q "Version one" || fail "production changed across restart"
+fetch "$PREVIEW" / | grep -q "Version two" || fail "the immutable preview was lost on restart"
+fetch feat-search--blog.$DOMAIN / | grep -q 'type="module"' || fail "the branch preview was lost on restart"
 
 step "a project's build settings override what Pier detects"
 curl -fsS -b "$JAR" -H 'X-Pier: 1' -X PUT -d '{"production_branch":"","build":{"root":"web","preset":"","install":"","command":"","output":""}}' \

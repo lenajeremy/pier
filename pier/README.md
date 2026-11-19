@@ -12,7 +12,7 @@ The first slice, end to end:
    builds it in a throwaway Docker container, and keeps the output as a
    deployment that never changes.
 3. It points the branch's address at the new deployment (production for
-   `main`), and reloads Caddy through its admin API.
+   `main`), and reloads the router inside pierd.
 4. The build is narrated back to the push as `remote:` lines.
 5. `pier board` lists every address and what it serves.
 
@@ -50,6 +50,12 @@ blog-c19e77.pier.example.com          one deployment, forever
 
 A failed build changes nothing: the address keeps serving what it served.
 
+## Custom domains
+
+Open a project’s **Domains** tab and enter the hostname. Copy the records shown into your DNS provider. For a registrable apex, Pier also checks the www CNAME and redirects that hostname to the apex. The page shows the current DNS answers and rechecks pending domains every ten seconds.
+
+Once DNS matches, the hostname follows the project’s production deployment, including promotions and rollbacks. With HTTPS enabled, the dashboard checks the certificate served by the local site listener before showing **Live, with HTTPS**. The default development listener serves HTTP.
+
 ## Layout
 
 ```
@@ -60,7 +66,7 @@ internal/names     addresses and IDs
 internal/store     SQLite: projects, deployments, aliases
 internal/build     detecting how to build, and running the build
 internal/deploy    a push becoming a live address
-internal/router    Caddy's config, loaded through its admin API
+internal/router    embedded Caddy, routes and deployment fallbacks
 internal/gitssh    the SSH server that runs git
 internal/hook      git's post-receive hook, which calls back into pierd
 internal/board     the rows of the board
@@ -74,11 +80,10 @@ scripts/e2e.sh     the end-to-end check
 
 ## Developing
 
-You need Go, git, Caddy, and Docker (OrbStack on a Mac).
+You need Go, git, and Docker (OrbStack on a Mac).
 
 ```sh
-make pier-caddy                    # terminal 1: Caddy, admin on :2019
-make pier-dev                      # terminal 2: pierd, data in pier/.data
+make pier-dev                      # pierd with embedded Caddy, data in pier/.data
 ./pier/bin/pierd init -data pier/.data -address pier.localhost -base-domain pier.localhost
 ./pier/bin/pierd keys add -data pier/.data ~/.ssh/id_ed25519.pub
 ./pier/bin/pier login --token "$(./pier/bin/pierd token -data pier/.data)"
@@ -91,6 +96,11 @@ git remote add pier ssh://git@localhost:2222/blog
 git push pier main
 open http://blog.pier.localhost:8088
 ```
+
+Existing installations that run a separate Caddy can keep using it with
+`pierd serve -caddy-admin http://127.0.0.1:2019` or `PIER_CADDY_ADMIN`.
+For embedded mode, free the site listener first. If migrating an HTTPS installation,
+copy the existing Caddy storage to `<pier data>/caddy/` before switching.
 
 The dashboard is at http://pier.localhost:8088 (or http://127.0.0.1:7777).
 `make pier-web-dev` serves it with live reload on :5175, talking to pierd.
@@ -113,4 +123,4 @@ pierd.sock               the git hook's socket
 ## Next
 
 The order the dashboard needs them in (design/v3/dashboard-brief.md, kept
-outside the repository): domains with Caddy embedded in pierd, shared variables, the logs CLI, and server health.
+outside the repository): public wildcard certificate rollout, shared variables, the logs CLI, and server health.

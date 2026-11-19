@@ -23,6 +23,7 @@ import (
 )
 
 type API struct {
+	SiteListener   string // local site listener for TLS handshakes with the requested SNI
 	githubSetup    sync.Mutex
 	githubEndpoint string // GitHub API base for integration tests
 	logins         logins // pier login requests waiting for approval
@@ -44,6 +45,7 @@ type BoardRow struct {
 func (a *API) Public() http.Handler {
 	mux := http.NewServeMux()
 	a.githubRoutes(mux)
+	a.domainRoutes(mux)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "ok\n") })
 
 	mux.HandleFunc("POST /api/session", a.signIn)

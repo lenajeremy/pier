@@ -1742,3 +1742,41 @@ select.input {
   .main.integrations-page { padding: 16px 16px 40px; }
   .integration-approval { flex-wrap: wrap; }
 }
+
+/* F1 and F2: project domains and the DNS records still needed. */
+.main.domains-page { gap: 16px; container-type: inline-size; }
+.domains-page :is(h2,h3,p) { margin: 0; }
+.domain-add { display: flex; align-items: flex-end; gap: 12px; padding-bottom: 8px; }
+.domain-add > div { flex: 1; display: grid; gap: 4px; }
+.domain-add .input { width: min(340px,35%); }
+.domain-cards { display: grid; gap: 14px; }
+.domain-card { min-width: 0; }
+.domain-card header { display: flex; align-items: center; gap: 16px; padding: 16px 14px 16px 20px; }
+.domain-info { flex: 1; min-width: 0; display: grid; gap: 4px; overflow-wrap: anywhere; }
+.domain-actions,.domain-status { display: flex; align-items: center; gap: 8px; }
+.domain-status { flex-wrap: wrap; }
+.domain-records { display: grid; gap: 12px; border-top: 1px solid var(--d-line-soft); padding: 16px 20px 18px; }
+.domain-table { min-width: 0; border: 1px solid var(--d-line-soft); border-radius: 10px; overflow: auto; }
+.domain-table table { border-collapse: collapse; width: 100%; text-align: left; }
+.domain-table :is(th,td) { padding: 8px 16px; font-weight: 400; }
+.domain-table th { height: 36px; background: rgba(255,255,255,.02); color: var(--d-note); font-size: 13px; }
+.domain-table td { height: 48px; border-top: 1px solid var(--d-line-soft); font-family: var(--d-mono); }
+.domain-table td:last-child { font-family: inherit; color: var(--d-muted); }
+@container (max-width: 720px) {
+  .domain-add { flex-wrap: wrap; }
+  .domain-add > div { flex-basis: 100%; }
+  .domain-add .input { width: auto; min-width: 0; flex: 1; }
+  .domain-card header { flex-wrap: wrap; }
+  .domain-info { flex-basis: 200px; }
+}
+@media (max-width: 640px) {
+  .main.domains-page { padding: 16px 16px 40px; }
+  .project-header { padding: 16px 16px 0; }
+  .project-header .names { flex-wrap: wrap; gap: 2px 12px; overflow-wrap: anywhere; }
+  .project-header .tabs { gap: 18px; overflow-x: auto; }
+}
+@container (min-width: 900px) {
+  .domain-table th:nth-child(1) { width: 90px; }
+  .domain-table th:nth-child(2) { width: 120px; }
+  .domain-table th:nth-child(4) { width: 300px; }
+}
