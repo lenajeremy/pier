@@ -12,6 +12,7 @@ import { NewProject } from './pages/NewProject'
 import { Approve } from './pages/Approve'
 import { Members } from './pages/Members'
 import { ProjectSettings } from './pages/ProjectSettings'
+import { Variables } from './pages/Variables'
 
 type Auth = { state: 'loading' } | { state: 'out'; address: string } | { state: 'in'; session: Session }
 
@@ -48,7 +49,6 @@ const globals: Record<string, [string, string]> = {
 
 const projectTabs: Record<string, [string, string]> = {
   domains: ['Domains', 'Custom domains, with the DNS records to add and a live check of each one.'],
-  variables: ['Variables', 'Environment variables for production and previews, passed to every build.'],
   logs: ['Logs', 'Requests to the site, live, with a chart of requests and errors over time.'],
 }
 
@@ -79,6 +79,8 @@ function Signed({ session, path, now }: { session: Session; path: string; now: n
         {(project, reload) =>
           deployment ? (
             <DeploymentPage project={name} id={deployment.id} now={now} />
+          ) : tab?.tab === 'variables' ? (
+            <Variables project={name} now={now} />
           ) : tab?.tab === 'settings' ? (
             <ProjectSettings project={name} />
           ) : tab && projectTabs[tab.tab] ? (

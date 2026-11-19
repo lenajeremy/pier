@@ -34,6 +34,7 @@ import (
 	"pier/internal/gitssh"
 	"pier/internal/hook"
 	"pier/internal/router"
+	"pier/internal/secrets"
 	"pier/internal/store"
 	"pier/internal/web"
 )
@@ -104,7 +105,7 @@ func serve(args []string) int {
 	}
 	*data = abs
 	paths := layout(*data)
-	for _, dir := range []string{paths.repos, paths.deployments, paths.logs, paths.tmp} {
+	for _, dir := range []string{paths.repos, paths.deployments, paths.logs, paths.sources, paths.tmp} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			log.Error("create data folder", "err", err)
 			return 1
@@ -116,6 +117,11 @@ func serve(args []string) int {
 		return 1
 	}
 	defer st.Close()
+	box, err := secrets.Load(paths.secretKey)
+	if err != nil {
+		log.Error("secret key", "err", err)
+		return 1
+	}
 	tok, err := loadOrCreateToken(paths.token)
 	if err != nil {
 		log.Error("api token", "err", err)
@@ -151,8 +157,9 @@ func serve(args []string) int {
 		scheme = "https"
 	}
 	dep := &deploy.Deployer{
-		Store: st, Repos: paths.repos, Deployments: paths.deployments, Logs: paths.logs, Tmp: paths.tmp,
-		Domain: *domain, ProductionBranch: *prod, Runner: runner, Log: log, BuildTimeout: 15 * time.Minute,
+		Store: st, Repos: paths.repos, Deployments: paths.deployments, Logs: paths.logs, Sources: paths.sources, Tmp: paths.tmp,
+		Secrets: box,
+		Domain:  *domain, ProductionBranch: *prod, Runner: runner, Log: log, BuildTimeout: 15 * time.Minute,
 		PierHost: *address, PierUpstream: dialable(*apiAddr),
 		Router: router.Caddy{Admin: *caddyAdmin, Listen: []string{*httpAddr}, HTTPS: *https},
 		URL: func(host string) string {
@@ -248,13 +255,16 @@ pierd is running
 	return 0
 }
 
-type paths struct{ db, repos, deployments, logs, tmp, token, keys, hostKey, socket string }
+type paths struct {
+	db, repos, deployments, logs, sources, tmp, token, keys, hostKey, socket, secretKey string
+}
 
 func layout(data string) paths {
 	j := func(p string) string { return filepath.Join(data, p) }
 	return paths{
-		db: j("pier.db"), repos: j("repos"), deployments: j("deployments"), logs: j("logs"), tmp: j("tmp"),
-		token: j("api.token"), keys: j("authorized_keys"), hostKey: j("ssh_host_ed25519_key"), socket: j("pierd.sock"),
+		db: j("pier.db"), repos: j("repos"), deployments: j("deployments"), logs: j("logs"), sources: j("sources"), tmp: j("tmp"),
+		secretKey: j("secret.key"),
+		token:     j("api.token"), keys: j("authorized_keys"), hostKey: j("ssh_host_ed25519_key"), socket: j("pierd.sock"),
 	}
 }
 

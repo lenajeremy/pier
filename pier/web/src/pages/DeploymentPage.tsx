@@ -3,7 +3,7 @@ import type { Address, Deployment, LogLine } from '../lib/api'
 import { api, ApiError } from '../lib/api'
 import { useData } from '../lib/data'
 import { ago, exact, plural, seconds, short, size } from '../lib/format'
-import { Link } from '../lib/router'
+import { Link, navigate } from '../lib/router'
 import * as I from '../components/Icons'
 import { deploymentStatus } from '../components/ui'
 import { StatusFlaps } from '../flap/Flaps'
@@ -44,6 +44,26 @@ export function DeploymentPage({ project, id, now }: { project: string; id: stri
           <span className="t-small t-strong">Deployment details</span>
           <div className="card-actions">
             {moving && <span className="t-note">{moving}</span>}
+            {d.status !== 'building' && (
+              <button
+                className="btn quiet icon"
+                onClick={async () => {
+                  setMoving('')
+                  try {
+                    const r = await api<{ id?: string }>(`/api/projects/${encodeURIComponent(project)}/redeploy`, {
+                      method: 'POST',
+                      body: JSON.stringify({ id: d.id }),
+                    })
+                    if (r.id) navigate(`/projects/${project}/deployments/${r.id}`)
+                  } catch (e) {
+                    setMoving(e instanceof ApiError ? e.message : "Can't reach pierd.")
+                  }
+                }}
+              >
+                <I.Redeploy />
+                Redeploy
+              </button>
+            )}
             {d.status === 'ready' && d.role !== 'production' && (
               <button
                 className="btn quiet"

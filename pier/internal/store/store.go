@@ -146,6 +146,19 @@ var migrations = []string{
 	// 3: a rollback remembers what production served before it, so it can
 	// be undone, and so production builds don't go live until then.
 	`ALTER TABLE projects ADD COLUMN rolled_back_from TEXT NOT NULL DEFAULT '';`,
+
+	// 4: environment variables, sealed, one row per scope; and when each
+	// scope last changed, to tell whether a deployment has the latest.
+	`CREATE TABLE variables (
+		project    TEXT NOT NULL REFERENCES projects(name),
+		scope      TEXT NOT NULL,
+		name       TEXT NOT NULL,
+		value      TEXT NOT NULL,
+		updated_at INTEGER NOT NULL,
+		PRIMARY KEY (project, scope, name)
+	);
+	ALTER TABLE projects ADD COLUMN vars_changed_production INTEGER NOT NULL DEFAULT 0;
+	ALTER TABLE projects ADD COLUMN vars_changed_preview    INTEGER NOT NULL DEFAULT 0;`,
 }
 
 // Open opens (and if needed creates) the database at path.

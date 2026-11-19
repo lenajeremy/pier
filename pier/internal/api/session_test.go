@@ -14,6 +14,7 @@ import (
 
 	"pier/internal/auth"
 	"pier/internal/deploy"
+	"pier/internal/secrets"
 	"pier/internal/store"
 )
 
@@ -28,10 +29,14 @@ func newServer(t *testing.T) (*httptest.Server, *store.Store) {
 	if _, err := st.CreateUser(context.Background(), "owner@example.com", "Owner", hash); err != nil {
 		t.Fatal(err)
 	}
+	box, err := secrets.Load(filepath.Join(t.TempDir(), "secret.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	a := &API{
 		Store: st, Token: "pier_server_token", Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Deployer: &deploy.Deployer{
-			Store: st, Domain: "pier.localhost", PierHost: "pier.localhost", ProductionBranch: "main",
+			Store: st, Domain: "pier.localhost", PierHost: "pier.localhost", ProductionBranch: "main", Secrets: box,
 			URL: func(h string) string { return "http://" + h },
 		},
 	}

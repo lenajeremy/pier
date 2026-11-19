@@ -152,6 +152,11 @@ The design is the source of truth. It's on the Screenshotter board **"Pier websi
 6. Builds use the developer's package manager version: `packageManager` in package.json, else the version on the computer that ran `pier deploy`, else the lockfile's major (pnpm 10, Yarn 1 or 4). The log says which.
 7. Paths that aren't files get a fallback: index.html for Vite and Create React App builds (paths with an extension still 404), the site's own 404.html with a 404 status, or a plain 404.
 
+8. Variables (G1):
+   - Values are sealed with AES-GCM using `data/secret.key`, per scope (production, preview), and passed to builds through the environment. The build log lists names only.
+   - The tab has an add form, a list with reveal, change and delete, and a banner when production's build is older than a variable change, with Redeploy.
+   - Redeploy (also on a deployment's page) rebuilds a deployment's source with today's settings and variables. Uploads are kept in `data/sources/` so they can be rebuilt.
+
 **Placeholders for now:**
 - **Pages:** Activity, Integrations, Shared variables, Server and Settings, plus the project tabs Domains, Variables and Logs. They say what they'll hold.
 
@@ -205,7 +210,7 @@ The brief's backend order:
 1. **The GitHub App** (skipped so far because its webhooks need a public HTTPS address; build it once Pier runs on the VPS or behind a tunnel). The manifest flow from Integrations (C1, C2); webhooks for pushes and pull requests; commit statuses with the preview link; `pr-N--` previews; approval for pull requests from forks. Then D1's repo list and D2's Configure screen, for imports. The SSH git push from slice 1 is to be dropped once this works.
 2. **Promote and rollback:** done (see §5).
 3. **Caddy embedded in pierd,** with the `_acme-challenge` DNS responder. Then wildcard and on-demand certificates, and custom domains (F1, F2: records, live checks, and what DNS returns now), with the Certificates step of A4. Then `pierd domain set`.
-4. **Variables (G1):** encrypted, scoped, passed to builds, plus the "changed since the last deploy" banner. Then Shared variables (K2).
+4. **Variables:** done (see §5). Still to do: Shared variables (K2), linked into several projects; a project's own variable wins.
 5. **Request logs (H1, H2)** from Caddy's access logs, per project: the line charts and the range control with the custom picker.
 6. **Server health (I1):** disk breakdown and clean-up, CPU, memory, and services.
 7. **Activity (K1), Settings,** the install script (A1), and `pier logs` and `pier rollback`.
@@ -215,4 +220,6 @@ The brief's backend order:
 - Row J (the CLI screens) isn't drawn.
 - A failed build's preview box shows a generic error; showing the first error line from the log would be better.
 - Static uploads serve dotfiles such as `.gitignore`.
+- Kept upload sources (`data/sources/`) are never cleaned up yet; the Server page's clean-up should cover them.
+- Values with newlines work in builds, but the dashboard's single-line field can't enter them; an "Import .env" (G1 shows the button) would help.
 - Sessions made by non-browser clients are named "A browser".

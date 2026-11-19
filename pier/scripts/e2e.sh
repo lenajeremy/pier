@@ -178,6 +178,31 @@ fetch site.$DOMAIN / | grep -q "Version two" || fail "promote didn't move produc
 cd "$WORK"
 echo "rollback, undo and promote move production without rebuilding"
 
+step "variables reach the build, per scope, and redeploy picks up a change"
+curl -fsS -b "$JAR" -H 'X-Pier: 1' -d '{"name":"greet"}' "$API/api/projects" > /dev/null || fail "couldn't create greet"
+setvar() { curl -fsS -b "$JAR" -H 'X-Pier: 1' -X PUT -d "{\"name\":\"GREETING\",\"value\":\"$1\",\"scopes\":[\"$2\"]}" "$API/api/projects/greet/variables" > /dev/null || fail "couldn't set GREETING for $2"; }
+setvar "hello from production" production
+setvar "hello from a preview" preview
+mkdir -p "$WORK/greet" && cd "$WORK/greet"
+printf '{"name":"greet","private":true,"scripts":{"build":"mkdir -p dist && printf \\"<h1>%%s</h1>\\" \\"$GREETING\\" > dist/index.html"}}\n' > package.json
+"$PIER" deploy --project greet --prod > "$WORK/greet-prod.log" || { cat "$WORK/greet-prod.log"; fail "greet didn't deploy"; }
+fetch greet.$DOMAIN / | grep -q "hello from production" || fail "production didn't get its variable"
+grep -q "with 1 variable for production: GREETING" "$WORK/greet-prod.log" || fail "the log doesn't say which variables the build had"
+grep -q "hello from production" "$WORK/greet-prod.log" && fail "a variable's value showed up in the build log"
+"$PIER" deploy > "$WORK/greet-preview.log"
+GP=$(sed -n 's|.*alias   http://\(greet-[0-9a-f]*\.[a-z.]*\):.*|\1|p' "$WORK/greet-preview.log" | tail -1)
+fetch "$GP" / | grep -q "hello from a preview" || fail "the preview didn't get the preview's variable"
+setvar "hello again" production
+curl -fsS -b "$JAR" "$API/api/projects/greet/variables" | grep -q '"production":true' || fail "a changed variable didn't mark production as out of date"
+curl -fsS -b "$JAR" -H 'X-Pier: 1' -d '{"name":"GREETING","scopes":["production"]}' "$API/api/projects/greet/variables/reveal" | grep -q '"value":"hello again"' || fail "reveal didn't return the value"
+curl -fsS -b "$JAR" "$API/api/projects/greet/variables" | grep -q 'hello again' && fail "the list of variables leaked a value"
+curl -fsS -b "$JAR" -H 'X-Pier: 1' -d '{}' "$API/api/projects/greet/redeploy" | grep -q '"id"' || fail "redeploy didn't start"
+for _ in $(seq 60); do fetch greet.$DOMAIN / 2>/dev/null | grep -q "hello again" && break; sleep 0.5; done
+fetch greet.$DOMAIN / | grep -q "hello again" || fail "the redeploy didn't pick up the new value"
+curl -fsS -b "$JAR" "$API/api/projects/greet/variables" | grep -q '"production":false' || fail "production still looks out of date after the redeploy"
+cd "$WORK"
+echo "variables are scoped, kept out of the log, and a redeploy picks up a change"
+
 step "pierd reset-password signs everyone out"
 echo "another long password" | "$PIERD" reset-password -data "$DATA" -password-stdin > /dev/null
 code=$(curl -s -o /dev/null -w '%{http_code}' -b "$JAR" "$API/api/projects")

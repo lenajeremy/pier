@@ -1263,3 +1263,56 @@ select.input {
 .menu-item:disabled {
   opacity: 0.5;
 }
+
+/* ---- Variables (G1): the add form and the Variable row (Components 5) --- */
+
+.add-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto;
+  gap: 14px;
+  align-items: end;
+}
+.var-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) 220px 170px 32px;
+  gap: 16px;
+  align-items: center;
+  min-height: 52px;
+  padding: 10px 12px 10px 20px;
+  border-bottom: 1px solid var(--d-line-faint);
+}
+.var-row:last-child {
+  border-bottom: none;
+}
+.var-row .name,
+.var-row .value > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.var-row .value {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.var-row .value .input {
+  height: 36px;
+}
+.var-row .reveal {
+  display: flex;
+  padding: 4px;
+  border-radius: 6px;
+  flex: none;
+}
+.var-row .reveal:hover {
+  background: var(--d-active);
+}
+.var-row .scopes {
+  display: flex;
+  gap: 6px;
+}
+.var-row .edit-actions {
+  display: flex;
+  gap: 6px;
+}

@@ -24,19 +24,22 @@ import (
 	"pier/internal/bundle"
 	"pier/internal/names"
 	"pier/internal/router"
+	"pier/internal/secrets"
 	"pier/internal/store"
 )
 
 type Deployer struct {
 	Store            *store.Store
-	Repos            string // bare git repositories, one per project
-	Deployments      string // one folder per deployment, never changed once written
-	Logs             string // one build log per deployment, <id>.log
-	Tmp              string // scratch space for checkouts, on the same disk as Deployments
-	Domain           string // e.g. pier.example.com
-	PierHost         string // where the dashboard is reached, e.g. pier.example.com; empty for none
-	PierUpstream     string // the dashboard's own listener, e.g. 127.0.0.1:7777
-	ProductionBranch string // e.g. main
+	Repos            string       // bare git repositories, one per project
+	Deployments      string       // one folder per deployment, never changed once written
+	Logs             string       // one build log per deployment, <id>.log
+	Sources          string       // each upload's archive, <id>.tar.gz, kept so it can be redeployed
+	Secrets          *secrets.Box // opens the project's variables for its builds
+	Tmp              string       // scratch space for checkouts, on the same disk as Deployments
+	Domain           string       // e.g. pier.example.com
+	PierHost         string       // where the dashboard is reached, e.g. pier.example.com; empty for none
+	PierUpstream     string       // the dashboard's own listener, e.g. 127.0.0.1:7777
+	ProductionBranch string       // e.g. main
 	Runner           build.Runner
 	Router           router.Caddy
 	URL              func(host string) string // how an address is reached, for the log
@@ -78,9 +81,12 @@ type Source struct {
 	Branch  string // the git branch, or the branch the folder was on
 	Commit  string
 	Message string
-	Target  string // store.TargetProduction or store.TargetPreview
-	Files   int    // for an upload: how many files came
-	Tools   string // for an upload: the package manager on the developer's computer, like pnpm@10.33.0
+	Target  string          // store.TargetProduction or store.TargetPreview
+	Files   int             // for an upload: how many files came
+	Tools   string          // for an upload: the package manager on the developer's computer, like pnpm@10.33.0
+	Note    string          // said first in the log, like what a redeploy rebuilds
+	OnStart func(id string) // told the new deployment's ID as soon as it exists
+	archive string          // for an upload: the gzipped tar to build, kept afterwards as the source
 	extract func(ctx context.Context, dir string) error
 }
 
@@ -105,9 +111,89 @@ func (d *Deployer) Deploy(ctx context.Context, project, branch, commit string, o
 // A preview gets only its own address; production moves production's.
 func (d *Deployer) DeployUpload(ctx context.Context, project, archive string, src Source, out io.Writer) error {
 	src.Kind = store.SourceCLI
-	src.extract = func(_ context.Context, dir string) error { return bundle.Untar(archive, dir) }
+	src.archive = archive
 	return d.run(ctx, project, src, out)
 }
+
+// ErrNoSource means a deployment's source is gone, so it can't be rebuilt.
+var ErrNoSource = errors.New("the source isn't kept any more")
+
+// Redeploy builds an existing deployment's source again, with the project's
+// settings and variables as they are now. target says where it goes;
+// empty keeps the old deployment's.
+func (d *Deployer) Redeploy(ctx context.Context, project, id, target string, onStart func(string), out io.Writer) error {
+	old, err := d.Store.Deployment(ctx, id)
+	if err != nil || old.Project != project {
+		return ErrNotServable
+	}
+	if target == "" {
+		target = old.Target
+	}
+	src := Source{
+		Kind: old.Source, Branch: old.Branch, Commit: old.Commit, Message: old.Message, Target: target,
+		Note: "redeploying " + id + " with today's settings and variables", OnStart: onStart,
+	}
+	switch old.Source {
+	case store.SourceCLI:
+		copyPath := filepath.Join(d.Tmp, "redeploy-"+names.NewID()+".tar.gz")
+		if err := copyFile(d.sourcePath(id), copyPath); err != nil {
+			return ErrNoSource
+		}
+		src.archive = copyPath
+		defer os.Remove(copyPath)
+	default:
+		commit := old.Commit
+		src.Kind = store.SourceGit
+		src.extract = func(ctx context.Context, dir string) error { return d.extract(ctx, project, commit, dir) }
+	}
+	return d.run(ctx, project, src, out)
+}
+
+func (d *Deployer) sourcePath(id string) string { return filepath.Join(d.Sources, id+".tar.gz") }
+
+func copyFile(from, to string) error {
+	in, err := os.Open(from)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(to, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		return err
+	}
+	return out.Close()
+}
+
+// variables opens a project's variables for one scope, as NAME=value pairs.
+func (d *Deployer) variables(ctx context.Context, project, scope string) ([]string, []string, error) {
+	if d.Secrets == nil {
+		return nil, nil, nil
+	}
+	all, err := d.Store.Variables(ctx, project)
+	if err != nil {
+		return nil, nil, err
+	}
+	var env, names_ []string
+	for _, v := range all {
+		if v.Scope != scope {
+			continue
+		}
+		value, err := d.Secrets.Open(v.Value, SealedFor(project, scope, v.Name))
+		if err != nil {
+			return nil, nil, fmt.Errorf("variable %s: %w", v.Name, err)
+		}
+		env = append(env, v.Name+"="+value)
+		names_ = append(names_, v.Name)
+	}
+	return env, names_, nil
+}
+
+// SealedFor is what a variable's sealed value is bound to.
+func SealedFor(project, scope, name string) string { return project + "\x00" + scope + "\x00" + name }
 
 // productionBranch is the project's own production branch, or the server's.
 func (d *Deployer) productionBranch(ctx context.Context, project string) string {
@@ -141,6 +227,18 @@ func (d *Deployer) run(ctx context.Context, project string, src Source, out io.W
 	if err := d.Store.CreateDeployment(ctx, dep); err != nil {
 		return err
 	}
+	if src.OnStart != nil {
+		src.OnStart(dep.ID)
+	}
+	if src.archive != "" {
+		// Keep the upload as this deployment's source, so it can be rebuilt.
+		kept := d.sourcePath(dep.ID)
+		archive := src.archive
+		if err := os.MkdirAll(d.Sources, 0o755); err == nil && os.Rename(archive, kept) == nil {
+			archive = kept
+		}
+		src.extract = func(_ context.Context, dir string) error { return bundle.Untar(archive, dir) }
+	}
 	if logFile, err := d.createLog(dep.ID); err != nil {
 		d.Log.Warn("build log can't be kept", "deployment", dep.ID, "err", err)
 	} else {
@@ -148,7 +246,9 @@ func (d *Deployer) run(ctx context.Context, project string, src Source, out io.W
 		defer func() { tl.Flush(); logFile.Close() }()
 		out = io.MultiWriter(out, tl)
 	}
-	if src.Kind == store.SourceCLI {
+	if src.Note != "" {
+		say(out, "pier", "%s, for %s", src.Note, src.Target)
+	} else if src.Kind == store.SourceCLI {
 		say(out, "pier", "received %s from pier deploy, for %s", plural(src.Files, "file"), src.Target)
 	} else {
 		say(out, "pier", "received %s at %s", src.Branch, short(src.Commit))
@@ -156,7 +256,15 @@ func (d *Deployer) run(ctx context.Context, project string, src Source, out io.W
 
 	buildCtx, cancel := context.WithTimeout(ctx, d.BuildTimeout)
 	defer cancel()
-	res, err := d.build(buildCtx, dep, src, p.Build, out)
+	env, varNames, err := d.variables(ctx, project, src.Target)
+	if err != nil {
+		say(out, "pier", "can't open this project's variables: %s", err)
+		return err
+	}
+	if len(varNames) > 0 {
+		say(out, "build", "with %s for %s: %s", plural(len(varNames), "variable"), src.Target, strings.Join(varNames, ", "))
+	}
+	res, err := d.build(buildCtx, dep, src, p.Build, env, out)
 	elapsed := time.Since(start)
 	dep.BuildMS = elapsed.Milliseconds()
 	dep.Framework, dep.Files, dep.Bytes, dep.Plan = res.label, res.files, res.bytes, res.plan
@@ -215,7 +323,7 @@ type result struct {
 	plan  string
 }
 
-func (d *Deployer) build(ctx context.Context, dep store.Deployment, src Source, settings store.Build, out io.Writer) (result, error) {
+func (d *Deployer) build(ctx context.Context, dep store.Deployment, src Source, settings store.Build, env []string, out io.Writer) (result, error) {
 	var res result
 	if err := os.MkdirAll(d.Tmp, 0o755); err != nil {
 		return res, err
@@ -266,7 +374,7 @@ func (d *Deployer) build(ctx context.Context, dep store.Deployment, src Source, 
 			}
 			t := time.Now()
 			say(out, "build", "$ %s", step)
-			if err := d.Runner.Run(ctx, dir, step, log); err != nil {
+			if err := d.Runner.Run(ctx, dir, step, env, log); err != nil {
 				log.Flush()
 				if ctx.Err() != nil {
 					return res, fmt.Errorf("%s timed out after %s", step, seconds(time.Since(t)))
