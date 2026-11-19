@@ -397,17 +397,33 @@ func (d *Deployer) Routes(ctx context.Context) ([]router.Route, error) {
 		return nil, err
 	}
 	root := func(id string) string { return filepath.Join(d.Deployments, id) }
+	fallback := map[string]string{}
 	var routes []router.Route
 	for _, dep := range ready {
-		routes = append(routes, router.Route{Host: names.Deployment(dep.Project, dep.ID, d.Domain), Root: root(dep.ID), DeploymentID: dep.ID})
+		fallback[dep.ID] = fallbackFor(root(dep.ID), dep.Framework)
+		routes = append(routes, router.Route{Host: names.Deployment(dep.Project, dep.ID, d.Domain), Root: root(dep.ID), DeploymentID: dep.ID, Fallback: fallback[dep.ID]})
 	}
 	for _, a := range aliases {
-		routes = append(routes, router.Route{Host: a.Host, Root: root(a.DeploymentID), DeploymentID: a.DeploymentID})
+		routes = append(routes, router.Route{Host: a.Host, Root: root(a.DeploymentID), DeploymentID: a.DeploymentID, Fallback: fallback[a.DeploymentID]})
 	}
 	if d.PierHost != "" && d.PierUpstream != "" {
 		routes = append(routes, router.Route{Host: d.PierHost, Upstream: d.PierUpstream})
 	}
 	return routes, nil
+}
+
+// fallbackFor decides what a path that isn't a file gets: the site's own
+// 404.html when it has one, index.html for a single-page app built with
+// Vite or Create React App, and otherwise a plain 404.
+func fallbackFor(root, framework string) string {
+	if fi, err := os.Stat(filepath.Join(root, "404.html")); err == nil && fi.Mode().IsRegular() {
+		return router.FallbackPage
+	}
+	name, _, _ := strings.Cut(framework, " ")
+	if name == "vite" || name == "create-react-app" {
+		return router.FallbackSPA
+	}
+	return ""
 }
 
 // Sync loads the current routes into the router.

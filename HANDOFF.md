@@ -149,6 +149,9 @@ The design is the source of truth. It's on the Screenshotter board **"Pier websi
    - In the API, the address rows (Roll back, Promote to production), the table's ⋯ menu, a deployment's page, and `pier rollback [--undo]` and `pier promote ID`.
    - Rolling back holds production builds until a promote or an undo, and E4's banner says so.
 
+6. Builds use the developer's package manager version: `packageManager` in package.json, else the version on the computer that ran `pier deploy`, else the lockfile's major (pnpm 10, Yarn 1 or 4). The log says which.
+7. Paths that aren't files get a fallback: index.html for Vite and Create React App builds (paths with an extension still 404), the site's own 404.html with a 404 status, or a plain 404.
+
 **Placeholders for now:**
 - **Pages:** Activity, Integrations, Shared variables, Server and Settings, plus the project tabs Domains, Variables and Logs. They say what they'll hold.
 

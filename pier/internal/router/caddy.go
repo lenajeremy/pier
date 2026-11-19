@@ -25,7 +25,17 @@ type Route struct {
 	Root         string // the deployment's folder on disk
 	DeploymentID string
 	Upstream     string // host:port to proxy to instead of serving files
+	Fallback     string // what a path that isn't a file gets: FallbackSPA, FallbackPage, or a plain 404
 }
+
+// Fallbacks for a path that isn't a file.
+const (
+	// FallbackSPA serves index.html, so a single-page app's own routes work
+	// when opened directly. Paths that look like files (/logo.png) still 404.
+	FallbackSPA = "spa"
+	// FallbackPage serves the site's own 404.html, with a 404 status.
+	FallbackPage = "404"
+)
 
 // Caddy talks to a running Caddy's admin API.
 type Caddy struct {
@@ -78,25 +88,43 @@ func (c Caddy) Config(routes []Route) ([]byte, error) {
 }
 
 // siteHandler serves a deployment's files with clean URLs: /about finds
-// about.html or about/index.html, like most static hosts.
+// about.html or about/index.html, like most static hosts. A path that isn't
+// a file then gets the route's fallback.
 func siteHandler(r Route) map[string]any {
-	return map[string]any{
-		"handler": "subroute",
-		"routes": []any{
-			map[string]any{"handle": []any{map[string]any{
-				"handler":  "headers",
-				"response": map[string]any{"set": map[string][]string{"X-Pier-Deployment": {r.DeploymentID}}},
+	routes := []any{
+		map[string]any{"handle": []any{map[string]any{
+			"handler":  "headers",
+			"response": map[string]any{"set": map[string][]string{"X-Pier-Deployment": {r.DeploymentID}}},
+		}}},
+		map[string]any{
+			"match": []any{map[string]any{"file": map[string]any{
+				"root":      r.Root,
+				"try_files": []string{"{http.request.uri.path}", "{http.request.uri.path}.html", "{http.request.uri.path}/index.html"},
 			}}},
-			map[string]any{
-				"match": []any{map[string]any{"file": map[string]any{
-					"root":      r.Root,
-					"try_files": []string{"{http.request.uri.path}", "{http.request.uri.path}.html", "{http.request.uri.path}/index.html"},
-				}}},
-				"handle": []any{map[string]any{"handler": "rewrite", "uri": "{http.matchers.file.relative}"}},
-			},
-			map[string]any{"handle": []any{map[string]any{"handler": "file_server", "root": r.Root}}},
+			"handle": []any{map[string]any{"handler": "rewrite", "uri": "{http.matchers.file.relative}"}},
 		},
 	}
+	// After the rewrite above, a path that's still not a file had no match.
+	missing := map[string]any{"file": map[string]any{"root": r.Root, "try_files": []string{"{http.request.uri.path}"}}}
+	switch r.Fallback {
+	case FallbackSPA:
+		routes = append(routes, map[string]any{
+			// Not a file, and not shaped like one (no extension).
+			"match":  []any{map[string]any{"not": []any{missing, map[string]any{"path_regexp": map[string]any{"pattern": `\.[^/]*$`}}}}},
+			"handle": []any{map[string]any{"handler": "rewrite", "uri": "/index.html"}},
+		})
+	case FallbackPage:
+		routes = append(routes, map[string]any{
+			"match": []any{map[string]any{"not": []any{missing}}},
+			"handle": []any{
+				map[string]any{"handler": "rewrite", "uri": "/404.html"},
+				map[string]any{"handler": "file_server", "root": r.Root, "status_code": 404},
+			},
+			"terminal": true,
+		})
+	}
+	routes = append(routes, map[string]any{"handle": []any{map[string]any{"handler": "file_server", "root": r.Root}}})
+	return map[string]any{"handler": "subroute", "routes": routes}
 }
 
 // Apply loads the config for these routes into Caddy.

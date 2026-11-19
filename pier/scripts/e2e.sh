@@ -81,6 +81,21 @@ grep -q "preview ready in" "$WORK/push-blog-feat-search.log" || fail "blog push 
 fetch feat-search--blog.$DOMAIN / | grep -q 'type="module"' || fail "the preview doesn't serve the built page"
 echo "feat-search--blog.$DOMAIN serves the Vite build"
 
+step "paths that aren't files: the app's index.html, the site's 404.html, or a 404"
+status() { curl -s -o /dev/null -w '%{http_code}' --max-time 5 --resolve "$1:$HTTP_PORT:127.0.0.1" "http://$1:$HTTP_PORT$2"; }
+fetch feat-search--blog.$DOMAIN /settings/profile | grep -q 'type="module"' || fail "a Vite app's own route didn't get index.html"
+[[ $(status feat-search--blog.$DOMAIN /missing.png) == 404 ]] || fail "a missing file in a Vite app should 404"
+[[ $(status docs.$DOMAIN /nowhere) == 404 ]] || fail "a static site should 404 on a path it doesn't have"
+cd "$WORK/docs"
+printf '<!doctype html><title>Lost</title><h1>This page wandered off</h1>\n' > 404.html
+git add . && git commit -q -m "A page for wrong addresses"
+push "$WORK/docs" docs main > /dev/null
+[[ $(status docs.$DOMAIN /nowhere) == 404 ]] || fail "a missing page should still answer 404"
+fetch_any() { curl -s --max-time 5 --resolve "$1:$HTTP_PORT:127.0.0.1" "http://$1:$HTTP_PORT$2"; }
+fetch_any docs.$DOMAIN /nowhere | grep -q "wandered off" || fail "the site's own 404.html wasn't served"
+fetch docs.$DOMAIN /guide | grep -q "Install guide" || fail "a 404.html broke clean URLs"
+echo "app routes, 404 pages and plain 404s all answer as they should"
+
 step "a push that can't build leaves the address serving"
 cd "$WORK/docs"
 git rm -q -r index.html guide && printf 'nothing to serve\n' > README.md
