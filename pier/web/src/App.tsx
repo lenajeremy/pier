@@ -64,7 +64,9 @@ function Dashboard({ session }: { session: Session }) {
   let page: React.ReactNode
   if (name) {
     page = (
-      <ProjectPage name={name} path={path}>
+      // A deployment's page has its own Visit, for that deployment; one more
+      // in the header, going somewhere else, would be a duplicate.
+      <ProjectPage name={name} path={path} visit={!deployment}>
         {(project) =>
           deployment ? (
             <DeploymentPage project={name} id={deployment.id} session={session} now={now} />
@@ -112,9 +114,10 @@ function Dashboard({ session }: { session: Session }) {
   )
 }
 
-function ProjectPage({ name, path, children }: {
+function ProjectPage({ name, path, visit, children }: {
   name: string
   path: string
+  visit: boolean
   children: (p: Project) => React.ReactNode
 }) {
   const { data, error } = useData<Project>(
@@ -138,7 +141,7 @@ function ProjectPage({ name, path, children }: {
         name={name}
         address={data?.address ?? ''}
         url={data?.url ?? ''}
-        live={!!data?.production}
+        live={visit && !!data?.production}
         path={path}
       />
       {data ? children(data) : <div className="loading">Loading {name}…</div>}
