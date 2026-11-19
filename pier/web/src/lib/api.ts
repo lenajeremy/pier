@@ -22,7 +22,7 @@ export interface Deployment {
   host: string
   url: string
   target: 'production' | 'preview'
-  source: 'git' | 'cli'
+  source: 'git' | 'cli' | 'github'
   plan?: string
 }
 

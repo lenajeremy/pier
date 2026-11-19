@@ -1644,3 +1644,9 @@ select.input {
   gap: 1px;
   margin-right: 8px;
 }
+
+.github-fields { display: flex; flex-direction: column; gap: 16px; }
+.github-fields p { max-width: 68ch; margin: 0; }
+.github-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 0; }
+.github-row + .github-row { border-top: 1px solid var(--d-line-soft); }
+.github-row p { margin: 4px 0 0; }

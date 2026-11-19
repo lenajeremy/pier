@@ -1,12 +1,11 @@
+import { GitHubRepos } from './GitHub'
 import { useState, type FormEvent } from 'react'
 import { api, ApiError, type Session } from '../lib/api'
 import { navigate } from '../lib/router'
 
 const nameRule = /^[a-z0-9]([a-z0-9-]{0,37}[a-z0-9])?$/
 
-// NewProject is D1: where the code comes from. GitHub import arrives with
-// the GitHub App; until then a project starts empty and is deployed with
-// pier deploy.
+// D1 offers a GitHub import or an empty project for the CLI.
 export function NewProject({ session, onCreated }: { session: Session; onCreated: () => void }) {
   const [name, setName] = useState('')
   const [error, setError] = useState('')
@@ -49,10 +48,7 @@ export function NewProject({ session, onCreated }: { session: Session; onCreated
             <span className="t-small t-strong">Import from GitHub</span>
           </div>
           <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <span className="t-caption">Every push deploys, and each pull request gets its own preview.</span>
-            <span className="t-caption t-muted">
-              This comes with Pier's GitHub App, which you'll create in Integrations. Until then, deploy from your computer.
-            </span>
+            <GitHubRepos />
           </div>
         </section>
         <form className="panel cli-panel" onSubmit={submit} noValidate>

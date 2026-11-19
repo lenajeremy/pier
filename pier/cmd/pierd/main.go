@@ -193,6 +193,7 @@ func serve(args []string) int {
 	}()
 
 	a := &api.API{Store: st, Deployer: dep, Token: tok, Log: log, Web: web.Handler(), Requests: reqs}
+	go a.RunGitHub(ctx)
 	go func() {
 		t := time.NewTicker(time.Hour)
 		defer t.Stop()

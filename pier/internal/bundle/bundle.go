@@ -114,7 +114,12 @@ var ErrUnsafe = errors.New("the upload holds a path Pier won't unpack")
 // Untar unpacks a gzipped tar from archive into dir. Only regular files and
 // folders are written, every path must stay inside dir, and the totals are
 // capped, so an upload can't reach the rest of the server.
-func Untar(archive, dir string) error {
+func Untar(archive, dir string) error { return unpack(archive, dir, false) }
+
+// UntarGitHub removes the enclosing directory in a GitHub source archive.
+func UntarGitHub(archive, dir string) error { return unpack(archive, dir, true) }
+
+func unpack(archive, dir string, github bool) error {
 	f, err := os.Open(archive)
 	if err != nil {
 		return err
@@ -125,6 +130,7 @@ func Untar(archive, dir string) error {
 		return fmt.Errorf("not a gzipped tar: %w", err)
 	}
 	tr := tar.NewReader(gz)
+	var prefix string
 	var files int
 	var total int64
 	for {
@@ -135,9 +141,30 @@ func Untar(archive, dir string) error {
 		if err != nil {
 			return err
 		}
+		// GitHub puts the commit ID in a global PAX metadata header before
+		// the enclosing directory. It does not represent a filesystem entry.
+		if github && h.Typeflag == tar.TypeXGlobalHeader {
+			continue
+		}
 		name := path.Clean("/" + h.Name)[1:] // rooted clean drops any ..
 		if name == "" || name != strings.TrimPrefix(path.Clean(h.Name), "./") {
 			return fmt.Errorf("%w: %s", ErrUnsafe, h.Name)
+		}
+		if github {
+			top, rest, _ := strings.Cut(name, "/")
+			if prefix == "" {
+				prefix = top
+			}
+			if top != prefix {
+				return ErrUnsafe
+			}
+			if rest == "" {
+				if h.Typeflag != tar.TypeDir {
+					return ErrUnsafe
+				}
+				continue
+			}
+			name = rest
 		}
 		target := filepath.Join(dir, filepath.FromSlash(name))
 		switch h.Typeflag {

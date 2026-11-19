@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 
 	"pier/internal/board"
 	"pier/internal/deploy"
@@ -22,13 +23,15 @@ import (
 )
 
 type API struct {
-	logins   logins // pier login requests waiting for approval
-	Store    *store.Store
-	Deployer *deploy.Deployer
-	Token    string // the server's own token, from pierd token; still accepted for the CLI
-	Log      *slog.Logger
-	Web      http.Handler  // the dashboard's files; nil serves the API only
-	Requests *requests.Log // every request the sites answered; nil keeps none
+	githubSetup    sync.Mutex
+	githubEndpoint string // GitHub API base for integration tests
+	logins         logins // pier login requests waiting for approval
+	Store          *store.Store
+	Deployer       *deploy.Deployer
+	Token          string // the server's own token, from pierd token; still accepted for the CLI
+	Log            *slog.Logger
+	Web            http.Handler  // the dashboard's files; nil serves the API only
+	Requests       *requests.Log // every request the sites answered; nil keeps none
 }
 
 // BoardRow is a board row with the address's full URL.
@@ -40,6 +43,7 @@ type BoardRow struct {
 // Public serves the dashboard and the authenticated API.
 func (a *API) Public() http.Handler {
 	mux := http.NewServeMux()
+	a.githubRoutes(mux)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "ok\n") })
 
 	mux.HandleFunc("POST /api/session", a.signIn)

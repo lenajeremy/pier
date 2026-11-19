@@ -14,7 +14,7 @@ and Railway, but never Railway's canvas.
   - `pierd` is the daemon on the VPS: builds, deployments, routing and the dashboard. It also has the owner-only commands, run over SSH: `pierd init`, `pierd reset-password`, `pierd domain set` (not built), `pierd status` (not built).
   - `pier` is the CLI on a laptop: `pier login`, `pier deploy`, `pier logs` (not built), `pier rollback`.
 - **Two ways to deploy.**
-  - **GitHub (not built yet).** Each owner creates their own GitHub App from the dashboard, through GitHub's app-manifest flow, in one click. Every push deploys: the production branch goes to production, and other branches and pull requests get previews (`pr-42--agentman.lenajeremy.xyz`). Pier posts the preview link on the pull request. Pull requests from forks wait for the owner's approval.
+  - **GitHub.** Each owner creates their own GitHub App from the dashboard, through GitHub's app-manifest flow, in one click. Every push deploys: the production branch goes to production, and other branches and pull requests get previews (`pr-42--agentman.lenajeremy.xyz`). Pier posts the preview link on the pull request. Pull requests from forks wait for the owner's approval.
   - **The CLI (built).** `pier deploy` makes a preview, and `pier deploy --prod` deploys to production, as on Vercel.
 - **Projects are created first, then deployed.**
 - **Build presets:** static HTML and Vite now; Next.js and Node servers later. Pier detects the preset. The owner can override the root directory, install command, build command and output folder (and, later, start command and port).
@@ -164,8 +164,15 @@ The design is the source of truth. It's on the Screenshotter board **"Pier websi
    - The project home shows yesterday’s requests and errors when either of the previous two days had traffic. Each number opens the matching range in Logs.
    - The remaining Logs work is the `pier logs` CLI command.
 
+10. GitHub deployments:
+    - Integrations registers a private GitHub App through the manifest flow. Install it on selected repositories. New project imports a repository, confirms the production branch and build overrides, and deploys its current head.
+    - Signed push and pull-request deliveries are queued in SQLite. Redelivery of the same delivery ID is idempotent. Fork builds wait in Integrations for approval of a particular commit. Changes to the head require fresh approval.
+    - The build uses an installation token scoped to the imported repository and stores the immutable source archive for redeploy. Production and branch aliases move on success. GitHub receives a commit status, and a successful PR build gets a preview comment.
+    - The real registration, installation, push, PR, failed production build and recovery were exercised with one private repository on a Mac through a webhook-only HTTPS tunnel. The fork approval path was exercised against an isolated GitHub API fixture.
+    - For a VPS, use a stable public HTTPS URL for `/github/events` and routable project addresses. A local test tunnel exposes the webhook alone. The server key and database together are needed to recover App credentials.
+
 **Placeholders for now:**
-- **Pages:** Activity, Integrations, Shared variables, Server and Settings, plus the project’s Domains tab. They say what they'll hold.
+- **Pages:** Activity, Shared variables, Server and Settings, plus the project’s Domains tab. They say what they'll hold.
 
 ## 6. Running and testing
 
@@ -214,7 +221,7 @@ Everything so far was tested on macOS: pierd runs natively, and builds run in Do
 
 The brief's backend order:
 
-1. **The GitHub App** (skipped so far because its webhooks need a public HTTPS address; build it once Pier runs on the VPS or behind a tunnel). The manifest flow from Integrations (C1, C2); webhooks for pushes and pull requests; commit statuses with the preview link; `pr-N--` previews; approval for pull requests from forks. Then D1's repo list and D2's Configure screen, for imports. The SSH git push from slice 1 is to be dropped once this works.
+1. **The GitHub App:** built and tested (see section 5). The older SSH push path is still available. Retiring it needs a migration for existing callers and test coverage.
 2. **Promote and rollback:** done (see §5).
 3. **Caddy embedded in pierd,** with the `_acme-challenge` DNS responder. Then wildcard and on-demand certificates, and custom domains (F1, F2: records, live checks, and what DNS returns now), with the Certificates step of A4. Then `pierd domain set`.
 4. **Variables:** done (see §5). Still to do: Shared variables (K2), linked into several projects; a project's own variable wins.

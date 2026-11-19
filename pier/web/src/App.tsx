@@ -1,3 +1,4 @@
+import { GitHubImport, Integrations } from './pages/GitHub'
 import { useCallback, useEffect, useState } from 'react'
 import { api, ApiError, type Project, type ProjectSummary, type Session } from './lib/api'
 import { useData, useNow } from './lib/data'
@@ -42,7 +43,6 @@ export function App() {
 
 const globals: Record<string, [string, string]> = {
   '/activity': ['Activity', 'Deploys, rollbacks, sign-ins and computers approved, across every project, newest first.'],
-  '/integrations': ['Integrations', 'Connect GitHub with your own GitHub App, so every push deploys.'],
   '/shared-variables': ['Shared variables', 'Values set once and linked into several projects.'],
   '/server': ['Server', 'Disk, memory and CPU, the services Pier runs, and safe clean-up.'],
   '/settings': ["Settings", "Pier's address, the base domain, and your password."],
@@ -65,6 +65,7 @@ function Signed({ session, path, now }: { session: Session; path: string; now: n
   const list = useData<{ projects: ProjectSummary[] }>('/api/projects', () => true, 5000)
   const projects = list.data?.projects ?? []
 
+  const importing = match('/new/github/:id', path)
   const deployment = match('/projects/:name/deployments/:id', path)
   const tab = match('/projects/:name/:tab', path)
   const home = match('/projects/:name', path)
@@ -97,6 +98,10 @@ function Signed({ session, path, now }: { session: Session; path: string; now: n
     )
   } else if (path === '/') {
     page = list.data ? <Projects session={session} projects={projects} now={now} /> : <div className="loading">Loading…</div>
+  } else if (path === '/integrations') {
+    page = <Integrations />
+  } else if (importing) {
+    page = <GitHubImport id={importing.id} onCreated={list.reload} />
   } else if (path === '/new') {
     page = <NewProject session={session} onCreated={list.reload} />
   } else if (path === '/members') {

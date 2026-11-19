@@ -1,7 +1,7 @@
 # pier
 
 The product: `pierd`, the daemon that runs on your server, and `pier`, the
-CLI. Deploys are a plain `git push`.
+CLI. Deploy from a connected GitHub repository or upload a folder with `pier deploy`.
 
 ## What works today
 
@@ -31,6 +31,14 @@ And the start of the second slice:
 10. `pier deploy` uploads the folder (what git would keep, in a checkout) and
     narrates its build: a preview at its own address, or production with
     `--prod`. The folder remembers its project in `.pier/project.json`.
+
+## Deploy from GitHub
+
+1. Sign in to the dashboard and open **Integrations**. Set the public HTTPS webhook URL ending in `/github/events`, then choose **Create GitHub App**.
+2. Name the App on GitHub and install it on the repositories you want Pier to build. In **New project**, select **Import**, choose the production branch and any build overrides, then deploy.
+3. Push to the production branch to update production. Other branches get previews. Pull requests also get a `pr-N--` address and a comment with the built deployment’s URL. Approve fork commits in **Integrations** after reviewing their code and the preview variables they will receive.
+
+GitHub needs to reach the webhook. An HTTPS tunnel to that route works for local testing. The preview addresses also need public routing if collaborators on other machines will visit them. Pier retains the source archive for redeploy. Source archives containing symlinks are currently rejected.
 
 Every deployment gets three kinds of address:
 
@@ -105,5 +113,4 @@ pierd.sock               the git hook's socket
 ## Next
 
 The order the dashboard needs them in (design/v3/dashboard-brief.md, kept
-outside the repository): the GitHub App, promote and rollback, domains with
-Caddy embedded in pierd, variables, request logs, and server health.
+outside the repository): domains with Caddy embedded in pierd, shared variables, the logs CLI, and server health.

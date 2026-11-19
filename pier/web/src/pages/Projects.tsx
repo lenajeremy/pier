@@ -102,7 +102,7 @@ function GettingStarted({ session }: { session: Session }) {
           <div>
             <span className="t-small t-strong">Create your first project</span>
             <span className="t-caption t-muted">
-              Start it empty, then deploy any folder from your computer with pier deploy. GitHub import comes with the GitHub App.
+              Import a GitHub repository or deploy a folder from your computer with pier deploy.
             </span>
           </div>
           <Link to="/new" className="btn quiet">

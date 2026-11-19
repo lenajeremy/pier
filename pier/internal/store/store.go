@@ -35,8 +35,9 @@ const (
 
 // Deployment sources.
 const (
-	SourceGit = "git" // a git push
-	SourceCLI = "cli" // a folder uploaded by pier deploy
+	SourceGit    = "git" // a git push
+	SourceGitHub = "github"
+	SourceCLI    = "cli" // a folder uploaded by pier deploy
 )
 
 type Deployment struct {
@@ -53,7 +54,7 @@ type Deployment struct {
 	Error     string    `json:"error,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	Target    string    `json:"target"`         // production or preview
-	Source    string    `json:"source"`         // git or cli
+	Source    string    `json:"source"`         // git, github or cli
 	Plan      string    `json:"plan,omitempty"` // JSON: what the build ran
 }
 
@@ -159,6 +160,19 @@ var migrations = []string{
 	);
 	ALTER TABLE projects ADD COLUMN vars_changed_production INTEGER NOT NULL DEFAULT 0;
 	ALTER TABLE projects ADD COLUMN vars_changed_preview    INTEGER NOT NULL DEFAULT 0;`,
+	`CREATE TABLE github_repos (
+		project TEXT PRIMARY KEY REFERENCES projects(name),
+		repo_id INTEGER NOT NULL UNIQUE,
+		installation INTEGER NOT NULL
+	);
+	CREATE TABLE github_jobs (
+		id INTEGER PRIMARY KEY,
+		project TEXT NOT NULL REFERENCES github_repos(project),
+		delivery TEXT NOT NULL, branch TEXT NOT NULL, sha TEXT NOT NULL,
+		pr INTEGER NOT NULL, state TEXT NOT NULL, deployment TEXT NOT NULL DEFAULT '',
+		detail TEXT NOT NULL DEFAULT '', UNIQUE(project,delivery)
+	);
+	CREATE INDEX github_jobs_state ON github_jobs(state,id);`,
 }
 
 // Open opens (and if needed creates) the database at path.
@@ -242,10 +256,18 @@ func (s *Store) Projects(ctx context.Context) ([]string, error) {
 
 // CreateDeployment records a deployment that has started building.
 func (s *Store) CreateDeployment(ctx context.Context, d Deployment) error {
+	return insertDeployment(ctx, s.db, d)
+}
+
+type execer interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
+func insertDeployment(ctx context.Context, db execer, d Deployment) error {
 	if d.CreatedAt.IsZero() {
 		d.CreatedAt = time.Now()
 	}
-	_, err := s.db.ExecContext(ctx,
+	_, err := db.ExecContext(ctx,
 		`INSERT INTO deployments(id, project, branch, commit_sha, message, status, created_at, target, source)
 		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		d.ID, d.Project, d.Branch, d.Commit, d.Message, d.Status, d.CreatedAt.UnixMilli(), d.Target, orDefault(d.Source, SourceGit))

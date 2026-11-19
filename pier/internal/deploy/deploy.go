@@ -77,17 +77,18 @@ func say(w io.Writer, tag, format string, args ...any) {
 // Source is what a deployment is built from: a pushed commit, or a folder
 // uploaded by pier deploy.
 type Source struct {
-	Kind    string // store.SourceGit or store.SourceCLI
-	Branch  string // the git branch, or the branch the folder was on
-	Commit  string
-	Message string
-	Target  string          // store.TargetProduction or store.TargetPreview
-	Files   int             // for an upload: how many files came
-	Tools   string          // for an upload: the package manager on the developer's computer, like pnpm@10.33.0
-	Note    string          // said first in the log, like what a redeploy rebuilds
-	OnStart func(id string) // told the new deployment's ID as soon as it exists
-	archive string          // for an upload: the gzipped tar to build, kept afterwards as the source
-	extract func(ctx context.Context, dir string) error
+	GitHubJob int64  // queue record for a GitHub-triggered build
+	Kind      string // git, github or cli
+	Branch    string // the git branch, or the branch the folder was on
+	Commit    string
+	Message   string
+	Target    string          // store.TargetProduction or store.TargetPreview
+	Files     int             // for an upload: how many files came
+	Tools     string          // for an upload: the package manager on the developer's computer, like pnpm@10.33.0
+	Note      string          // said first in the log, like what a redeploy rebuilds
+	OnStart   func(id string) // told the new deployment's ID as soon as it exists
+	archive   string          // for an upload: the gzipped tar to build, kept afterwards as the source
+	extract   func(ctx context.Context, dir string) error
 }
 
 // Deploy builds a pushed commit and, if the build works, points the branch's
@@ -115,6 +116,13 @@ func (d *Deployer) DeployUpload(ctx context.Context, project, archive string, sr
 	return d.run(ctx, project, src, out)
 }
 
+// DeployGitHub builds an immutable GitHub archive and keeps it for redeploy.
+func (d *Deployer) DeployGitHub(ctx context.Context, project, archive string, src Source, out io.Writer) error {
+	src.Kind = store.SourceGitHub
+	src.archive = archive
+	return d.run(ctx, project, src, out)
+}
+
 // ErrNoSource means a deployment's source is gone, so it can't be rebuilt.
 var ErrNoSource = errors.New("the source isn't kept any more")
 
@@ -134,7 +142,7 @@ func (d *Deployer) Redeploy(ctx context.Context, project, id, target string, onS
 		Note: "redeploying " + id + " with today's settings and variables", OnStart: onStart,
 	}
 	switch old.Source {
-	case store.SourceCLI:
+	case store.SourceCLI, store.SourceGitHub:
 		copyPath := filepath.Join(d.Tmp, "redeploy-"+names.NewID()+".tar.gz")
 		if err := copyFile(d.sourcePath(id), copyPath); err != nil {
 			return ErrNoSource
@@ -224,7 +232,12 @@ func (d *Deployer) run(ctx context.Context, project string, src Source, out io.W
 		}
 		dep.ID = names.NewID()
 	}
-	if err := d.Store.CreateDeployment(ctx, dep); err != nil {
+	if src.GitHubJob != 0 {
+		err = d.Store.StartGitHubDeployment(ctx, src.GitHubJob, dep)
+	} else {
+		err = d.Store.CreateDeployment(ctx, dep)
+	}
+	if err != nil {
 		return err
 	}
 	if src.OnStart != nil {
@@ -237,7 +250,12 @@ func (d *Deployer) run(ctx context.Context, project string, src Source, out io.W
 		if err := os.MkdirAll(d.Sources, 0o755); err == nil && os.Rename(archive, kept) == nil {
 			archive = kept
 		}
-		src.extract = func(_ context.Context, dir string) error { return bundle.Untar(archive, dir) }
+		src.extract = func(_ context.Context, dir string) error {
+			if src.Kind == store.SourceGitHub {
+				return bundle.UntarGitHub(archive, dir)
+			}
+			return bundle.Untar(archive, dir)
+		}
 	}
 	if logFile, err := d.createLog(dep.ID); err != nil {
 		d.Log.Warn("build log can't be kept", "deployment", dep.ID, "err", err)
@@ -473,7 +491,7 @@ func (d *Deployer) addressFor(project string, src Source) string {
 	switch {
 	case src.Target == store.TargetProduction:
 		return names.Production(project, d.Domain)
-	case src.Kind == store.SourceGit:
+	case src.Kind == store.SourceGit || src.Kind == store.SourceGitHub:
 		return names.Branch(project, src.Branch, d.Domain)
 	}
 	return ""
