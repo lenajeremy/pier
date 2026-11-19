@@ -108,6 +108,7 @@ func deploy(args []string) error {
 	q := url.Values{
 		"target": {target}, "files": {strconv.Itoa(len(files))},
 		"branch": {g.branch}, "commit": {g.commit}, "message": {g.message},
+		"tools": {localTools(dir)},
 	}
 	fmt.Printf("Uploading %s (%s, %s packed) to %s, for %s\n",
 		plural(len(files), "file"), human(size), human(packed), project, target)
@@ -247,6 +248,30 @@ func remember(c config, dir, name string) error {
 	}
 	fmt.Printf("This folder deploys to %s from now on (.pier/project.json).\n", name)
 	return nil
+}
+
+// localTools says which package manager, at which version, this computer
+// uses for the folder's lockfile, so the build uses the same one rather
+// than whatever is newest. package.json's packageManager wins on the server.
+func localTools(dir string) string {
+	has := func(f string) bool { _, err := os.Stat(filepath.Join(dir, f)); return err == nil }
+	tool := ""
+	switch {
+	case has("pnpm-lock.yaml"):
+		tool = "pnpm"
+	case has("yarn.lock"):
+		tool = "yarn"
+	case has("bun.lock"), has("bun.lockb"):
+		tool = "bun"
+	default:
+		return ""
+	}
+	out, err := exec.Command(tool, "--version").Output()
+	v := strings.TrimSpace(string(out))
+	if err != nil || v == "" || strings.ContainsAny(v, " \n") {
+		return ""
+	}
+	return tool + "@" + v
 }
 
 type git struct{ branch, commit, message string }

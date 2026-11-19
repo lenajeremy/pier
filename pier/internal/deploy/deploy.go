@@ -80,6 +80,7 @@ type Source struct {
 	Message string
 	Target  string // store.TargetProduction or store.TargetPreview
 	Files   int    // for an upload: how many files came
+	Tools   string // for an upload: the package manager on the developer's computer, like pnpm@10.33.0
 	extract func(ctx context.Context, dir string) error
 }
 
@@ -232,7 +233,7 @@ func (d *Deployer) build(ctx context.Context, dep store.Deployment, src Source, 
 		return res, fmt.Errorf("checking out %s: %w", short(src.Commit), err)
 	}
 	o := build.Overrides{Root: settings.Root, Preset: settings.Preset, Install: settings.Install, Build: settings.Command, Output: settings.Output}
-	plan, root, err := build.PlanFor(work, o)
+	plan, root, err := build.PlanFor(work, o, src.Tools)
 	if err != nil {
 		return res, err
 	}
@@ -250,6 +251,9 @@ func (d *Deployer) build(ctx context.Context, dep store.Deployment, src Source, 
 	say(out, "build", "%s, found in %s", plan.Label, where)
 	if !o.Empty() {
 		say(out, "build", "with this project's build settings")
+	}
+	if plan.Tooling != "" {
+		say(out, "build", "using %s", plan.Tooling)
 	}
 	dir := filepath.Join(work, root)
 

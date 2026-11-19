@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -23,6 +24,8 @@ type Plan struct {
 	Build   string
 	// Output is the folder, relative to the checkout, that gets served.
 	Output string
+	// Tooling says which package manager version runs, and why.
+	Tooling string
 }
 
 // ErrNothingToServe means the push has nothing Pier knows how to serve yet.
@@ -45,7 +48,10 @@ var frameworks = []struct{ dep, name, output string }{
 }
 
 // Detect looks at a checkout and decides how to build it.
-func Detect(dir string) (Plan, error) {
+func Detect(dir string) (Plan, error) { return DetectWith(dir, "") }
+
+// DetectWith is Detect with a hint of the package manager the developer uses.
+func DetectWith(dir, tools string) (Plan, error) {
 	raw, err := os.ReadFile(filepath.Join(dir, "package.json"))
 	if errors.Is(err, os.ErrNotExist) {
 		return detectStatic(dir)
@@ -75,7 +81,7 @@ func Detect(dir string) (Plan, error) {
 			break
 		}
 	}
-	p.Install, p.Build = commands(dir)
+	p.Install, p.Build, p.Tooling = commands(dir, tools)
 	return p, nil
 }
 
@@ -139,7 +145,7 @@ var Presets = []string{"static", "vite"}
 // PlanFor works out how to build dir with the owner's overrides: it detects
 // in the root folder, or uses the forced preset, then applies any command or
 // folder the owner set. It returns the root, relative to dir.
-func PlanFor(dir string, o Overrides) (Plan, string, error) {
+func PlanFor(dir string, o Overrides, tools string) (Plan, string, error) {
 	root, err := Folder(o.Root)
 	if err != nil {
 		return Plan{}, "", fmt.Errorf("root directory: %w", err)
@@ -158,9 +164,9 @@ func PlanFor(dir string, o Overrides) (Plan, string, error) {
 		p.Source = "your settings"
 	case "vite":
 		p = Plan{Label: "vite", Source: "your settings", Output: "dist"}
-		p.Install, p.Build = commands(at)
+		p.Install, p.Build, p.Tooling = commands(at, tools)
 	case "":
-		p, err = Detect(at)
+		p, err = DetectWith(at, tools)
 		if err != nil && o.Build != "" {
 			// Nothing detected, but the owner says how to build it.
 			p, err = Plan{Label: "your build", Source: "your settings", Output: "dist"}, nil
@@ -177,7 +183,7 @@ func PlanFor(dir string, o Overrides) (Plan, string, error) {
 	if o.Build != "" {
 		p.Build = o.Build
 		if _, err := os.Stat(filepath.Join(at, "package.json")); err == nil && p.Install == "" {
-			p.Install, _ = commands(at)
+			p.Install, _, p.Tooling = commands(at, tools)
 		}
 	}
 	if o.Output != "" {
@@ -207,19 +213,78 @@ func Folder(p string) (string, error) {
 	return c, nil
 }
 
-// commands picks the install and build commands from the lockfile present.
-func commands(dir string) (install, build string) {
+// Tools names the package manager the developer uses, like "pnpm@10.33.0",
+// as pier deploy reports it. It's only a hint: package.json's packageManager
+// field wins.
+var toolRe = regexp.MustCompile(`^(pnpm|yarn|bun)@([0-9][0-9A-Za-z.+-]{0,40})$`)
+
+// ValidTools reports whether a hint from the CLI is well formed.
+func ValidTools(s string) bool { return s == "" || toolRe.MatchString(s) }
+
+// defaults are the versions used when nothing says which: the major the
+// lockfile format belongs to, not whatever is newest, so a build doesn't
+// break because the package manager changed under it.
+var defaults = map[string]string{"pnpm": "10", "yarn": "1", "yarn-berry": "4"}
+
+// commands picks the install and build commands from the lockfile present,
+// with the package manager at the version the project or the developer
+// uses. note says which version and why, for the log.
+func commands(dir, tools string) (install, build, note string) {
 	has := func(f string) bool { _, err := os.Stat(filepath.Join(dir, f)); return err == nil }
+	version := func(tool, def string) (string, string) {
+		if v := packageManagerField(dir, tool); v != "" {
+			return v, tool + " " + v + ", from packageManager in package.json"
+		}
+		if m := toolRe.FindStringSubmatch(tools); m != nil && m[1] == tool {
+			return m[2], tool + " " + m[2] + ", the version on your computer"
+		}
+		return def, tool + " " + def + ", since package.json doesn't name a version (add packageManager to pin one)"
+	}
 	switch {
 	case has("pnpm-lock.yaml"):
-		return "corepack enable && pnpm install --frozen-lockfile", "pnpm run build"
+		v, n := version("pnpm", defaults["pnpm"])
+		run := "corepack pnpm@" + v
+		return run + " install --frozen-lockfile", run + " run build", n
 	case has("yarn.lock"):
-		return "corepack enable && yarn install --frozen-lockfile", "yarn run build"
+		lock, _ := os.ReadFile(filepath.Join(dir, "yarn.lock"))
+		if strings.Contains(string(lock), "__metadata:") { // Yarn 2 and later
+			v, n := version("yarn", defaults["yarn-berry"])
+			run := "corepack yarn@" + v
+			return run + " install --immutable", run + " run build", n
+		}
+		v, n := version("yarn", defaults["yarn"])
+		run := "corepack yarn@" + v
+		return run + " install --frozen-lockfile", run + " run build", n
 	case has("bun.lockb"), has("bun.lock"):
-		return "npm install -g bun && bun install --frozen-lockfile", "bun run build"
+		v, n := version("bun", "latest")
+		return "npm install -g bun@" + v + " && bun install --frozen-lockfile", "bun run build", n
 	case has("package-lock.json"):
-		return "npm ci", "npm run build"
+		return "npm ci", "npm run build", ""
 	default:
-		return "npm install", "npm run build"
+		return "npm install", "npm run build", ""
 	}
+}
+
+// packageManagerField reads package.json's packageManager when it names
+// tool: "pnpm@9.15.0+sha512..." gives "9.15.0".
+func packageManagerField(dir, tool string) string {
+	raw, err := os.ReadFile(filepath.Join(dir, "package.json"))
+	if err != nil {
+		return ""
+	}
+	var pkg struct {
+		PackageManager string `json:"packageManager"`
+	}
+	if json.Unmarshal(raw, &pkg) != nil {
+		return ""
+	}
+	name, v, ok := strings.Cut(pkg.PackageManager, "@")
+	if !ok || name != tool {
+		return ""
+	}
+	v, _, _ = strings.Cut(v, "+")
+	if !toolRe.MatchString(tool + "@" + v) {
+		return ""
+	}
+	return v
 }

@@ -36,6 +36,7 @@ func (d Docker) Run(ctx context.Context, dir, command string, log io.Writer) err
 		"-e", "npm_config_update_notifier=false",
 		"-e", "YARN_CACHE_FOLDER=/cache/yarn",
 		"-e", "COREPACK_HOME=/cache/corepack",
+		"-e", "COREPACK_ENABLE_DOWNLOAD_PROMPT=0",
 		"-e", "PNPM_HOME=/cache/pnpm",
 	}
 	if runtime.GOOS == "linux" {
@@ -57,7 +58,7 @@ func (Local) Name() string { return "the host (no isolation)" }
 func (Local) Run(ctx context.Context, dir, command string, log io.Writer) error {
 	cmd := exec.CommandContext(ctx, "sh", "-c", command)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "CI=1", "NO_COLOR=1", "FORCE_COLOR=0")
+	cmd.Env = append(os.Environ(), "CI=1", "NO_COLOR=1", "FORCE_COLOR=0", "COREPACK_ENABLE_DOWNLOAD_PROMPT=0")
 	cmd.Stdout, cmd.Stderr = log, log
 	return cmd.Run()
 }

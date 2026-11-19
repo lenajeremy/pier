@@ -150,6 +150,10 @@ func (a *API) upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	files, _ := strconv.Atoi(q.Get("files"))
+	tools := q.Get("tools")
+	if !build.ValidTools(tools) {
+		tools = ""
+	}
 	tmp, err := os.CreateTemp(a.Deployer.Tmp, "upload-*.tar.gz")
 	if err != nil {
 		a.fail(w, err)
@@ -171,7 +175,7 @@ func (a *API) upload(w http.ResponseWriter, r *http.Request) {
 
 	src := deploy.Source{
 		Branch: clip(q.Get("branch"), 200), Commit: clip(q.Get("commit"), 64), Message: clip(q.Get("message"), 300),
-		Target: target, Files: files,
+		Target: target, Files: files, Tools: tools,
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Trailer", "Pier-Result")
