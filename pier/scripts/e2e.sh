@@ -111,6 +111,44 @@ curl -fsS "$API/" | grep -q '<div id="root">' || fail "pierd doesn't serve the d
 curl -fsS "$API/projects/blog" | grep -q '<div id="root">' || fail "the dashboard's own routes don't load"
 echo "signed in, and the dashboard's API answers"
 
+step "create a project, approve pier login, and pier deploy to it"
+curl -fsS -b "$JAR" -H 'X-Pier: 1' -d '{"name":"site"}' "$API/api/projects" | grep -q '"name":"site"' || fail "couldn't create the project"
+code=$(curl -s -o /dev/null -w '%{http_code}' -b "$JAR" -H 'X-Pier: 1' -d '{"name":"site"}' "$API/api/projects")
+[[ $code == 409 ]] || fail "creating site twice answered $code"
+export XDG_CONFIG_HOME=$WORK/cli
+"$PIER" login "127.0.0.1:$API_PORT" > "$WORK/login.log" 2>&1 &
+LOGIN=$!
+for _ in $(seq 50); do grep -q "shows the code" "$WORK/login.log" 2>/dev/null && break; sleep 0.1; done
+CODE=$(sed -n 's/.*shows the code \([A-Z0-9-]*\)\..*/\1/p' "$WORK/login.log")
+[[ -n $CODE ]] || { cat "$WORK/login.log"; fail "pier login printed no code"; }
+curl -fsS -b "$JAR" -H 'X-Pier: 1' -X POST "$API/api/cli/login/$CODE/approve" > /dev/null || fail "approving the computer failed"
+wait $LOGIN || { cat "$WORK/login.log"; fail "pier login didn't finish after approval"; }
+grep -q "Signed in to" "$WORK/login.log" || fail "pier login didn't say it signed in"
+
+mkdir -p "$WORK/site" && cd "$WORK/site"
+printf '<!doctype html><title>Site</title><h1>Version one</h1>\n' > index.html
+"$PIER" deploy --project site --prod | tee "$WORK/deploy-prod.log"
+grep -q "production ready in" "$WORK/deploy-prod.log" || fail "pier deploy --prod didn't finish"
+fetch site.$DOMAIN / | grep -q "Version one" || fail "site.$DOMAIN doesn't serve the upload"
+[[ -f .pier/project.json ]] || fail "pier deploy didn't remember the project"
+
+printf '<!doctype html><title>Site</title><h1>Version two</h1>\n' > index.html
+"$PIER" deploy | tee "$WORK/deploy-preview.log"
+grep -q "preview ready in" "$WORK/deploy-preview.log" || fail "the preview didn't finish"
+PREVIEW=$(sed -n 's|.*alias   http://\(site-[0-9a-f]*\.[a-z.]*\):.*|\1|p' "$WORK/deploy-preview.log" | tail -1)
+fetch "$PREVIEW" / | grep -q "Version two" || fail "the preview's own address doesn't serve it"
+fetch site.$DOMAIN / | grep -q "Version one" || fail "a preview changed production"
+
+step "a project's build settings override what Pier detects"
+curl -fsS -b "$JAR" -H 'X-Pier: 1' -X PUT -d '{"production_branch":"","build":{"root":"web","preset":"","install":"","command":"","output":""}}' \
+	"$API/api/projects/site/settings" | grep -q '"root":"web"' || fail "saving settings failed"
+mkdir -p web && printf '<!doctype html><title>Site</title><h1>From the web folder</h1>\n' > web/index.html
+"$PIER" deploy --prod > "$WORK/deploy-root.log"
+grep -q "found in web/" "$WORK/deploy-root.log" || { cat "$WORK/deploy-root.log"; fail "the root directory wasn't used"; }
+fetch site.$DOMAIN / | grep -q "From the web folder" || fail "production doesn't serve the root directory"
+cd "$WORK"
+echo "pier login and pier deploy work, and settings apply"
+
 step "pierd reset-password signs everyone out"
 echo "another long password" | "$PIERD" reset-password -data "$DATA" -password-stdin > /dev/null
 code=$(curl -s -o /dev/null -w '%{http_code}' -b "$JAR" "$API/api/projects")

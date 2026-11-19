@@ -7,6 +7,7 @@ package deploy
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -20,6 +21,7 @@ import (
 	"time"
 
 	"pier/internal/build"
+	"pier/internal/bundle"
 	"pier/internal/names"
 	"pier/internal/router"
 	"pier/internal/store"
@@ -69,19 +71,65 @@ func say(w io.Writer, tag, format string, args ...any) {
 	fmt.Fprintf(w, "%-8s%s\n", tag, fmt.Sprintf(format, args...))
 }
 
-// Deploy builds commit on branch for project and, if the build works, points
-// the branch's address at it. Builds for one project run one at a time.
+// Source is what a deployment is built from: a pushed commit, or a folder
+// uploaded by pier deploy.
+type Source struct {
+	Kind    string // store.SourceGit or store.SourceCLI
+	Branch  string // the git branch, or the branch the folder was on
+	Commit  string
+	Message string
+	Target  string // store.TargetProduction or store.TargetPreview
+	Files   int    // for an upload: how many files came
+	extract func(ctx context.Context, dir string) error
+}
+
+// Deploy builds a pushed commit and, if the build works, points the branch's
+// address (or production's) at it. The project is created on its first push.
 func (d *Deployer) Deploy(ctx context.Context, project, branch, commit string, out io.Writer) error {
+	if err := d.Store.EnsureProject(ctx, project); err != nil {
+		return err
+	}
+	target := store.TargetPreview
+	if branch == d.productionBranch(ctx, project) {
+		target = store.TargetProduction
+	}
+	return d.run(ctx, project, Source{
+		Kind: store.SourceGit, Branch: branch, Commit: commit, Target: target,
+		Message: d.commitMessage(commit, project),
+		extract: func(ctx context.Context, dir string) error { return d.extract(ctx, project, commit, dir) },
+	}, out)
+}
+
+// DeployUpload builds a folder that pier deploy uploaded as a gzipped tar.
+// A preview gets only its own address; production moves production's.
+func (d *Deployer) DeployUpload(ctx context.Context, project, archive string, src Source, out io.Writer) error {
+	src.Kind = store.SourceCLI
+	src.extract = func(_ context.Context, dir string) error { return bundle.Untar(archive, dir) }
+	return d.run(ctx, project, src, out)
+}
+
+// productionBranch is the project's own production branch, or the server's.
+func (d *Deployer) productionBranch(ctx context.Context, project string) string {
+	if p, err := d.Store.Project(ctx, project); err == nil && p.ProductionBranch != "" {
+		return p.ProductionBranch
+	}
+	return d.ProductionBranch
+}
+
+// run builds src for project and points the right address at the result.
+// Builds for one project run one at a time.
+func (d *Deployer) run(ctx context.Context, project string, src Source, out io.Writer) error {
 	unlock := d.lock(project)
 	defer unlock()
 	start := time.Now()
 
-	if err := d.Store.EnsureProject(ctx, project); err != nil {
+	p, err := d.Store.Project(ctx, project)
+	if err != nil {
 		return err
 	}
 	dep := store.Deployment{
-		ID: names.NewID(), Project: project, Branch: branch, Commit: commit,
-		Message: d.commitMessage(commit, project), Status: store.Building, CreatedAt: start,
+		ID: names.NewID(), Project: project, Branch: src.Branch, Commit: src.Commit,
+		Message: src.Message, Status: store.Building, CreatedAt: start, Target: src.Target, Source: src.Kind,
 	}
 	for range 5 { // six hex characters can collide, rarely
 		if _, err := d.Store.Deployment(ctx, dep.ID); errors.Is(err, store.ErrNotFound) {
@@ -99,22 +147,28 @@ func (d *Deployer) Deploy(ctx context.Context, project, branch, commit string, o
 		defer func() { tl.Flush(); logFile.Close() }()
 		out = io.MultiWriter(out, tl)
 	}
-	say(out, "pier", "received %s at %s", branch, short(commit))
+	if src.Kind == store.SourceCLI {
+		say(out, "pier", "received %s from pier deploy, for %s", plural(src.Files, "file"), src.Target)
+	} else {
+		say(out, "pier", "received %s at %s", src.Branch, short(src.Commit))
+	}
 
 	buildCtx, cancel := context.WithTimeout(ctx, d.BuildTimeout)
 	defer cancel()
-	res, err := d.build(buildCtx, dep, out)
+	res, err := d.build(buildCtx, dep, src, p.Build, out)
 	elapsed := time.Since(start)
 	dep.BuildMS = elapsed.Milliseconds()
-	dep.Framework, dep.Files, dep.Bytes = res.label, res.files, res.bytes
+	dep.Framework, dep.Files, dep.Bytes, dep.Plan = res.label, res.files, res.bytes, res.plan
 	if err != nil {
 		dep.Status, dep.Error = store.Failed, err.Error()
 		if ferr := d.Store.FinishDeployment(context.WithoutCancel(ctx), dep); ferr != nil {
 			d.Log.Error("record failed build", "err", ferr)
 		}
 		say(out, "pier", "build failed after %s: %s", seconds(elapsed), err)
-		if prev := d.serving(ctx, project, branch); prev != "" {
-			say(out, "pier", "%s still serves %s", d.addressFor(project, branch), prev)
+		if host := d.addressFor(project, src); host != "" {
+			if prev := d.serving(ctx, host); prev != "" {
+				say(out, "pier", "%s still serves %s", host, prev)
+			}
 		}
 		return err
 	}
@@ -124,21 +178,23 @@ func (d *Deployer) Deploy(ctx context.Context, project, branch, commit string, o
 	}
 	say(out, "deploy", "kept as %s: %s, %s, never changed again", dep.ID, plural(res.files, "file"), size(res.bytes))
 
-	alias := store.Alias{Project: project, Branch: branch, DeploymentID: dep.ID,
-		Kind: store.KindBranch, Host: names.Branch(project, branch, d.Domain)}
-	what := "preview"
-	if branch == d.ProductionBranch {
-		alias.Kind, alias.Host, what = store.KindProduction, names.Production(project, d.Domain), "production"
-	}
-	if err := d.Store.SetAlias(ctx, alias); err != nil {
-		return err
+	if host := d.addressFor(project, src); host != "" {
+		alias := store.Alias{Project: project, Branch: src.Branch, DeploymentID: dep.ID, Kind: store.KindBranch, Host: host}
+		if src.Target == store.TargetProduction {
+			alias.Kind = store.KindProduction
+		}
+		if err := d.Store.SetAlias(ctx, alias); err != nil {
+			return err
+		}
 	}
 	if err := d.Sync(ctx); err != nil {
 		say(out, "alias", "the router didn't take the change yet (%s); pierd will retry", err)
 	}
-	say(out, "alias", "%s", d.URL(alias.Host))
+	if host := d.addressFor(project, src); host != "" {
+		say(out, "alias", "%s", d.URL(host))
+	}
 	say(out, "alias", "%s", d.URL(names.Deployment(project, dep.ID, d.Domain)))
-	say(out, "pier", "%s ready in %s", what, seconds(time.Since(start)))
+	say(out, "pier", "%s ready in %s", src.Target, seconds(time.Since(start)))
 	return nil
 }
 
@@ -146,9 +202,10 @@ type result struct {
 	label string
 	files int
 	bytes int64
+	plan  string
 }
 
-func (d *Deployer) build(ctx context.Context, dep store.Deployment, out io.Writer) (result, error) {
+func (d *Deployer) build(ctx context.Context, dep store.Deployment, src Source, settings store.Build, out io.Writer) (result, error) {
 	var res result
 	if err := os.MkdirAll(d.Tmp, 0o755); err != nil {
 		return res, err
@@ -159,23 +216,44 @@ func (d *Deployer) build(ctx context.Context, dep store.Deployment, out io.Write
 	}
 	defer os.RemoveAll(work)
 
-	if err := d.extract(ctx, dep.Project, dep.Commit, work); err != nil {
-		return res, fmt.Errorf("checking out %s: %w", short(dep.Commit), err)
+	if err := src.extract(ctx, work); err != nil {
+		if src.Kind == store.SourceCLI {
+			return res, fmt.Errorf("unpacking the upload: %w", err)
+		}
+		return res, fmt.Errorf("checking out %s: %w", short(src.Commit), err)
 	}
-	plan, err := build.Detect(work)
+	o := build.Overrides{Root: settings.Root, Preset: settings.Preset, Install: settings.Install, Build: settings.Command, Output: settings.Output}
+	plan, root, err := build.PlanFor(work, o)
 	if err != nil {
 		return res, err
 	}
 	res.label = plan.Label
-	say(out, "build", "%s, found in %s", plan.Label, plan.Source)
+	if raw, err := json.Marshal(map[string]string{
+		"label": plan.Label, "source": plan.Source, "root": root,
+		"install": plan.Install, "build": plan.Build, "output": plan.Output,
+	}); err == nil {
+		res.plan = string(raw)
+	}
+	where := plan.Source
+	if root != "." {
+		where = root + "/" + where
+	}
+	say(out, "build", "%s, found in %s", plan.Label, where)
+	if !o.Empty() {
+		say(out, "build", "with this project's build settings")
+	}
+	dir := filepath.Join(work, root)
 
-	if plan.Build != "" {
+	if plan.Build != "" || plan.Install != "" {
 		say(out, "build", "running in %s", d.Runner.Name())
 		log := prefixed(out, "build   ")
 		for _, step := range []string{plan.Install, plan.Build} {
+			if step == "" {
+				continue
+			}
 			t := time.Now()
 			say(out, "build", "$ %s", step)
-			if err := d.Runner.Run(ctx, work, step, log); err != nil {
+			if err := d.Runner.Run(ctx, dir, step, log); err != nil {
 				log.Flush()
 				if ctx.Err() != nil {
 					return res, fmt.Errorf("%s timed out after %s", step, seconds(time.Since(t)))
@@ -187,12 +265,12 @@ func (d *Deployer) build(ctx context.Context, dep store.Deployment, out io.Write
 		}
 	}
 
-	output := filepath.Join(work, filepath.Clean(plan.Output))
+	output := filepath.Join(dir, filepath.Clean(plan.Output))
 	if rel, err := filepath.Rel(work, output); err != nil || strings.HasPrefix(rel, "..") {
 		return res, fmt.Errorf("output folder %q is outside the project", plan.Output)
 	}
 	if fi, err := os.Stat(output); err != nil || !fi.IsDir() {
-		return res, fmt.Errorf("the build didn't produce %s/; check the framework's output folder", plan.Output)
+		return res, fmt.Errorf("the build didn't produce %s/; check the output folder in the project's settings", plan.Output)
 	}
 	res.files, res.bytes, err = count(output)
 	if err != nil {
@@ -242,20 +320,25 @@ func (d *Deployer) commitMessage(commit, project string) string {
 	return strings.TrimSpace(string(out))
 }
 
-func (d *Deployer) addressFor(project, branch string) string {
-	if branch == d.ProductionBranch {
+// addressFor is the address a source moves when it builds: production's,
+// a pushed branch's, or none for a preview uploaded by pier deploy, which
+// only gets its own permanent address.
+func (d *Deployer) addressFor(project string, src Source) string {
+	switch {
+	case src.Target == store.TargetProduction:
 		return names.Production(project, d.Domain)
+	case src.Kind == store.SourceGit:
+		return names.Branch(project, src.Branch, d.Domain)
 	}
-	return names.Branch(project, branch, d.Domain)
+	return ""
 }
 
 // serving returns the deployment an address serves now, if any.
-func (d *Deployer) serving(ctx context.Context, project, branch string) string {
+func (d *Deployer) serving(ctx context.Context, host string) string {
 	aliases, err := d.Store.Aliases(ctx)
 	if err != nil {
 		return ""
 	}
-	host := d.addressFor(project, branch)
 	for _, a := range aliases {
 		if a.Host == host {
 			return a.DeploymentID

@@ -8,6 +8,10 @@ import { SignIn } from './pages/SignIn'
 import { Projects } from './pages/Projects'
 import { ProjectDeployments } from './pages/ProjectDeployments'
 import { DeploymentPage } from './pages/DeploymentPage'
+import { NewProject } from './pages/NewProject'
+import { Approve } from './pages/Approve'
+import { Members } from './pages/Members'
+import { ProjectSettings } from './pages/ProjectSettings'
 
 type Auth = { state: 'loading' } | { state: 'out'; address: string } | { state: 'in'; session: Session }
 
@@ -38,7 +42,6 @@ const globals: Record<string, [string, string]> = {
   '/activity': ['Activity', 'Deploys, rollbacks, sign-ins and computers approved, across every project, newest first.'],
   '/integrations': ['Integrations', 'Connect GitHub with your own GitHub App, so every push deploys.'],
   '/shared-variables': ['Shared variables', 'Values set once and linked into several projects.'],
-  '/members': ['Members', 'Who can sign in, and every browser and computer signed in as you.'],
   '/server': ['Server', 'Disk, memory and CPU, the services Pier runs, and safe clean-up.'],
   '/settings': ["Settings", "Pier's address, the base domain, and your password."],
 }
@@ -47,12 +50,18 @@ const projectTabs: Record<string, [string, string]> = {
   domains: ['Domains', 'Custom domains, with the DNS records to add and a live check of each one.'],
   variables: ['Variables', 'Environment variables for production and previews, passed to every build.'],
   logs: ['Logs', 'Requests to the site, live, with a chart of requests and errors over time.'],
-  settings: ['Settings', 'The build settings Pier detected, and your overrides.'],
 }
 
 function Dashboard({ session }: { session: Session }) {
   const path = usePath()
   const now = useNow(15_000)
+  if (path === '/approve') {
+    return <Approve code={new URLSearchParams(location.search).get('code') ?? ''} now={now} />
+  }
+  return <Signed session={session} path={path} now={now} />
+}
+
+function Signed({ session, path, now }: { session: Session; path: string; now: number }) {
   const list = useData<{ projects: ProjectSummary[] }>('/api/projects', () => true, 5000)
   const projects = list.data?.projects ?? []
 
@@ -69,7 +78,9 @@ function Dashboard({ session }: { session: Session }) {
       <ProjectPage name={name} path={path} visit={!deployment}>
         {(project) =>
           deployment ? (
-            <DeploymentPage project={name} id={deployment.id} session={session} now={now} />
+            <DeploymentPage project={name} id={deployment.id} now={now} />
+          ) : tab?.tab === 'settings' ? (
+            <ProjectSettings project={name} />
           ) : tab && projectTabs[tab.tab] ? (
             <main className="main">
               <Later title={projectTabs[tab.tab][0]} what={projectTabs[tab.tab][1]} />
@@ -82,6 +93,10 @@ function Dashboard({ session }: { session: Session }) {
     )
   } else if (path === '/') {
     page = list.data ? <Projects session={session} projects={projects} now={now} /> : <div className="loading">Loading…</div>
+  } else if (path === '/new') {
+    page = <NewProject session={session} onCreated={list.reload} />
+  } else if (path === '/members') {
+    page = <Members now={now} />
   } else if (globals[path]) {
     const [title, what] = globals[path]
     page = (

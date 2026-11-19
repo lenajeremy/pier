@@ -13,7 +13,6 @@ const cols = '120px 190px minmax(0,1fr) 120px 90px 140px'
 // ProjectDeployments is the project's home (E1): what's live, what changed,
 // and every deployment, newest first.
 export function ProjectDeployments({ project, session, now }: { project: Project; session: Session; now: number }) {
-  const prodBranch = session.server.production_branch
   const [filter, setFilter] = useState<Filter>('all')
   const [query, setQuery] = useState('')
   const [page, setPage] = useState(0)
@@ -32,7 +31,7 @@ export function ProjectDeployments({ project, session, now }: { project: Project
   }, [])
 
   const all = project.deployments
-  const isProd = (d: Deployment) => d.branch === prodBranch
+  const isProd = (d: Deployment) => d.target === 'production'
   const counts = { all: all.length, production: all.filter(isProd).length, previews: all.filter((d) => !isProd(d)).length }
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -49,9 +48,16 @@ export function ProjectDeployments({ project, session, now }: { project: Project
   if (all.length === 0) {
     return (
       <main className="main">
-        <Empty title="No deployments yet">
-          <span className="t-caption t-muted">Push to this project and its first deployment shows up here.</span>
-          <span className="command">git push pier {prodBranch}</span>
+        <Empty title="Nothing deployed yet">
+          <span className="t-caption t-muted" style={{ maxWidth: 480 }}>
+            In the folder you want to deploy, run <span className="mono nowrap">pier deploy</span> for a preview, or add{' '}
+            <span className="mono nowrap">--prod</span> to go straight to {project.address}.
+          </span>
+          <span className="command" style={{ textAlign: 'left' }}>
+            pier login {session.server.address}
+            <br />
+            pier deploy --project {project.name} --prod
+          </span>
         </Empty>
       </main>
     )
@@ -61,8 +67,8 @@ export function ProjectDeployments({ project, session, now }: { project: Project
     <main className="main">
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
         <div className="panel">
-          <AddressRow kind="production" address={project.production} fallbackHost={project.address} now={now} prodBranch={prodBranch} />
-          {project.preview && <AddressRow kind="preview" address={project.preview} now={now} prodBranch={prodBranch} />}
+          <AddressRow kind="production" address={project.production} fallbackHost={project.address} now={now} />
+          {project.preview && <AddressRow kind="preview" address={project.preview} now={now} />}
         </div>
         <Strip project={project} />
       </div>
@@ -125,7 +131,7 @@ export function ProjectDeployments({ project, session, now }: { project: Project
               <span className="mono">{d.id}</span>
               <span className="branch mono">
                 <Branch />
-                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.branch}</span>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.branch || 'pier deploy'}</span>
               </span>
               <span title={d.message}>{d.message || <span className="mono t-muted">{short(d.commit)}</span>}</span>
               <span>
@@ -165,17 +171,16 @@ export function ProjectDeployments({ project, session, now }: { project: Project
   )
 }
 
-function AddressRow({ kind, address, fallbackHost, now, prodBranch }: {
+function AddressRow({ kind, address, fallbackHost, now }: {
   kind: 'production' | 'preview'
   address: Address | null
   fallbackHost?: string
   now: number
-  prodBranch: string
 }) {
   const d = address?.deployment
   const label = kind === 'production' ? 'Production' : 'Latest preview'
   const note = !address
-    ? `Push to ${prodBranch} to go live`
+    ? 'Run pier deploy --prod to go live'
     : kind === 'production'
       ? `Deployed ${ago(address.updated_at, now).replace(/^Y/, 'y')}`
       : `Ready ${ago(address.updated_at, now).replace(/^Y/, 'y')}`
@@ -216,7 +221,7 @@ function AddressRow({ kind, address, fallbackHost, now, prodBranch }: {
               </span>
             )}
             <span>
-              from {d.branch}
+                {d.source === 'cli' ? (d.branch ? `uploaded from ${d.branch}` : 'uploaded with pier deploy') : `from ${d.branch}`}
               {d.message ? `: ${d.message}` : ''}
             </span>
           </span>

@@ -21,6 +21,9 @@ export interface Deployment {
   role: Role
   host: string
   url: string
+  target: 'production' | 'preview'
+  source: 'git' | 'cli'
+  plan?: string
 }
 
 export interface Address {
@@ -54,6 +57,7 @@ export interface Project {
   name: string
   address: string
   url: string
+  production_branch: string
   status: Status
   production: Address | null
   preview: Address | null
@@ -106,3 +110,36 @@ export const signIn = (email: string, password: string) =>
   api<Session>('/api/session', { method: 'POST', body: JSON.stringify({ email, password }) })
 
 export const signOut = () => api<void>('/api/session', { method: 'DELETE' })
+
+export interface Build {
+  root: string
+  preset: '' | 'static' | 'vite'
+  install: string
+  command: string
+  output: string
+}
+
+export interface Settings {
+  project: { name: string; production_branch: string; repo: string; build: Build }
+  default_branch: string
+  last_build_plan: Record<string, string> | null
+}
+
+export interface SessionRow {
+  id: string
+  kind: 'browser' | 'cli'
+  name: string
+  ip: string
+  created_at: string
+  last_seen_at: string
+  current: boolean
+}
+
+export interface LoginRequest {
+  code: string
+  name: string
+  ip: string
+  created_at: string
+  expires_at: string
+  status: 'pending' | 'approved' | 'denied'
+}

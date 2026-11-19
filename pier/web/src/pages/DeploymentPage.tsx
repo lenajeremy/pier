@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { Address, Deployment, LogLine, Session } from '../lib/api'
+import type { Address, Deployment, LogLine } from '../lib/api'
 import { api } from '../lib/api'
 import { useData } from '../lib/data'
 import { ago, exact, plural, seconds, short, size } from '../lib/format'
@@ -12,7 +12,7 @@ type Detail = { deployment: Deployment; addresses: Address[] }
 
 // DeploymentPage is one deployment (D3, D4, E3): what it is, where it's
 // served, and its build log, which follows the build while it runs.
-export function DeploymentPage({ project, id, session, now }: { project: string; id: string; session: Session; now: number }) {
+export function DeploymentPage({ project, id, now }: { project: string; id: string; now: number }) {
   const { data, error } = useData<Detail>(
     `/api/projects/${project}/deployments/${id}`,
     (d) => d.deployment.status === 'building',
@@ -23,7 +23,7 @@ export function DeploymentPage({ project, id, session, now }: { project: string;
   const d = data.deployment
   const st = deploymentStatus(d)
   const building = d.status === 'building'
-  const env = d.branch === session.server.production_branch ? 'Production' : 'Preview'
+  const env = d.target === 'production' ? 'Production' : 'Preview'
   const live = data.addresses.find((a) => a.kind !== 'deployment')
 
   return (
@@ -84,15 +84,20 @@ export function DeploymentPage({ project, id, session, now }: { project: string;
               )}
             </Field>
             <Field label="Source">
-              <span className="line">
-                <I.Branch />
-                <span className="mono">{d.branch}</span>
-              </span>
-              <span className="line">
-                <I.Commit />
-                <span className="mono t-muted">{short(d.commit)}</span>
-                <span>{d.message}</span>
-              </span>
+              {d.source === 'cli' && <span className="t-muted">Uploaded with pier deploy</span>}
+              {d.branch && (
+                <span className="line">
+                  <I.Branch />
+                  <span className="mono">{d.branch}</span>
+                </span>
+              )}
+              {(d.commit || d.message) && (
+                <span className="line">
+                  <I.Commit />
+                  {d.commit && <span className="mono t-muted">{short(d.commit)}</span>}
+                  <span>{d.message}</span>
+                </span>
+              )}
             </Field>
           </div>
         </div>

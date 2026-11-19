@@ -189,3 +189,25 @@ func (s *Store) DeleteExpiredSessions(ctx context.Context) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE expires_at <= ?`, time.Now().UnixMilli())
 	return err
 }
+
+// Sessions lists a user's sessions, most recently used first.
+func (s *Store) Sessions(ctx context.Context, userID int64) ([]Session, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT token_hash, user_id, kind, name, ip, created_at, last_seen_at, expires_at
+		FROM sessions WHERE user_id = ? AND expires_at > ? ORDER BY last_seen_at DESC`, userID, time.Now().UnixMilli())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Session
+	for rows.Next() {
+		var se Session
+		var created, seen, expires int64
+		if err := rows.Scan(&se.TokenHash, &se.UserID, &se.Kind, &se.Name, &se.IP, &created, &seen, &expires); err != nil {
+			return nil, err
+		}
+		se.CreatedAt, se.LastSeenAt, se.ExpiresAt = time.UnixMilli(created), time.UnixMilli(seen), time.UnixMilli(expires)
+		out = append(out, se)
+	}
+	return out, rows.Err()
+}

@@ -27,6 +27,18 @@ const (
 	KindBranch     = "branch"
 )
 
+// Deployment targets.
+const (
+	TargetProduction = "production"
+	TargetPreview    = "preview"
+)
+
+// Deployment sources.
+const (
+	SourceGit = "git" // a git push
+	SourceCLI = "cli" // a folder uploaded by pier deploy
+)
+
 type Deployment struct {
 	ID        string    `json:"id"`
 	Project   string    `json:"project"`
@@ -40,6 +52,9 @@ type Deployment struct {
 	BuildMS   int64     `json:"build_ms"`
 	Error     string    `json:"error,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
+	Target    string    `json:"target"`         // production or preview
+	Source    string    `json:"source"`         // git or cli
+	Plan      string    `json:"plan,omitempty"` // JSON: what the build ran
 }
 
 type Alias struct {
@@ -113,6 +128,20 @@ var migrations = []string{
 		expires_at   INTEGER NOT NULL
 	);
 	CREATE INDEX sessions_by_user ON sessions(user_id);`,
+
+	// 2: projects are created first, with their own build settings; each
+	// deployment says whether it was for production or a preview, where it
+	// came from, and what its build ran.
+	`ALTER TABLE projects ADD COLUMN production_branch TEXT NOT NULL DEFAULT '';
+	ALTER TABLE projects ADD COLUMN repo        TEXT NOT NULL DEFAULT '';
+	ALTER TABLE projects ADD COLUMN root_dir    TEXT NOT NULL DEFAULT '';
+	ALTER TABLE projects ADD COLUMN preset      TEXT NOT NULL DEFAULT '';
+	ALTER TABLE projects ADD COLUMN install_cmd TEXT NOT NULL DEFAULT '';
+	ALTER TABLE projects ADD COLUMN build_cmd   TEXT NOT NULL DEFAULT '';
+	ALTER TABLE projects ADD COLUMN output_dir  TEXT NOT NULL DEFAULT '';
+	ALTER TABLE deployments ADD COLUMN target TEXT NOT NULL DEFAULT '';
+	ALTER TABLE deployments ADD COLUMN source TEXT NOT NULL DEFAULT 'git';
+	ALTER TABLE deployments ADD COLUMN plan   TEXT NOT NULL DEFAULT '';`,
 }
 
 // Open opens (and if needed creates) the database at path.
@@ -161,6 +190,13 @@ func migrate(db *sql.DB) error {
 
 func (s *Store) Close() error { return s.db.Close() }
 
+func orDefault(v, def string) string {
+	if v == "" {
+		return def
+	}
+	return v
+}
+
 // EnsureProject creates the project if it doesn't exist yet.
 func (s *Store) EnsureProject(ctx context.Context, name string) error {
 	_, err := s.db.ExecContext(ctx,
@@ -193,28 +229,28 @@ func (s *Store) CreateDeployment(ctx context.Context, d Deployment) error {
 		d.CreatedAt = time.Now()
 	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO deployments(id, project, branch, commit_sha, message, status, created_at)
-		 VALUES(?, ?, ?, ?, ?, ?, ?)`,
-		d.ID, d.Project, d.Branch, d.Commit, d.Message, d.Status, d.CreatedAt.UnixMilli())
+		`INSERT INTO deployments(id, project, branch, commit_sha, message, status, created_at, target, source)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		d.ID, d.Project, d.Branch, d.Commit, d.Message, d.Status, d.CreatedAt.UnixMilli(), d.Target, orDefault(d.Source, SourceGit))
 	return err
 }
 
 // FinishDeployment records how a build ended.
 func (s *Store) FinishDeployment(ctx context.Context, d Deployment) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE deployments SET status = ?, framework = ?, files = ?, bytes = ?, build_ms = ?, error = ?
+		`UPDATE deployments SET status = ?, framework = ?, files = ?, bytes = ?, build_ms = ?, error = ?, plan = ?
 		 WHERE id = ?`,
-		d.Status, d.Framework, d.Files, d.Bytes, d.BuildMS, d.Error, d.ID)
+		d.Status, d.Framework, d.Files, d.Bytes, d.BuildMS, d.Error, d.Plan, d.ID)
 	return err
 }
 
-const deploymentCols = `id, project, branch, commit_sha, message, status, framework, files, bytes, build_ms, error, created_at`
+const deploymentCols = `id, project, branch, commit_sha, message, status, framework, files, bytes, build_ms, error, created_at, target, source, plan`
 
 func scanDeployment(sc interface{ Scan(...any) error }) (Deployment, error) {
 	var d Deployment
 	var created int64
 	err := sc.Scan(&d.ID, &d.Project, &d.Branch, &d.Commit, &d.Message, &d.Status,
-		&d.Framework, &d.Files, &d.Bytes, &d.BuildMS, &d.Error, &created)
+		&d.Framework, &d.Files, &d.Bytes, &d.BuildMS, &d.Error, &created, &d.Target, &d.Source, &d.Plan)
 	d.CreatedAt = time.UnixMilli(created)
 	return d, err
 }

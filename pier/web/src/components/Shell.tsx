@@ -41,7 +41,7 @@ export function Shell({ session, projects, path, project, children }: Props) {
   }, [])
 
   const shown = projects.filter((p) => p.name.includes(query.trim().toLowerCase()))
-  const active = (to: string) => !project && (to === '/' ? path === '/' : path.startsWith(to))
+  const active = (to: string) => !project && (to === '/' ? path === '/' || path === '/new' : path.startsWith(to))
 
   return (
     <div className="app">
@@ -80,6 +80,9 @@ export function Shell({ session, projects, path, project, children }: Props) {
         <nav className="nav" aria-label="Projects">
           <div className="side-projects-head">
             <span className="t-note">Projects</span>
+            <Link to="/new" className="icon-btn-24" aria-label="New project" title="New project">
+              <I.Plus />
+            </Link>
           </div>
           {shown.map((p) => (
             <Link

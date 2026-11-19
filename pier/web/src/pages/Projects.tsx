@@ -21,6 +21,9 @@ export function Projects({ session, projects, now }: { session: Session; project
             {projects.length === 1 ? 'One project' : `${projects.length} projects`} on {session.server.address}
           </span>
         </div>
+        <Link to="/new" className="btn primary">
+          New project
+        </Link>
       </div>
       <div className="panel">
         {projects.map((p) => (
@@ -70,14 +73,13 @@ function ProjectRow({ p, now }: { p: ProjectSummary; now: number }) {
 
 function GettingStarted({ session }: { session: Session }) {
   const { address, base_domain: base } = session.server
-  const host = address.split(':')[0]
   return (
     <main className="main global" style={{ paddingTop: 36, gap: 20 }}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         <h1 className="t-title" style={{ margin: 0 }}>
           Welcome to Pier
         </h1>
-        <span className="t-caption t-muted">Nothing is deployed yet. One step to your first live project.</span>
+        <span className="t-caption t-muted">Nothing is deployed yet. Two steps to your first live project.</span>
       </div>
       <div className="panel">
         <div className="checklist-row done">
@@ -98,16 +100,14 @@ function GettingStarted({ session }: { session: Session }) {
         <div className="checklist-row">
           <img src="/steps/2.png" alt="2" />
           <div>
-            <span className="t-small t-strong">Push your first project</span>
+            <span className="t-small t-strong">Create your first project</span>
             <span className="t-caption t-muted">
-              Add Pier as a git remote and push. The project is created on the first push, and main goes to production.
-            </span>
-            <span className="command" style={{ alignSelf: 'flex-start', marginTop: 8 }}>
-              git remote add pier ssh://git@{host}:2222/blog
-              <br />
-              git push pier main
+              Start it empty, then deploy any folder from your computer with pier deploy. GitHub import comes with the GitHub App.
             </span>
           </div>
+          <Link to="/new" className="btn quiet">
+            New project
+          </Link>
         </div>
       </div>
     </main>

@@ -24,6 +24,13 @@ And the start of the second slice:
 7. pierd serves the dashboard: sign in, every project and what it serves,
    each project's deployments, and each deployment's build log, followed
    live while it builds.
+8. Projects are created in the dashboard, with build settings that override
+   what Pier detects (root directory, preset, commands, output folder).
+9. `pier login ADDRESS` shows a code and opens the dashboard, where the owner
+   approves the computer; it gets a token of its own, listed under Members.
+10. `pier deploy` uploads the folder (what git would keep, in a checkout) and
+    narrates its build: a preview at its own address, or production with
+    `--prod`. The folder remembers its project in `.pier/project.json`.
 
 Every deployment gets three kinds of address:
 
@@ -51,6 +58,7 @@ internal/hook      git's post-receive hook, which calls back into pierd
 internal/board     the rows of the board
 internal/api       the HTTP API, and the hook's local socket
 internal/auth      passwords, sessions, and the sign-in lock
+internal/bundle    packs a folder for pier deploy, and unpacks it safely
 internal/dnscheck  checks the DNS records pierd init asks for
 internal/web       serves the built dashboard, embedded in pierd
 scripts/e2e.sh     the end-to-end check
@@ -97,6 +105,5 @@ pierd.sock               the git hook's socket
 ## Next
 
 The order the dashboard needs them in (design/v3/dashboard-brief.md, kept
-outside the repository): `pier login` approved in the dashboard, a projects
-API, `pier deploy`, the GitHub App, promote and rollback, domains with
+outside the repository): the GitHub App, promote and rollback, domains with
 Caddy embedded in pierd, variables, request logs, and server health.

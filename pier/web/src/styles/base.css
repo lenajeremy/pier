@@ -57,6 +57,10 @@ svg {
   font-family: var(--d-mono);
 }
 
+.nowrap {
+  white-space: nowrap;
+}
+
 .sr-only {
   position: absolute;
   width: 1px;

@@ -1,21 +1,27 @@
-// Command pier is Pier's CLI. Deploys are a plain `git push pier <branch>`;
-// this is for everything else.
+// Command pier is Pier's CLI: sign this computer in, deploy a folder, and
+// see what's served.
 //
-//	pier login --server URL --token TOKEN
-//	pier board
-//	pier deployments PROJECT
+//	pier login ADDRESS              approve this computer in the dashboard
+//	pier deploy [FOLDER] [--prod]   upload a folder and build it
+//	pier board                      every address and what it serves
+//	pier deployments [PROJECT]      a project's deployments, newest first
+//	pier logout                     forget this computer's sign-in
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -24,6 +30,7 @@ import (
 type config struct {
 	Server string `json:"server"`
 	Token  string `json:"token"`
+	Email  string `json:"email,omitempty"`
 }
 
 func configPath() string {
@@ -48,10 +55,15 @@ func loadConfig() config {
 	if v := os.Getenv("PIER_TOKEN"); v != "" {
 		c.Token = v
 	}
-	if c.Server == "" {
-		c.Server = "http://127.0.0.1:7777"
-	}
 	return c
+}
+
+func saveConfig(c config) error {
+	if err := os.MkdirAll(filepath.Dir(configPath()), 0o700); err != nil {
+		return err
+	}
+	b, _ := json.MarshalIndent(c, "", "  ")
+	return os.WriteFile(configPath(), append(b, '\n'), 0o600)
 }
 
 func main() {
@@ -63,19 +75,19 @@ func main() {
 	switch os.Args[1] {
 	case "login":
 		err = login(os.Args[2:])
+	case "logout":
+		err = logout()
+	case "deploy":
+		err = deploy(os.Args[2:])
 	case "board":
 		err = showBoard()
 	case "deployments", "ls":
-		if len(os.Args) != 3 {
-			err = errors.New("usage: pier deployments PROJECT")
-		} else {
-			err = showDeployments(os.Args[2])
-		}
+		err = showDeployments(os.Args[2:])
 	case "help", "-h", "--help":
 		usage()
 		return
 	default:
-		err = fmt.Errorf("unknown command %q", os.Args[1])
+		err = fmt.Errorf("unknown command %q; run pier help", os.Args[1])
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "pier:", err)
@@ -84,93 +96,243 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprint(os.Stderr, `Deploys are a git push:  git push pier <branch>
+	fmt.Fprint(os.Stderr, `pier is the CLI for Pier, a deploy platform on your own server.
 
-  pier login --server URL --token TOKEN   remember a server (token: pierd token)
-  pier board                              every address on the server, and what it serves
-  pier deployments PROJECT                a project's deployments, newest first
+  pier login ADDRESS              sign this computer in; you approve it in the dashboard
+  pier deploy [FOLDER] [--prod]   upload a folder and build it: a preview, or production
+  pier board                      every address on the server, and what it serves
+  pier deployments [PROJECT]      a project's deployments, newest first
+  pier logout                     forget this computer's sign-in
 `)
 }
 
-func login(args []string) error {
-	fs := flag.NewFlagSet("login", flag.ExitOnError)
-	server := fs.String("server", "http://127.0.0.1:7777", "pierd's API address")
-	tok := fs.String("token", "", "the token `pierd token` prints on the server")
-	fs.Parse(args)
-	if *tok == "" {
-		return errors.New("pass --token; run `pierd token` on the server to see it")
+// serverURL turns what the owner typed into Pier's address: HTTPS for a
+// domain or IP, plain HTTP for this machine during development.
+func serverURL(s string) (string, error) {
+	s = strings.TrimRight(strings.TrimSpace(s), "/")
+	if s == "" {
+		return "", errors.New("say which Pier: pier login pier.example.com")
 	}
-	c := config{Server: strings.TrimRight(*server, "/"), Token: *tok}
-	var probe struct{ Domain string }
-	if err := get(c, "/api/board", &probe); err != nil {
-		return err
+	if !strings.Contains(s, "://") {
+		host := s
+		if h, _, err := net.SplitHostPort(s); err == nil {
+			host = h
+		}
+		if host == "localhost" || strings.HasSuffix(host, ".localhost") || net.ParseIP(host) != nil && net.ParseIP(host).IsLoopback() {
+			s = "http://" + s
+		} else {
+			s = "https://" + s
+		}
 	}
-	if err := os.MkdirAll(filepath.Dir(configPath()), 0o700); err != nil {
-		return err
+	u, err := url.Parse(s)
+	if err != nil || u.Host == "" {
+		return "", fmt.Errorf("%q isn't an address", s)
 	}
-	b, _ := json.MarshalIndent(c, "", "  ")
-	if err := os.WriteFile(configPath(), b, 0o600); err != nil {
-		return err
-	}
-	fmt.Printf("Logged in to %s (%s).\n", c.Server, probe.Domain)
-	return nil
+	return u.Scheme + "://" + u.Host, nil
 }
 
-func get(c config, path string, into any) error {
-	req, err := http.NewRequest(http.MethodGet, c.Server+path, nil)
+var client = &http.Client{Transport: &http.Transport{
+	Proxy:                 http.ProxyFromEnvironment,
+	DialContext:           (&net.Dialer{Timeout: 10 * time.Second}).DialContext,
+	TLSHandshakeTimeout:   10 * time.Second,
+	ResponseHeaderTimeout: 10 * time.Minute, // an upload's build answers as it goes
+}}
+
+// call sends a JSON request and decodes a JSON answer.
+func call(c config, method, path string, body, into any) error {
+	var r io.Reader
+	if body != nil {
+		b, _ := json.Marshal(body)
+		r = strings.NewReader(string(b))
+	}
+	req, err := http.NewRequest(method, c.Server+path, r)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.Token)
-	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	req.Header.Set("Content-Type", "application/json")
+	if c.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		var uerr *url.Error
 		if errors.As(err, &uerr) {
-			return fmt.Errorf("can't reach pierd at %s; is it running?", c.Server)
+			return fmt.Errorf("can't reach Pier at %s; is the address right, and is pierd running?", c.Server)
 		}
 		return err
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
-	if resp.StatusCode != http.StatusOK {
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if resp.StatusCode >= 300 {
 		var e struct{ Error string }
-		if json.Unmarshal(body, &e) == nil && e.Error != "" {
+		if json.Unmarshal(raw, &e) == nil && e.Error != "" {
+			if resp.StatusCode == http.StatusUnauthorized {
+				return fmt.Errorf("%s (pier login %s)", e.Error, strings.TrimPrefix(strings.TrimPrefix(c.Server, "https://"), "http://"))
+			}
 			return errors.New(e.Error)
 		}
-		return fmt.Errorf("pierd answered %s", resp.Status)
+		return fmt.Errorf("Pier answered %s", resp.Status)
 	}
-	return json.Unmarshal(body, into)
+	if into == nil {
+		return nil
+	}
+	return json.Unmarshal(raw, into)
 }
+
+func signedIn() (config, error) {
+	c := loadConfig()
+	if c.Server == "" || c.Token == "" {
+		return c, errors.New("sign this computer in first: pier login <Pier's address>")
+	}
+	return c, nil
+}
+
+// ---- login ------------------------------------------------------------------
+
+func login(args []string) error {
+	fs := flag.NewFlagSet("login", flag.ExitOnError)
+	server := fs.String("server", "", "Pier's address (or give it as the argument)")
+	tok := fs.String("token", "", "sign in with the token `pierd token` prints, instead of approving")
+	fs.Parse(reorder(args, map[string]bool{"server": true, "token": true}))
+	addr := *server
+	if addr == "" && fs.NArg() > 0 {
+		addr = fs.Arg(0)
+	}
+	base, err := serverURL(addr)
+	if err != nil {
+		return err
+	}
+	if *tok != "" { // the server's own token, from slice 1
+		c := config{Server: base, Token: *tok}
+		var probe struct{ Domain string }
+		if err := call(c, http.MethodGet, "/api/board", nil, &probe); err != nil {
+			return err
+		}
+		if err := saveConfig(c); err != nil {
+			return err
+		}
+		fmt.Printf("Signed in to %s with the server's token.\n", host(base))
+		return nil
+	}
+
+	name, _ := os.Hostname()
+	name = strings.TrimSuffix(name, ".local")
+	var start struct {
+		Code        string `json:"code"`
+		Poll        string `json:"poll"`
+		ApprovePath string `json:"approve_path"`
+		ExpiresIn   int    `json:"expires_in"`
+	}
+	if err := call(config{Server: base}, http.MethodPost, "/api/cli/login", map[string]string{"name": name}, &start); err != nil {
+		return err
+	}
+	link := base + start.ApprovePath
+	fmt.Printf("\nApprove this computer in Pier's dashboard:\n\n    %s\n\n", link)
+	fmt.Printf("The page shows the code %s. Check it matches, then approve.\n", start.Code)
+	openBrowser(link)
+	fmt.Print("Waiting…")
+
+	deadline := time.Now().Add(time.Duration(start.ExpiresIn) * time.Second)
+	for time.Now().Before(deadline) {
+		time.Sleep(2 * time.Second)
+		var poll struct {
+			Status string `json:"status"`
+			Token  string `json:"token"`
+			Email  string `json:"email"`
+		}
+		if err := call(config{Server: base}, http.MethodPost, "/api/cli/login/poll", map[string]string{"poll": start.Poll}, &poll); err != nil {
+			continue // a blip; keep waiting
+		}
+		switch poll.Status {
+		case "approved":
+			if err := saveConfig(config{Server: base, Token: poll.Token, Email: poll.Email}); err != nil {
+				return err
+			}
+			fmt.Printf("\r\x1b[2K%s Signed in to %s as %s.\n", tick(), host(base), poll.Email)
+			return nil
+		case "denied":
+			fmt.Println()
+			return errors.New("the dashboard denied this computer")
+		case "expired":
+			fmt.Println()
+			return errors.New("the code ran out before it was approved; run pier login again")
+		}
+	}
+	fmt.Println()
+	return errors.New("the code ran out before it was approved; run pier login again")
+}
+
+func logout() error {
+	c := loadConfig()
+	if c.Token == "" {
+		fmt.Println("This computer isn't signed in.")
+		return nil
+	}
+	if err := os.Remove(configPath()); err != nil {
+		return err
+	}
+	fmt.Printf("Signed out of %s here. To end the session on the server too, sign it out on the dashboard's Members page.\n", host(c.Server))
+	return nil
+}
+
+func openBrowser(link string) {
+	cmd := "xdg-open"
+	if runtime.GOOS == "darwin" {
+		cmd = "open"
+	}
+	if _, err := exec.LookPath(cmd); err == nil && term() {
+		exec.Command(cmd, link).Start()
+	}
+}
+
+func host(base string) string {
+	u, err := url.Parse(base)
+	if err != nil {
+		return base
+	}
+	return u.Host
+}
+
+// ---- board and deployments ----------------------------------------------------
 
 // colour paints a status the way the board does, on terminals that want it.
 func colour(status string) string {
 	word := strings.ToUpper(status)
-	if os.Getenv("NO_COLOR") != "" {
-		return word
-	}
-	if fi, err := os.Stdout.Stat(); err != nil || fi.Mode()&os.ModeCharDevice == 0 {
-		return word
-	}
 	rgb := map[string]string{
-		"live": "244;156;203", "preview": "188;174;248", "building": "188;174;248",
+		"live": "244;156;203", "production": "244;156;203", "preview": "188;174;248", "building": "188;174;248",
 		"ready": "98;216;198", "failed": "255;180;180",
 	}[status]
-	if rgb == "" {
-		return word
+	return paint(rgb, word)
+}
+
+func paint(rgb, s string) string {
+	if rgb == "" || os.Getenv("NO_COLOR") != "" || !term() {
+		return s
 	}
-	return "\x1b[38;2;" + rgb + "m" + word + "\x1b[0m"
+	return "\x1b[38;2;" + rgb + "m" + s + "\x1b[0m"
+}
+
+func tick() string { return paint("98;216;198", "✓") }
+
+func term() bool {
+	fi, err := os.Stdout.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
 }
 
 func showBoard() error {
+	c, err := signedIn()
+	if err != nil {
+		return err
+	}
 	var b struct {
 		Domain string
 		Rows   []struct{ Address, Deployment, Branch, Status, URL string }
 	}
-	if err := get(loadConfig(), "/api/board", &b); err != nil {
+	if err := call(c, http.MethodGet, "/api/board", nil, &b); err != nil {
 		return err
 	}
 	if len(b.Rows) == 0 {
-		fmt.Printf("Nothing on %s yet. Push a project to put it on the board:\n\n  git remote add pier ssh://git@<server>:2222/<project>\n  git push pier main\n", b.Domain)
+		fmt.Printf("Nothing on %s yet. Deploy a folder to put it on the board:  pier deploy\n", b.Domain)
 		return nil
 	}
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
@@ -181,19 +343,31 @@ func showBoard() error {
 	return tw.Flush()
 }
 
-func showDeployments(project string) error {
+func showDeployments(args []string) error {
+	c, err := signedIn()
+	if err != nil {
+		return err
+	}
+	project := ""
+	if len(args) > 0 {
+		project = args[0]
+	} else if l, err := readLink("."); err == nil {
+		project = l.Project
+	} else {
+		return errors.New("say which project: pier deployments PROJECT")
+	}
 	var res struct {
 		Deployments []struct {
-			ID, Branch, Message, Status, Framework string
-			BuildMS                                int64     `json:"build_ms"`
-			CreatedAt                              time.Time `json:"created_at"`
+			ID, Branch, Message, Status, Role string
+			BuildMS                           int64     `json:"build_ms"`
+			CreatedAt                         time.Time `json:"created_at"`
 		}
 	}
-	if err := get(loadConfig(), "/api/projects/"+url.PathEscape(project)+"/deployments", &res); err != nil {
+	if err := call(c, http.MethodGet, "/api/projects/"+url.PathEscape(project)+"/deployments", nil, &res); err != nil {
 		return err
 	}
 	if len(res.Deployments) == 0 {
-		fmt.Printf("%s has no deployments yet.\n", project)
+		fmt.Printf("%s has no deployments yet. Deploy it:  pier deploy\n", project)
 		return nil
 	}
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
@@ -203,9 +377,16 @@ func showDeployments(project string) error {
 		if d.BuildMS > 0 {
 			build = fmt.Sprintf("%.1fs", float64(d.BuildMS)/1000)
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", d.ID, d.Branch, colour(d.Status), build, ago(d.CreatedAt), d.Message)
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", d.ID, orDash(d.Branch), colour(d.Role), build, ago(d.CreatedAt), d.Message)
 	}
 	return tw.Flush()
+}
+
+func orDash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
 }
 
 func ago(t time.Time) string {
@@ -220,4 +401,32 @@ func ago(t time.Time) string {
 	default:
 		return t.Format("2 Jan 2006")
 	}
+}
+
+// reorder moves flags after positional arguments to the front, so both
+// `pier deploy site --prod` and `pier deploy --prod site` work. valued names
+// the flags that take a value.
+func reorder(args []string, valued map[string]bool) []string {
+	var flags, rest []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if strings.HasPrefix(a, "-") && a != "-" {
+			flags = append(flags, a)
+			name := strings.TrimLeft(a, "-")
+			if valued[name] && !strings.Contains(name, "=") && i+1 < len(args) {
+				flags = append(flags, args[i+1])
+				i++
+			}
+			continue
+		}
+		rest = append(rest, a)
+	}
+	return append(flags, rest...)
+}
+
+// ask reads one line from the terminal.
+func ask(prompt string) string {
+	fmt.Print(prompt)
+	s, _ := bufio.NewReader(os.Stdin).ReadString('\n')
+	return strings.TrimSpace(s)
 }

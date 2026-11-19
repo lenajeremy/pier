@@ -124,6 +124,89 @@ func isNum(s string) bool {
 	return true
 }
 
+// Overrides are the owner's build settings. Empty fields keep what Pier
+// detects; Preset forces one ("static" or "vite").
+type Overrides struct {
+	Root, Preset, Install, Build, Output string
+}
+
+// Empty reports whether nothing is overridden.
+func (o Overrides) Empty() bool { return o == Overrides{} }
+
+// Presets Pier knows how to build today.
+var Presets = []string{"static", "vite"}
+
+// PlanFor works out how to build dir with the owner's overrides: it detects
+// in the root folder, or uses the forced preset, then applies any command or
+// folder the owner set. It returns the root, relative to dir.
+func PlanFor(dir string, o Overrides) (Plan, string, error) {
+	root, err := Folder(o.Root)
+	if err != nil {
+		return Plan{}, "", fmt.Errorf("root directory: %w", err)
+	}
+	at := filepath.Join(dir, root)
+	if fi, err := os.Stat(at); err != nil || !fi.IsDir() {
+		return Plan{}, "", fmt.Errorf("the root directory %s/ isn't in what was deployed", root)
+	}
+	var p Plan
+	switch o.Preset {
+	case "static":
+		p, err = detectStatic(at)
+		if err != nil {
+			p, err = Plan{Label: "static HTML", Output: "."}, nil
+		}
+		p.Source = "your settings"
+	case "vite":
+		p = Plan{Label: "vite", Source: "your settings", Output: "dist"}
+		p.Install, p.Build = commands(at)
+	case "":
+		p, err = Detect(at)
+		if err != nil && o.Build != "" {
+			// Nothing detected, but the owner says how to build it.
+			p, err = Plan{Label: "your build", Source: "your settings", Output: "dist"}, nil
+		}
+	default:
+		return Plan{}, "", fmt.Errorf("unknown preset %q", o.Preset)
+	}
+	if err != nil {
+		return Plan{}, "", err
+	}
+	if o.Install != "" {
+		p.Install = o.Install
+	}
+	if o.Build != "" {
+		p.Build = o.Build
+		if _, err := os.Stat(filepath.Join(at, "package.json")); err == nil && p.Install == "" {
+			p.Install, _ = commands(at)
+		}
+	}
+	if o.Output != "" {
+		out, err := Folder(o.Output)
+		if err != nil {
+			return Plan{}, "", fmt.Errorf("output folder: %w", err)
+		}
+		p.Output = out
+	}
+	return p, root, nil
+}
+
+// Folder cleans a folder the owner typed and checks it stays inside the
+// project: "./web/" becomes "web", "" becomes ".".
+func Folder(p string) (string, error) {
+	p = strings.TrimSpace(p)
+	if p == "" || p == "./" || p == "." {
+		return ".", nil
+	}
+	if filepath.IsAbs(p) {
+		return "", errors.New("use a folder inside the project, like web")
+	}
+	c := filepath.Clean(p)
+	if c == ".." || strings.HasPrefix(c, "../") {
+		return "", errors.New("use a folder inside the project, like web")
+	}
+	return c, nil
+}
+
 // commands picks the install and build commands from the lockfile present.
 func commands(dir string) (install, build string) {
 	has := func(f string) bool { _, err := os.Stat(filepath.Join(dir, f)); return err == nil }

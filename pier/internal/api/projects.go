@@ -47,17 +47,29 @@ type Address struct {
 
 // projectState is everything known about one project, worked out once.
 type projectState struct {
-	name        string
-	deployments []Deployment // newest first
-	production  *Address
-	branches    []Address // newest first
+	name             string
+	productionBranch string
+	deployments      []Deployment // newest first
+	production       *Address
+	branches         []Address // newest first
 }
 
 func (a *API) loadProject(r *http.Request, name string, aliases []store.Alias) (projectState, error) {
-	ps := projectState{name: name}
+	ps := projectState{name: name, productionBranch: a.Deployer.ProductionBranch}
+	if p, err := a.Store.Project(r.Context(), name); err == nil && p.ProductionBranch != "" {
+		ps.productionBranch = p.ProductionBranch
+	}
 	ds, err := a.Store.Deployments(r.Context(), name)
 	if err != nil {
 		return ps, err
+	}
+	for i := range ds {
+		if ds[i].Target == "" { // built before deployments had a target
+			ds[i].Target = store.TargetPreview
+			if ds[i].Branch == ps.productionBranch {
+				ds[i].Target = store.TargetProduction
+			}
+		}
 	}
 	pointed := map[string]string{} // deployment ID -> role
 	for _, al := range aliases {
@@ -106,20 +118,46 @@ func (a *API) loadProject(r *http.Request, name string, aliases []store.Alias) (
 		}
 	}
 	sort.SliceStable(ps.branches, func(i, j int) bool { return ps.branches[i].UpdatedAt.After(ps.branches[j].UpdatedAt) })
+	// The latest preview is a preview even when no branch points at it, as
+	// with pier deploy's previews, which only have their own address.
+	if lp := ps.latestPreview(); lp != nil && lp.Deployment != nil {
+		if i, ok := byID[lp.Deployment.ID]; ok && ps.deployments[i].Role == RoleKept {
+			ps.deployments[i].Role = RolePreview
+			lp.Deployment.Role = RolePreview
+		}
+	}
 	return ps, nil
+}
+
+// latestPreview is the newest preview that built: at its branch's address
+// if a branch points at it, or else at its own.
+func (ps projectState) latestPreview() *Address {
+	for _, d := range ps.deployments {
+		if d.Target != store.TargetPreview || d.Status != store.Ready {
+			continue
+		}
+		for _, b := range ps.branches {
+			if b.Deployment != nil && b.Deployment.ID == d.ID {
+				return &b
+			}
+		}
+		dep := d
+		return &Address{Host: d.Host, URL: d.URL, Kind: "deployment", Branch: d.Branch, UpdatedAt: d.CreatedAt, Deployment: &dep}
+	}
+	return nil
 }
 
 // status sums a project up in one word, for its swatch and its row:
 // building, live, failed (the newest production build failed, or nothing
 // ever built), or none.
-func (ps projectState) status(productionBranch string) string {
+func (ps projectState) status() string {
 	for _, d := range ps.deployments {
 		if d.Status == store.Building {
 			return "building"
 		}
 	}
 	for _, d := range ps.deployments {
-		if d.Branch == productionBranch {
+		if d.Target == store.TargetProduction {
 			if d.Status == store.Failed {
 				return "failed"
 			}
@@ -157,7 +195,7 @@ func (a *API) projects(w http.ResponseWriter, r *http.Request) {
 		host := names.Production(name, a.Deployer.Domain)
 		p := map[string]any{
 			"name": name, "address": host, "url": a.Deployer.URL(host),
-			"status": ps.status(a.Deployer.ProductionBranch), "deployments": len(ps.deployments),
+			"status": ps.status(), "deployments": len(ps.deployments),
 			"latest": nil, "production": nil,
 		}
 		if len(ps.deployments) > 0 {
@@ -178,19 +216,16 @@ func (a *API) project(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var preview *Address
-	if len(ps.branches) > 0 {
-		preview = &ps.branches[0]
-	}
 	host := names.Production(name, a.Deployer.Domain)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"name": name, "address": host, "url": a.Deployer.URL(host),
-		"status":      ps.status(a.Deployer.ProductionBranch),
-		"production":  ps.production,
-		"preview":     preview,
-		"branches":    nonNil(ps.branches),
-		"deployments": nonNil(ps.deployments),
-		"stats":       buildStats(ps.deployments),
+		"production_branch": ps.productionBranch,
+		"status":            ps.status(),
+		"production":        ps.production,
+		"preview":           ps.latestPreview(),
+		"branches":          nonNil(ps.branches),
+		"deployments":       nonNil(ps.deployments),
+		"stats":             buildStats(ps.deployments),
 	})
 }
 

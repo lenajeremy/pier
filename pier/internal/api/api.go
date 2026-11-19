@@ -21,6 +21,7 @@ import (
 )
 
 type API struct {
+	logins   logins // pier login requests waiting for approval
 	Store    *store.Store
 	Deployer *deploy.Deployer
 	Token    string // the server's own token, from pierd token; still accepted for the CLI
@@ -45,6 +46,18 @@ func (a *API) Public() http.Handler {
 
 	mux.Handle("GET /api/board", a.auth(http.HandlerFunc(a.board)))
 	mux.Handle("GET /api/projects", a.auth(http.HandlerFunc(a.projects)))
+	mux.Handle("POST /api/projects", a.auth(http.HandlerFunc(a.createProject)))
+	mux.Handle("GET /api/projects/{project}/settings", a.auth(http.HandlerFunc(a.settings)))
+	mux.Handle("PUT /api/projects/{project}/settings", a.auth(http.HandlerFunc(a.saveSettings)))
+	mux.Handle("POST /api/projects/{project}/deployments", a.auth(http.HandlerFunc(a.upload)))
+
+	mux.HandleFunc("POST /api/cli/login", a.cliStart)
+	mux.HandleFunc("POST /api/cli/login/poll", a.cliPoll)
+	mux.Handle("GET /api/cli/login/{code}", a.auth(http.HandlerFunc(a.cliRequest)))
+	mux.Handle("POST /api/cli/login/{code}/{answer}", a.auth(http.HandlerFunc(a.cliAnswer)))
+	mux.Handle("GET /api/sessions", a.auth(http.HandlerFunc(a.sessions)))
+	mux.Handle("DELETE /api/sessions/others", a.auth(http.HandlerFunc(a.signOutOthers)))
+	mux.Handle("DELETE /api/sessions/{id}", a.auth(http.HandlerFunc(a.signOutSession)))
 	mux.Handle("GET /api/projects/{project}", a.auth(http.HandlerFunc(a.project)))
 	mux.Handle("GET /api/projects/{project}/favicon", a.auth(http.HandlerFunc(a.favicon)))
 	mux.Handle("GET /api/projects/{project}/deployments", a.auth(http.HandlerFunc(a.deployments)))
