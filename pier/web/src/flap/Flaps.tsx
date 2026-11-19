@@ -70,7 +70,18 @@ export const statusInk: Record<string, string> = {
   none: '#8E96AA',
 }
 
-// StatusFlaps is a status word, eight tiles wide so BUILDING fits.
+// StatusFlaps is a status word. It has eight tiles so BUILDING fits, but
+// empty ones are hidden: LIVE shows four tiles, and the other four appear
+// only while a longer word flips in.
 export function StatusFlaps({ status, word }: { status: string; word: string }) {
-  return <Flaps size="sm" columns={[{ width: 8 }]} values={[word]} inks={[statusInk[status]]} label={word} />
+  return (
+    <Flaps
+      size="sm"
+      columns={[{ width: 8 }]}
+      values={[word]}
+      inks={[statusInk[status]]}
+      label={word}
+      className="flaps-trim"
+    />
+  )
 }
