@@ -145,9 +145,12 @@ The design is the source of truth. It's on the Screenshotter board **"Pier websi
    - `pier login` approved in the dashboard (`/approve?code=…`), with per-computer sessions on the Members page (K3);
    - `pier deploy` uploads a gzipped tar that pierd unpacks safely. A preview gets its own address; `--prod` moves production's.
 
+5. Promote and rollback:
+   - In the API, the address rows (Roll back, Promote to production), the table's ⋯ menu, a deployment's page, and `pier rollback [--undo]` and `pier promote ID`.
+   - Rolling back holds production builds until a promote or an undo, and E4's banner says so.
+
 **Placeholders for now:**
 - **Pages:** Activity, Integrations, Shared variables, Server and Settings, plus the project tabs Domains, Variables and Logs. They say what they'll hold.
-- **Buttons not built:** Roll back and Promote, in the address rows.
 
 ## 6. Running and testing
 
@@ -196,8 +199,8 @@ Everything so far was tested on macOS: pierd runs natively, and builds run in Do
 
 The brief's backend order:
 
-1. **The GitHub App.** The manifest flow from Integrations (C1, C2); webhooks for pushes and pull requests; commit statuses with the preview link; `pr-N--` previews; approval for pull requests from forks. Then D1's repo list and D2's Configure screen, for imports. The SSH git push from slice 1 is to be dropped once this works.
-2. **Promote and rollback** through the API. Add the Roll back and Promote buttons to E1's address rows, and E4's banner ("New pushes to main won't go live on their own", with Undo rollback). Moving production must flip its ID tiles.
+1. **The GitHub App** (skipped so far because its webhooks need a public HTTPS address; build it once Pier runs on the VPS or behind a tunnel). The manifest flow from Integrations (C1, C2); webhooks for pushes and pull requests; commit statuses with the preview link; `pr-N--` previews; approval for pull requests from forks. Then D1's repo list and D2's Configure screen, for imports. The SSH git push from slice 1 is to be dropped once this works.
+2. **Promote and rollback:** done (see §5).
 3. **Caddy embedded in pierd,** with the `_acme-challenge` DNS responder. Then wildcard and on-demand certificates, and custom domains (F1, F2: records, live checks, and what DNS returns now), with the Certificates step of A4. Then `pierd domain set`.
 4. **Variables (G1):** encrypted, scoped, passed to builds, plus the "changed since the last deploy" banner. Then Shared variables (K2).
 5. **Request logs (H1, H2)** from Caddy's access logs, per project: the line charts and the range control with the custom picker.

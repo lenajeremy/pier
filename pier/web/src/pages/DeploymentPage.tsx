@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Address, Deployment, LogLine } from '../lib/api'
-import { api } from '../lib/api'
+import { api, ApiError } from '../lib/api'
 import { useData } from '../lib/data'
 import { ago, exact, plural, seconds, short, size } from '../lib/format'
 import { Link } from '../lib/router'
@@ -13,7 +13,8 @@ type Detail = { deployment: Deployment; addresses: Address[] }
 // DeploymentPage is one deployment (D3, D4, E3): what it is, where it's
 // served, and its build log, which follows the build while it runs.
 export function DeploymentPage({ project, id, now }: { project: string; id: string; now: number }) {
-  const { data, error } = useData<Detail>(
+  const [moving, setMoving] = useState('')
+  const { data, error, reload } = useData<Detail>(
     `/api/projects/${project}/deployments/${id}`,
     (d) => d.deployment.status === 'building',
     1500,
@@ -42,6 +43,26 @@ export function DeploymentPage({ project, id, now }: { project: string; id: stri
         <div className="card-head">
           <span className="t-small t-strong">Deployment details</span>
           <div className="card-actions">
+            {moving && <span className="t-note">{moving}</span>}
+            {d.status === 'ready' && d.role !== 'production' && (
+              <button
+                className="btn quiet"
+                onClick={async () => {
+                  setMoving('')
+                  try {
+                    await api(`/api/projects/${encodeURIComponent(project)}/promote`, {
+                      method: 'POST',
+                      body: JSON.stringify({ id: d.id }),
+                    })
+                    reload()
+                  } catch (e) {
+                    setMoving(e instanceof ApiError ? e.message : "Can't reach pierd.")
+                  }
+                }}
+              >
+                Promote to production
+              </button>
+            )}
             {d.status === 'ready' && (
               <a className="btn quiet visit" href={(live ?? data.addresses[0])?.url} target="_blank" rel="noreferrer">
                 Visit

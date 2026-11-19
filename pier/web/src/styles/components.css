@@ -1231,3 +1231,35 @@ select.input {
 .code-box .t-title {
   letter-spacing: 0.08em;
 }
+
+/* A table row that opens its deployment, with a ⋯ menu at the end that
+   shows on hover or focus, as in E1. */
+.t-row.clickable {
+  cursor: pointer;
+}
+.t-row.clickable:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+.t-row > .row-more {
+  position: relative;
+  overflow: visible;
+  display: flex;
+  justify-content: flex-end;
+}
+.row-more .icon-btn {
+  opacity: 0;
+}
+.t-row:hover .row-more .icon-btn,
+.row-more .icon-btn:focus-visible,
+.row-more .icon-btn[aria-expanded='true'] {
+  opacity: 1;
+}
+.table {
+  overflow: visible;
+}
+.table > .t-head {
+  border-radius: var(--radius-panel) var(--radius-panel) 0 0;
+}
+.menu-item:disabled {
+  opacity: 0.5;
+}

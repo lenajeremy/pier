@@ -49,6 +49,7 @@ type Address struct {
 type projectState struct {
 	name             string
 	productionBranch string
+	rolledBackFrom   string
 	deployments      []Deployment // newest first
 	production       *Address
 	branches         []Address // newest first
@@ -56,8 +57,11 @@ type projectState struct {
 
 func (a *API) loadProject(r *http.Request, name string, aliases []store.Alias) (projectState, error) {
 	ps := projectState{name: name, productionBranch: a.Deployer.ProductionBranch}
-	if p, err := a.Store.Project(r.Context(), name); err == nil && p.ProductionBranch != "" {
-		ps.productionBranch = p.ProductionBranch
+	if p, err := a.Store.Project(r.Context(), name); err == nil {
+		if p.ProductionBranch != "" {
+			ps.productionBranch = p.ProductionBranch
+		}
+		ps.rolledBackFrom = p.RolledBackFrom
 	}
 	ds, err := a.Store.Deployments(r.Context(), name)
 	if err != nil {
@@ -220,6 +224,8 @@ func (a *API) project(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"name": name, "address": host, "url": a.Deployer.URL(host),
 		"production_branch": ps.productionBranch,
+		"rolled_back_from":  ps.rolledBackFrom,
+		"rollback_to":       ps.rollbackTarget(),
 		"status":            ps.status(),
 		"production":        ps.production,
 		"preview":           ps.latestPreview(),

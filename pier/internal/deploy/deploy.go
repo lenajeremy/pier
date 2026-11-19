@@ -178,7 +178,14 @@ func (d *Deployer) run(ctx context.Context, project string, src Source, out io.W
 	}
 	say(out, "deploy", "kept as %s: %s, %s, never changed again", dep.ID, plural(res.files, "file"), size(res.bytes))
 
-	if host := d.addressFor(project, src); host != "" {
+	held := false
+	if src.Target == store.TargetProduction {
+		// After a rollback, production builds don't go live on their own.
+		if p, err := d.Store.Project(ctx, project); err == nil && p.RolledBackFrom != "" {
+			held = true
+		}
+	}
+	if host := d.addressFor(project, src); host != "" && !held {
 		alias := store.Alias{Project: project, Branch: src.Branch, DeploymentID: dep.ID, Kind: store.KindBranch, Host: host}
 		if src.Target == store.TargetProduction {
 			alias.Kind = store.KindProduction
@@ -190,7 +197,9 @@ func (d *Deployer) run(ctx context.Context, project string, src Source, out io.W
 	if err := d.Sync(ctx); err != nil {
 		say(out, "alias", "the router didn't take the change yet (%s); pierd will retry", err)
 	}
-	if host := d.addressFor(project, src); host != "" {
+	if held {
+		say(out, "pier", "production is rolled back, so this build didn't replace it; promote it in the dashboard, or undo the rollback")
+	} else if host := d.addressFor(project, src); host != "" {
 		say(out, "alias", "%s", d.URL(host))
 	}
 	say(out, "alias", "%s", d.URL(names.Deployment(project, dep.ID, d.Domain)))
@@ -318,6 +327,31 @@ func (d *Deployer) commitMessage(commit, project string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// ErrNotServable means a deployment can't serve: it doesn't exist, belongs
+// to another project, or didn't build.
+var ErrNotServable = errors.New("that deployment can't serve")
+
+// SetProduction points production at a deployment that already built, for
+// a promote, a rollback or an undo. Nothing is rebuilt, and it doesn't wait
+// for a build in progress: production must move the moment it's asked.
+func (d *Deployer) SetProduction(ctx context.Context, project, id string) error {
+	dep, err := d.Store.Deployment(ctx, id)
+	if err != nil || dep.Project != project || dep.Status != store.Ready {
+		return ErrNotServable
+	}
+	err = d.Store.SetAlias(ctx, store.Alias{
+		Host: names.Production(project, d.Domain), Project: project, Kind: store.KindProduction,
+		Branch: dep.Branch, DeploymentID: id,
+	})
+	if err != nil {
+		return err
+	}
+	if err := d.Sync(ctx); err != nil {
+		d.Log.Warn("router behind after moving production; it will retry", "err", err)
+	}
+	return nil
 }
 
 // addressFor is the address a source moves when it builds: production's,

@@ -3,6 +3,8 @@
 //
 //	pier login ADDRESS              approve this computer in the dashboard
 //	pier deploy [FOLDER] [--prod]   upload a folder and build it
+//	pier rollback [DEPLOYMENT]      production goes back (--undo to undo)
+//	pier promote DEPLOYMENT         production serves an existing deployment
 //	pier board                      every address and what it serves
 //	pier deployments [PROJECT]      a project's deployments, newest first
 //	pier logout                     forget this computer's sign-in
@@ -79,6 +81,10 @@ func main() {
 		err = logout()
 	case "deploy":
 		err = deploy(os.Args[2:])
+	case "rollback":
+		err = rollback(os.Args[2:])
+	case "promote":
+		err = promote(os.Args[2:])
 	case "board":
 		err = showBoard()
 	case "deployments", "ls":
@@ -100,6 +106,8 @@ func usage() {
 
   pier login ADDRESS              sign this computer in; you approve it in the dashboard
   pier deploy [FOLDER] [--prod]   upload a folder and build it: a preview, or production
+  pier rollback [DEPLOYMENT]      production goes back to the deployment before it (--undo to undo)
+  pier promote DEPLOYMENT         production serves a deployment that already built
   pier board                      every address on the server, and what it serves
   pier deployments [PROJECT]      a project's deployments, newest first
   pier logout                     forget this computer's sign-in

@@ -16,6 +16,7 @@ type Project struct {
 	ProductionBranch string    `json:"production_branch"` // empty: the server's default
 	Repo             string    `json:"repo"`              // owner/repo on GitHub; empty for CLI only
 	Build            Build     `json:"build"`
+	RolledBackFrom   string    `json:"rolled_back_from"` // what production served before a rollback; empty if not rolled back
 }
 
 // Build is the owner's overrides of what Pier detects.
@@ -30,13 +31,13 @@ type Build struct {
 // ErrExists means a project with that name already exists.
 var ErrExists = errors.New("already exists")
 
-const projectCols = `name, created_at, production_branch, repo, root_dir, preset, install_cmd, build_cmd, output_dir`
+const projectCols = `name, created_at, production_branch, repo, root_dir, preset, install_cmd, build_cmd, output_dir, rolled_back_from`
 
 func scanProject(sc interface{ Scan(...any) error }) (Project, error) {
 	var p Project
 	var created int64
 	err := sc.Scan(&p.Name, &created, &p.ProductionBranch, &p.Repo,
-		&p.Build.Root, &p.Build.Preset, &p.Build.Install, &p.Build.Command, &p.Build.Output)
+		&p.Build.Root, &p.Build.Preset, &p.Build.Install, &p.Build.Command, &p.Build.Output, &p.RolledBackFrom)
 	if errors.Is(err, sql.ErrNoRows) {
 		return p, ErrNotFound
 	}
@@ -75,4 +76,11 @@ func (s *Store) SetProjectBuild(ctx context.Context, name, productionBranch stri
 		return ErrNotFound
 	}
 	return nil
+}
+
+// SetRolledBack records a rollback (from is what production served before
+// it) or, with from empty, that production follows its builds again.
+func (s *Store) SetRolledBack(ctx context.Context, name, from string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE projects SET rolled_back_from = ? WHERE name = ?`, from, name)
+	return err
 }

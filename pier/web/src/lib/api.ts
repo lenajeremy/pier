@@ -58,6 +58,8 @@ export interface Project {
   address: string
   url: string
   production_branch: string
+  rolled_back_from: string
+  rollback_to: string
   status: Status
   production: Address | null
   preview: Address | null

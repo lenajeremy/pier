@@ -1,19 +1,47 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { Address, Deployment, Project, Session } from '../lib/api'
+import { api, ApiError, type Address, type Deployment, type Project, type Session } from '../lib/api'
 import { ago, plural, seconds, short, size } from '../lib/format'
 import { Link, navigate } from '../lib/router'
-import { Branch, ChevronLeft, ChevronRight, Search, SortDown } from '../components/Icons'
+import { Branch, ChevronLeft, ChevronRight, Info, More, Redeploy, Search, SortDown } from '../components/Icons'
 import { Badge, Empty } from '../components/ui'
 import { Flaps } from '../flap/Flaps'
 
 type Filter = 'all' | 'production' | 'previews'
 const PAGE = 20
-const cols = '120px 190px minmax(0,1fr) 120px 90px 140px'
+const cols = '120px 190px minmax(0,1fr) 120px 90px 140px 32px'
 
 // ProjectDeployments is the project's home (E1): what's live, what changed,
 // and every deployment, newest first.
-export function ProjectDeployments({ project, session, now }: { project: Project; session: Session; now: number }) {
+export function ProjectDeployments({ project, session, now, reload }: {
+  project: Project
+  session: Session
+  now: number
+  reload: () => void
+}) {
   const [filter, setFilter] = useState<Filter>('all')
+  const [busy, setBusy] = useState(false)
+  const [failed, setFailed] = useState('')
+  const [menu, setMenu] = useState('')
+
+  // act moves production: promote, roll back, or undo. Nothing is rebuilt,
+  // so the page reloads at once and production's tiles flip.
+  const act = async (path: string, id?: string) => {
+    setBusy(true)
+    setFailed('')
+    setMenu('')
+    try {
+      await api(`/api/projects/${encodeURIComponent(project.name)}/${path}`, {
+        method: 'POST',
+        body: JSON.stringify(id ? { id } : {}),
+      })
+      reload()
+    } catch (e) {
+      setFailed(e instanceof ApiError ? e.message : "Can't reach pierd.")
+    } finally {
+      setBusy(false)
+    }
+  }
+  const prodBranch = project.production_branch || session.server.production_branch
   const [query, setQuery] = useState('')
   const [page, setPage] = useState(0)
   const search = useRef<HTMLInputElement>(null)
@@ -66,9 +94,63 @@ export function ProjectDeployments({ project, session, now }: { project: Project
   return (
     <main className="main">
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        {project.rolled_back_from && (
+          <div className="alert info">
+            <Info />
+            <div>
+              <span className="t-small t-strong">New pushes to {prodBranch} won't go live on their own</span>
+              <span className="t-caption t-muted">
+                While production is rolled back, production builds get their own address but don't replace it. Promote one, or
+                undo to go back to <span className="mono">{project.rolled_back_from}</span>.
+              </span>
+            </div>
+            <button className="btn quiet" disabled={busy} onClick={() => act('rollback/undo')}>
+              Undo rollback
+            </button>
+          </div>
+        )}
+        {failed && (
+          <div className="alert error" role="alert">
+            <div>
+              <span className="t-caption">{failed}</span>
+            </div>
+          </div>
+        )}
         <div className="panel">
-          <AddressRow kind="production" address={project.production} fallbackHost={project.address} now={now} />
-          {project.preview && <AddressRow kind="preview" address={project.preview} now={now} />}
+          <AddressRow
+            kind="production"
+            address={project.production}
+            fallbackHost={project.address}
+            now={now}
+            rolledBack={!!project.rolled_back_from}
+            action={
+              project.rollback_to ? (
+                <button
+                  className="btn quiet icon"
+                  disabled={busy}
+                  title={`Production goes back to ${project.rollback_to}`}
+                  onClick={() => act('rollback')}
+                >
+                  <Redeploy />
+                  Roll back
+                </button>
+              ) : null
+            }
+          />
+          {project.preview && (
+            <AddressRow
+              kind="preview"
+              address={project.preview}
+              now={now}
+              action={
+                project.preview.deployment ? (
+                  <button className="btn primary" disabled={busy} onClick={() => act('promote', project.preview!.deployment!.id)}>
+                    Promote to production
+                  </button>
+                ) : null
+              }
+            />
+          )}
         </div>
         <Strip project={project} />
       </div>
@@ -125,10 +207,17 @@ export function ProjectDeployments({ project, session, now }: { project: Project
               Created
               <SortDown />
             </span>
+            <span />
           </div>
           {shown.map((d) => (
-            <Link key={d.id} to={`/projects/${project.name}/deployments/${d.id}`} className="t-row">
-              <span className="mono">{d.id}</span>
+            <div
+              key={d.id}
+              className="t-row clickable"
+              onClick={() => navigate(`/projects/${project.name}/deployments/${d.id}`)}
+            >
+              <Link to={`/projects/${project.name}/deployments/${d.id}`} className="mono" onClick={(e) => e.stopPropagation()}>
+                {d.id}
+              </Link>
               <span className="branch mono">
                 <Branch />
                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.branch || 'pier deploy'}</span>
@@ -139,7 +228,31 @@ export function ProjectDeployments({ project, session, now }: { project: Project
               </span>
               <span className="mono t-muted">{d.status === 'building' ? '…' : seconds(d.build_ms)}</span>
               <span className="t-muted">{ago(d.created_at, now)}</span>
-            </Link>
+              <span className="row-more" onClick={(e) => e.stopPropagation()}>
+                {d.status === 'ready' && d.role !== 'production' && (
+                  <>
+                    <button
+                      className="icon-btn"
+                      aria-label={`Actions for ${d.id}`}
+                      aria-expanded={menu === d.id}
+                      onClick={() => setMenu(menu === d.id ? '' : d.id)}
+                    >
+                      <More />
+                    </button>
+                    {menu === d.id && (
+                      <div className="menu" style={{ right: 0, top: 38, minWidth: 200 }}>
+                        <button className="menu-item" disabled={busy} onClick={() => act('promote', d.id)}>
+                          Promote to production
+                        </button>
+                        <a className="menu-item" href={d.url} target="_blank" rel="noreferrer">
+                          Visit {d.id}
+                        </a>
+                      </div>
+                    )}
+                  </>
+                )}
+              </span>
+            </div>
           ))}
           {shown.length === 0 && (
             <div className="t-row" style={{ gridTemplateColumns: '1fr' }}>
@@ -171,18 +284,20 @@ export function ProjectDeployments({ project, session, now }: { project: Project
   )
 }
 
-function AddressRow({ kind, address, fallbackHost, now }: {
+function AddressRow({ kind, address, fallbackHost, now, rolledBack, action }: {
   kind: 'production' | 'preview'
   address: Address | null
   fallbackHost?: string
   now: number
+  rolledBack?: boolean
+  action?: React.ReactNode
 }) {
   const d = address?.deployment
   const label = kind === 'production' ? 'Production' : 'Latest preview'
   const note = !address
     ? 'Run pier deploy --prod to go live'
     : kind === 'production'
-      ? `Deployed ${ago(address.updated_at, now).replace(/^Y/, 'y')}`
+      ? `${rolledBack ? 'Rolled back' : 'Deployed'} ${ago(address.updated_at, now).replace(/^Y/, 'y')}`
       : `Ready ${ago(address.updated_at, now).replace(/^Y/, 'y')}`
   return (
     <div className="address-row">
@@ -221,12 +336,13 @@ function AddressRow({ kind, address, fallbackHost, now }: {
               </span>
             )}
             <span>
-                {d.source === 'cli' ? (d.branch ? `uploaded from ${d.branch}` : 'uploaded with pier deploy') : `from ${d.branch}`}
+              {d.source === 'cli' ? (d.branch ? `uploaded from ${d.branch}` : 'uploaded with pier deploy') : `from ${d.branch}`}
               {d.message ? `: ${d.message}` : ''}
             </span>
           </span>
         )}
       </div>
+      {action && <div style={{ flex: 'none', display: 'flex' }}>{action}</div>}
     </div>
   )
 }

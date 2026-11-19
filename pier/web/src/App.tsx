@@ -76,7 +76,7 @@ function Signed({ session, path, now }: { session: Session; path: string; now: n
       // A deployment's page has its own Visit, for that deployment; one more
       // in the header, going somewhere else, would be a duplicate.
       <ProjectPage name={name} path={path} visit={!deployment}>
-        {(project) =>
+        {(project, reload) =>
           deployment ? (
             <DeploymentPage project={name} id={deployment.id} now={now} />
           ) : tab?.tab === 'settings' ? (
@@ -86,7 +86,7 @@ function Signed({ session, path, now }: { session: Session; path: string; now: n
               <Later title={projectTabs[tab.tab][0]} what={projectTabs[tab.tab][1]} />
             </main>
           ) : (
-            <ProjectDeployments project={project} session={session} now={now} />
+            <ProjectDeployments project={project} session={session} now={now} reload={reload} />
           )
         }
       </ProjectPage>
@@ -133,9 +133,9 @@ function ProjectPage({ name, path, visit, children }: {
   name: string
   path: string
   visit: boolean
-  children: (p: Project) => React.ReactNode
+  children: (p: Project, reload: () => void) => React.ReactNode
 }) {
-  const { data, error } = useData<Project>(
+  const { data, error, reload } = useData<Project>(
     `/api/projects/${encodeURIComponent(name)}`,
     () => true,
     3000,
@@ -159,7 +159,7 @@ function ProjectPage({ name, path, visit, children }: {
         live={visit && !!data?.production}
         path={path}
       />
-      {data ? children(data) : <div className="loading">Loading {name}…</div>}
+      {data ? children(data, reload) : <div className="loading">Loading {name}…</div>}
     </>
   )
 }

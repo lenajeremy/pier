@@ -146,8 +146,22 @@ mkdir -p web && printf '<!doctype html><title>Site</title><h1>From the web folde
 "$PIER" deploy --prod > "$WORK/deploy-root.log"
 grep -q "found in web/" "$WORK/deploy-root.log" || { cat "$WORK/deploy-root.log"; fail "the root directory wasn't used"; }
 fetch site.$DOMAIN / | grep -q "From the web folder" || fail "production doesn't serve the root directory"
-cd "$WORK"
 echo "pier login and pier deploy work, and settings apply"
+
+step "roll back, hold production builds, undo, and promote"
+"$PIER" rollback > "$WORK/rollback.log" || { cat "$WORK/rollback.log"; fail "pier rollback failed"; }
+fetch site.$DOMAIN / | grep -q "Version one" || fail "rollback didn't bring back the previous production deployment"
+printf '<!doctype html><title>Site</title><h1>Built while rolled back</h1>\n' > web/index.html
+"$PIER" deploy --prod > "$WORK/deploy-held.log"
+grep -q "rolled back, so this build didn't replace it" "$WORK/deploy-held.log" || { cat "$WORK/deploy-held.log"; fail "a production build went live during a rollback"; }
+fetch site.$DOMAIN / | grep -q "Version one" || fail "production moved during a rollback"
+"$PIER" rollback --undo > /dev/null || fail "undoing the rollback failed"
+fetch site.$DOMAIN / | grep -q "From the web folder" || fail "undo didn't restore production"
+PREVIEW_ID=$(echo "$PREVIEW" | sed 's/^site-\([0-9a-f]*\)\..*/\1/')
+"$PIER" promote "$PREVIEW_ID" > /dev/null || fail "pier promote failed"
+fetch site.$DOMAIN / | grep -q "Version two" || fail "promote didn't move production to the preview"
+cd "$WORK"
+echo "rollback, undo and promote move production without rebuilding"
 
 step "pierd reset-password signs everyone out"
 echo "another long password" | "$PIERD" reset-password -data "$DATA" -password-stdin > /dev/null

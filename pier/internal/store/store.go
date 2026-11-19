@@ -142,6 +142,10 @@ var migrations = []string{
 	ALTER TABLE deployments ADD COLUMN target TEXT NOT NULL DEFAULT '';
 	ALTER TABLE deployments ADD COLUMN source TEXT NOT NULL DEFAULT 'git';
 	ALTER TABLE deployments ADD COLUMN plan   TEXT NOT NULL DEFAULT '';`,
+
+	// 3: a rollback remembers what production served before it, so it can
+	// be undone, and so production builds don't go live until then.
+	`ALTER TABLE projects ADD COLUMN rolled_back_from TEXT NOT NULL DEFAULT '';`,
 }
 
 // Open opens (and if needed creates) the database at path.
