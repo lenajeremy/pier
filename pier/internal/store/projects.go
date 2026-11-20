@@ -41,6 +41,9 @@ type Runtime struct {
 // ErrExists means a project with that name already exists.
 var ErrExists = errors.New("already exists")
 
+// ErrBuilding means a project cannot be deleted while a build is running.
+var ErrBuilding = errors.New("build in progress")
+
 const projectCols = `name, created_at, production_branch, repo, root_dir, preset, install_cmd, build_cmd, output_dir, start_cmd, health_path, memory_mb, cpus, rolled_back_from`
 
 func scanProject(sc interface{ Scan(...any) error }) (Project, error) {
@@ -104,4 +107,48 @@ func (s *Store) SetProjectSettings(ctx context.Context, name, productionBranch s
 func (s *Store) SetRolledBack(ctx context.Context, name, from string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE projects SET rolled_back_from = ? WHERE name = ?`, from, name)
 	return err
+}
+
+// DeleteProject removes a project and all of its database rows atomically,
+// queuing every deployment's artifacts into cleanup_files so containers,
+// images, logs, and saved sources are reclaimed cleanly even across restarts.
+func (s *Store) DeleteProject(ctx context.Context, name string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var exists int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM projects WHERE name = ?`, name).Scan(&exists); err != nil {
+		return err
+	}
+	if exists == 0 {
+		return ErrNotFound
+	}
+	var building int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM deployments WHERE project = ? AND status = ?`, name, Building).Scan(&building); err != nil {
+		return err
+	}
+	if building > 0 {
+		return ErrBuilding
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO cleanup_files(id) SELECT id FROM deployments WHERE project = ?`, name); err != nil {
+		return err
+	}
+	for _, stmt := range []string{
+		`DELETE FROM aliases WHERE project = ?`,
+		`DELETE FROM github_jobs WHERE project = ?`,
+		`DELETE FROM github_repos WHERE project = ?`,
+		`DELETE FROM custom_domains WHERE project = ?`,
+		`DELETE FROM variables WHERE project = ?`,
+		`DELETE FROM shared_links WHERE project = ?`,
+		`DELETE FROM deployments WHERE project = ?`,
+		`DELETE FROM projects WHERE name = ?`,
+	} {
+		if _, err := tx.ExecContext(ctx, stmt, name); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }

@@ -87,7 +87,7 @@ function Signed({ session, path, now }: { session: Session; path: string; now: n
           ) : tab?.tab === 'variables' ? (
             <Variables project={name} now={now} />
           ) : tab?.tab === 'settings' ? (
-            <ProjectSettings project={name} />
+            <ProjectSettings project={name} onDeleted={list.reload} />
           ) : tab?.tab === 'domains' ? (
             <Domains key={name} project={name} now={now} />
           ) : (

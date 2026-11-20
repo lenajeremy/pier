@@ -461,6 +461,14 @@
 .btn.primary:hover:not(:disabled) {
   background: #fff;
 }
+.btn.danger {
+  border: 1px solid rgba(255, 128, 128, 0.35);
+  color: var(--d-red-text);
+}
+.btn.danger:hover:not(:disabled) {
+  background: rgba(255, 128, 128, 0.12);
+  border-color: rgba(255, 128, 128, 0.55);
+}
 .btn.large {
   height: 44px;
   padding: 0 20px;

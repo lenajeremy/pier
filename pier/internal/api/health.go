@@ -47,10 +47,61 @@ func treeBytes(root string) *int64 {
 	return &total
 }
 func dockerOutput(ctx context.Context, args ...string) (string, error) {
-	ctx, stop := context.WithTimeout(ctx, 3*time.Second)
+	return dockerOutputTimeout(ctx, 3*time.Second, args...)
+}
+func dockerOutputTimeout(ctx context.Context, timeout time.Duration, args ...string) (string, error) {
+	ctx, stop := context.WithTimeout(ctx, timeout)
 	defer stop()
 	b, err := exec.CommandContext(ctx, "docker", args...).Output()
 	return strings.TrimSpace(string(b)), err
+}
+
+var dockerSizeRe = regexp.MustCompile(`^([0-9]+(?:\.[0-9]+)?)\s*([A-Za-z]+)$`)
+
+func parseDockerSize(s string) (int64, bool) {
+	m := dockerSizeRe.FindStringSubmatch(strings.TrimSpace(s))
+	if m == nil {
+		return 0, false
+	}
+	v, err := strconv.ParseFloat(m[1], 64)
+	if err != nil {
+		return 0, false
+	}
+	mult := map[string]float64{
+		"b": 1, "kb": 1e3, "mb": 1e6, "gb": 1e9, "tb": 1e12,
+		"kib": 1024, "mib": 1024 * 1024, "gib": 1024 * 1024 * 1024, "tib": 1024 * 1024 * 1024 * 1024,
+	}
+	u, ok := mult[strings.ToLower(m[2])]
+	if !ok {
+		return 0, false
+	}
+	return int64(v * u), true
+}
+
+func dockerDiskUsage(ctx context.Context) (images, buildCache *int64) {
+	out, err := dockerOutputTimeout(ctx, 5*time.Second, "system", "df", "--format", "{{.Type}}\t{{.Size}}")
+	if err != nil {
+		return nil, nil
+	}
+	for _, line := range strings.Split(out, "\n") {
+		kind, rawSize, ok := strings.Cut(strings.TrimSpace(line), "\t")
+		if !ok {
+			continue
+		}
+		bytes, ok := parseDockerSize(rawSize)
+		if !ok {
+			continue
+		}
+		switch kind {
+		case "Images":
+			v := bytes
+			images = &v
+		case "Build Cache":
+			v := bytes
+			buildCache = &v
+		}
+	}
+	return images, buildCache
 }
 func (a *API) health(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -114,6 +165,16 @@ func (a *API) health(w http.ResponseWriter, r *http.Request) {
 		}
 		items = append(items, diskItem{"Build cache", size})
 		h["cache"] = true
+	}
+	if svc["Docker"] != "Unavailable" && !strings.HasPrefix(svc["Docker"], "Unused") {
+		imgs, bcache := dockerDiskUsage(ctx)
+		if imgs != nil {
+			items = append(items, diskItem{"Docker images", imgs})
+		}
+		if bcache != nil {
+			items = append(items, diskItem{"Docker build cache", bcache})
+			h["docker_cache"] = true
+		}
 	}
 	count, err := a.Store.CleanupCount(ctx)
 	if err != nil {
@@ -185,6 +246,12 @@ func (a *API) cleanup(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, 409, map[string]string{"error": "Docker could not remove Pier’s cache. It may be in use or already empty."})
 			return
 		}
+	case "docker-cache":
+		if _, err := dockerOutputTimeout(ctx, 60*time.Second, "buildx", "prune", "-af"); err != nil {
+			writeJSON(w, 409, map[string]string{"error": "Docker could not prune the Buildx cache."})
+			return
+		}
+		_, _ = dockerOutputTimeout(ctx, 30*time.Second, "image", "prune", "-f")
 	default:
 		writeJSON(w, 404, map[string]string{"error": "Unknown cleanup operation."})
 		return
