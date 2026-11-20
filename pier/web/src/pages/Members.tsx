@@ -1,7 +1,7 @@
 import { api, type SessionRow } from '../lib/api'
 import { useData } from '../lib/data'
 import { ago } from '../lib/format'
-import { Info, Terminal } from '../components/Icons'
+import { Info } from '../components/Icons'
 import { confirm } from '../components/Dialog'
 import { toast } from '../components/Toast'
 import { PageHeading, Paging, Problem, Skeleton, usePaged, When } from '../components/ui'
@@ -109,7 +109,7 @@ export function Members({ now }: { now: number }) {
                 return (
                   <div key={s.id} className="activity-row sessions">
                     <div className="event">
-                      {s.kind === 'cli' ? <Terminal size={16} /> : <i className={'swatch ' + (s.current ? 'done' : '')} />}
+                      <i className={'swatch ' + (s.current ? 'done' : '')} />
                       <div>
                         <span className="t-small">{s.name || (s.kind === 'cli' ? 'pier CLI' : 'A browser')}</span>
                         <span className="t-note">

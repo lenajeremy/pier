@@ -853,7 +853,7 @@
   border-radius: 9px;
 }
 .project-row .who {
-  width: 220px;
+  width: 250px;
   flex: none;
   display: flex;
   flex-direction: column;

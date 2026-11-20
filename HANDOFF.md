@@ -116,6 +116,17 @@ The design is the source of truth. It's on the Screenshotter board **"Pier websi
   - Then every project, with its status swatch and a "+" for a new project.
   - At the top, the switcher: its name, with the server address as a quiet note, and no box.
   - Inside a project, tabs: Deployments, Domains, Variables, Logs, Settings.
+- **Building a dashboard screen:** every page is made from the same pieces, in `pier/web/src/components`. Use them rather than writing a one-off.
+  - **Asking first:** `confirm({ title, body, action, run })` from `Dialog.tsx`. Never `window.confirm`. The title is the question, the body says exactly what will happen, the button repeats the verb, and `danger` is only for deleting. `run` does the work while the dialog is open, so a failure shows there.
+  - **A form that isn't the page's main job** (add a variable, import a file) goes in `<Dialog wide onSubmit>`, opened from a button in the toolbar. The list stays the page.
+  - **Saying it worked:** `toast('Deleted NAME')` from `Toast.tsx`, with an `action` for the undo when there is one. A failed action is `failed(e)` from `lib/actions.tsx`. `copy(text)` copies and says so.
+  - **Moving production** (roll back, promote, redeploy, restart) is in `lib/actions.tsx`, so it reads the same from every button.
+  - **A row's actions:** `<Menu items>` from `Menu.tsx`, with `className="icon-btn bare"` in a list. It's drawn over the page, so no table cuts it off. Destructive items go last, after `'separator'`, with `danger`.
+  - **Times:** `<When at now />` writes "2 hours ago" and shows the exact time on hover. Anything else that needs a hint takes `data-tip="…"`; don't use `title`.
+  - **A list:** `PageHeading` or a `.toolbar` with the count, `SearchField` once it's long, `.table` with `.t-head` and `.t-row` (its columns in a `--cols` rule), a `.t-empty` row when a search finds nothing, `usePaged` and `<Paging>` under it. Every list has a `<Skeleton>` while it loads, an `.empty` block with a way forward when there's nothing, and `<Problem>` when the load fails.
+  - **Forms:** `.field` with the label above and the help below, in `.form-grid` (three columns) or `.form-grid.two`. A long value is `<LongValue>`. Page forms save from the `.save-bar` that appears when something changed.
+  - **Narrow windows:** `styles/responsive.css` measures the content, not the window. When a table gets a new column, say there which column it gives up first.
+  - **Sentences, not separators:** no middle dots between facts, no arrows typed into link text, and dates in `en-GB`.
 
 ## 4. Working rules
 
@@ -219,7 +230,11 @@ Local checks use macOS, OrbStack Docker builds and Linux containers. Public DNS 
   - `deploy`: the build pipeline and its sources, plus logs.
   - `build`: detection, overrides and runners.
   - `bundle`, `dnscheck`, `router` (embedded Caddy and external admin compatibility), `web` (the embedded dashboard).
-- **`pier/web/src`:** `App.tsx` (routes), `components/` (Shell, ui, Icons, ProjectMark), `pages/`, `flap/`, and `styles/` (tokens, base, components; the comments name the board component each style copies).
+- **`pier/web/src`:**
+  - `App.tsx` (routes), `pages/`, `flap/`, `lib/` (`api`, `data`, `router`, `format`, and `actions` for what moves production).
+  - `components/`: Shell (the sidebar), CommandMenu (⌘K), ui (headings, tables' paging and search, loading and error states), Dialog, Toast, Tooltip, Menu, BuildFields, the charts, Icons, ProjectMark.
+  - `styles/`: tokens, base, components (the comments name the board component each style copies), overlays (dialog, toast, tooltip, menus) and responsive (narrow windows, loaded last).
+  - `PIER_API=http://127.0.0.1:PORT npx vite` serves the dashboard against a pierd on another port.
 
 ## 8. What to build next
 
