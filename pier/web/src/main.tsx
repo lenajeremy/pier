@@ -7,10 +7,17 @@ import '@fontsource/red-hat-mono/500.css'
 import './styles/tokens.css'
 import './styles/base.css'
 import './styles/components.css'
+import './styles/overlays.css'
 import { App } from './App'
+import { ConfirmHost } from './components/Dialog'
+import { ToastHost } from './components/Toast'
+import { TooltipHost } from './components/Tooltip'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <App />
+    <ConfirmHost />
+    <ToastHost />
+    <TooltipHost />
   </StrictMode>,
 )

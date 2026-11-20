@@ -1,38 +1,70 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Address, ContainerStatus, Deployment, LogLine } from '../lib/api'
 import { api, ApiError } from '../lib/api'
+import { promote, redeploy, restart } from '../lib/actions'
 import { useData } from '../lib/data'
-import { ago, exact, plural, seconds, short, size } from '../lib/format'
-import { Link, navigate } from '../lib/router'
+import { ago, plural, seconds, short, size } from '../lib/format'
+import { Link } from '../lib/router'
 import * as I from '../components/Icons'
-import { deploymentStatus } from '../components/ui'
+import { Menu, type MenuItem } from '../components/Menu'
+import { copy } from '../components/Toast'
+import { deploymentStatus, Problem, Skeleton, When } from '../components/ui'
 import { StatusFlaps } from '../flap/Flaps'
 
 type Detail = { deployment: Deployment; addresses: Address[]; container?: ContainerStatus | null }
 
 // DeploymentPage is one deployment (D3, D4, E3): what it is, where it's
 // served, and its build log, which follows the build while it runs.
-export function DeploymentPage({ project, id, now }: { project: string; id: string; now: number }) {
-  const [moving, setMoving] = useState('')
-  const [restarting, setRestarting] = useState(false)
+export function DeploymentPage({ project, id, now, host, current, branch }: {
+  project: string
+  id: string
+  now: number
+  host: string // the project's production address
+  current?: string // the deployment production serves now
+  branch: string // the branch that deploys to production
+}) {
   const { data, error, reload } = useData<Detail>(
     `/api/projects/${project}/deployments/${id}`,
     (d) => d.deployment.status === 'building' || d.container?.state === 'restarting',
     1500,
   )
-  if (error) return <main className="main"><span className="t-note">{error.message}</span></main>
-  if (!data) return <div className="loading">Loading {id}…</div>
+  if (error) {
+    return (
+      <main className="main">
+        <Problem>{error.status === 404 ? `${project} has no deployment ${id}.` : error.message}</Problem>
+      </main>
+    )
+  }
+  if (!data) {
+    return (
+      <main className="main">
+        <div className="panel">
+          <Skeleton rows={4} tall />
+        </div>
+      </main>
+    )
+  }
   const d = data.deployment
   const st = deploymentStatus(d)
   const building = d.status === 'building'
+  const ready = d.status === 'ready'
   const env = d.target === 'production' ? 'Production' : 'Preview'
   const live = data.addresses.find((a) => a.kind !== 'deployment')
+  const visit = (live ?? data.addresses[0])?.url
+  const target = { project, host, current, branch }
+  const more: MenuItem[] = [
+    ...(!building
+      ? [{ label: 'Redeploy', icon: <I.Redeploy color="#A3ABBE" />, onSelect: () => redeploy(target, d) } as MenuItem]
+      : []),
+    ...(ready && d.runtime
+      ? [{ label: 'Restart the container', icon: <I.RollBack color="#A3ABBE" />, onSelect: () => restart(project, d.id, reload) } as MenuItem]
+      : []),
+    ...(visit ? [{ label: 'Copy address', icon: <I.Copy />, onSelect: () => copy(visit) } as MenuItem] : []),
+  ]
 
   return (
     <main className="main" style={{ gap: 24 }}>
       <nav className="breadcrumb" aria-label="Breadcrumb">
-        <Link to={`/projects/${project}`}>{project}</Link>
-        <I.ChevronRight />
         <Link to={`/projects/${project}`}>Deployments</Link>
         <I.ChevronRight />
         <span className="mono" style={{ color: 'var(--d-text)' }}>
@@ -42,78 +74,20 @@ export function DeploymentPage({ project, id, now }: { project: string; id: stri
 
       <section className="panel">
         <div className="card-head">
-          <span className="t-small t-strong">Deployment details</span>
+          <h2 className="t-small t-strong">Deployment details</h2>
           <div className="card-actions">
-            {moving && <span className="t-note">{moving}</span>}
-            {d.status === 'ready' && d.runtime && (
-              <button
-                className="btn quiet icon"
-                disabled={restarting}
-                onClick={async () => {
-                  setRestarting(true)
-                  setMoving('')
-                  try {
-                    await api(`/api/projects/${encodeURIComponent(project)}/deployments/${encodeURIComponent(d.id)}/restart`, {
-                      method: 'POST',
-                      body: '{}',
-                    })
-                    reload()
-                  } catch (e) {
-                    setMoving(e instanceof ApiError ? e.message : "Can't reach pierd.")
-                  } finally {
-                    setRestarting(false)
-                  }
-                }}
-              >
-                <I.Redeploy />
-                {restarting ? 'Restarting…' : 'Restart'}
-              </button>
-            )}
-            {d.status !== 'building' && (
-              <button
-                className="btn quiet icon"
-                onClick={async () => {
-                  setMoving('')
-                  try {
-                    const r = await api<{ id?: string }>(`/api/projects/${encodeURIComponent(project)}/redeploy`, {
-                      method: 'POST',
-                      body: JSON.stringify({ id: d.id }),
-                    })
-                    if (r.id) navigate(`/projects/${project}/deployments/${r.id}`)
-                  } catch (e) {
-                    setMoving(e instanceof ApiError ? e.message : "Can't reach pierd.")
-                  }
-                }}
-              >
-                <I.Redeploy />
-                Redeploy
-              </button>
-            )}
-            {d.status === 'ready' && d.role !== 'production' && (
-              <button
-                className="btn quiet"
-                onClick={async () => {
-                  setMoving('')
-                  try {
-                    await api(`/api/projects/${encodeURIComponent(project)}/promote`, {
-                      method: 'POST',
-                      body: JSON.stringify({ id: d.id }),
-                    })
-                    reload()
-                  } catch (e) {
-                    setMoving(e instanceof ApiError ? e.message : "Can't reach pierd.")
-                  }
-                }}
-              >
+            {ready && d.role !== 'production' && (
+              <button className="btn primary" onClick={() => promote(target, d, reload)}>
                 Promote to production
               </button>
             )}
-            {d.status === 'ready' && (
-              <a className="btn quiet visit" href={(live ?? data.addresses[0])?.url} target="_blank" rel="noreferrer">
+            {ready && visit && (
+              <a className="btn quiet visit" href={visit} target="_blank" rel="noreferrer">
                 Visit
                 <I.Visit />
               </a>
             )}
+            {more.length > 0 && <Menu label={`More actions for ${d.id}`} items={more} />}
           </div>
         </div>
         <div className="card-body">
@@ -121,7 +95,7 @@ export function DeploymentPage({ project, id, now }: { project: string; id: stri
           <div className="details">
             <div className="details-row">
               <Field label="Created">
-                <span title={exact(d.created_at)}>{ago(d.created_at, now)}</span>
+                <When at={d.created_at} now={now} />
               </Field>
               <Field label="Status">
                 <StatusFlaps status={st.swatch} word={st.word} />
@@ -141,16 +115,14 @@ export function DeploymentPage({ project, id, now }: { project: string; id: stri
                 <span className="t-muted">{building ? 'Given once the build works.' : 'None. A failed build gets no address.'}</span>
               ) : (
                 data.addresses.map((a, i) => (
-                  <a
-                    key={a.host}
-                    className="mono"
-                    href={a.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    style={{ color: i === 0 ? 'var(--d-text)' : 'var(--d-muted)', alignSelf: 'flex-start' }}
-                  >
-                    {a.host}
-                  </a>
+                  <span key={a.host} className="line">
+                    <a className={'mono' + (i === 0 ? '' : ' t-muted')} href={a.url} target="_blank" rel="noreferrer">
+                      {a.host}
+                    </a>
+                    <button className="copy" onClick={() => copy(a.url)} aria-label={`Copy ${a.host}`} data-tip="Copy address">
+                      <I.Copy size={14} />
+                    </button>
+                  </span>
                 ))
               )}
             </Field>
@@ -223,7 +195,7 @@ function ContainerSummary({ c, now }: { c: ContainerStatus; now: number }) {
     <span className="line">
       <i className={swatch ? 'swatch ' + swatch : 'swatch'} aria-hidden />
       <span>{label}</span>
-      {parts.length > 0 && <span className="t-muted">· {parts.join(' · ')}</span>}
+      {parts.length > 0 && <span className="t-muted">{parts.join(', ')}</span>}
     </span>
   )
 }
@@ -320,7 +292,7 @@ function Sections({ project, d }: { project: string; d: Deployment }) {
         <span className="title">Output</span>
         <span className="t-note">
           {d.status === 'ready'
-            ? d.runtime ? `HTTP server · ${d.framework}` : `${plural(d.files, 'file')}, ${size(d.bytes)}${d.framework ? `, built with ${d.framework}` : ''}`
+            ? d.runtime ? `An HTTP server, built with ${d.framework}` : `${plural(d.files, 'file')}, ${size(d.bytes)}${d.framework ? `, built with ${d.framework}` : ''}`
             : d.status === 'building'
               ? 'Waiting for the build'
               : 'Skipped'}

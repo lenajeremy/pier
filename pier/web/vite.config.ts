@@ -14,7 +14,7 @@ export default defineConfig({
   ],
   build: { outDir, emptyOutDir: true },
   server: {
-    // `make pier-dev` runs pierd's API on 7777.
-    proxy: { '/api': 'http://127.0.0.1:7777' },
+    // `make pier-dev` runs pierd's API on 7777. PIER_API points at another one.
+    proxy: { '/api': process.env.PIER_API ?? 'http://127.0.0.1:7777' },
   },
 })

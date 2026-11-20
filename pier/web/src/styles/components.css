@@ -30,16 +30,75 @@
   gap: 16px;
   padding-bottom: 8px;
 }
-.page-heading > div {
+.page-heading > div:first-child {
   flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+.page-heading :is(h1, p) {
+  margin: 0;
+}
+.page-heading p {
+  max-width: 72ch;
+}
+.page-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
 }
 .panel {
   border-radius: var(--radius-panel);
   background: var(--d-panel);
   border: 1px solid var(--d-line);
+}
+/* A group of panels that belong together sits closer than two groups do. */
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.t-quiet {
+  color: var(--d-note);
+}
+/* A count beside a heading or a filter: how many there are. */
+.count {
+  font-family: var(--d-mono);
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--d-note);
+}
+
+/* A list that's loading: rows of faint bars (Components 4). */
+.skeleton {
+  display: flex;
+  flex-direction: column;
+}
+.skeleton-row {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 10px;
+  height: 52px;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--d-line-faint);
+}
+.skeleton-row.tall {
+  height: 72px;
+}
+.skeleton-row:last-child {
+  border-bottom: none;
+}
+.skeleton-row i {
+  height: 8px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.07);
+  animation: pulse 1.6s ease-in-out infinite;
+}
+.skeleton-row i + i {
+  background: rgba(255, 255, 255, 0.045);
 }
 
 /* ---- Sidebar (Components 3) -------------------------------------------- */
@@ -407,6 +466,32 @@
   padding: 0 20px;
   font-size: 15px;
 }
+/* In a dialog's footer. */
+.btn.medium {
+  height: 40px;
+  padding: 0 16px;
+  font-size: 14px;
+}
+.btn.medium.primary,
+.btn.medium.danger {
+  padding: 0 18px;
+}
+/* In a toast, or beside a line of text. */
+.btn.small {
+  height: 28px;
+  padding: 0 12px;
+  font-size: 12.5px;
+}
+/* An action that deletes something: only ever in a confirmation. */
+.btn.danger {
+  background: rgba(255, 128, 128, 0.14);
+  border: 1px solid rgba(255, 128, 128, 0.45);
+  color: var(--d-red-text);
+}
+.btn.danger:hover:not(:disabled) {
+  background: rgba(255, 128, 128, 0.2);
+  border-color: rgba(255, 128, 128, 0.6);
+}
 .btn:disabled {
   opacity: 0.5;
 }
@@ -425,6 +510,17 @@
 }
 .icon-btn:disabled {
   border-color: rgba(255, 255, 255, 0.08);
+}
+/* In a row of a long list, where a ring on every row would be noise. */
+.icon-btn.bare {
+  border-color: transparent;
+  opacity: 0.6;
+}
+.icon-btn.bare:hover,
+.icon-btn.bare:focus-visible,
+.icon-btn.bare[aria-expanded='true'] {
+  opacity: 1;
+  background: var(--d-active);
 }
 
 /* ---- Fields (Components 2) -------------------------------------------- */
@@ -763,12 +859,56 @@
   align-items: center;
   gap: 8px;
 }
+.address-row .serving > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .serving-id {
   display: flex;
+  flex: none;
+  border-radius: 4px;
+}
+.serving-link {
+  flex: none;
+  color: var(--d-muted);
+}
+.serving-link:hover {
+  color: var(--d-text);
 }
 .address-row .where a:hover {
   text-decoration: underline;
   text-underline-offset: 3px;
+}
+.address-row .host {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: visible;
+}
+.address-row .host a {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Copy shows when the row is pointed at, or reached with the keyboard. */
+.copy {
+  display: flex;
+  flex: none;
+  padding: 3px;
+  border-radius: 6px;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+:is(.address-row, .t-row, .detail, .domain-card):hover .copy,
+.copy:focus-visible {
+  opacity: 1;
+}
+.copy:hover {
+  background: var(--d-active);
+}
+.address-action {
+  flex: none;
+  display: flex;
+  gap: 8px;
 }
 
 .strip {
@@ -825,9 +965,50 @@
 }
 .toolbar .title {
   flex: 1;
+  min-width: 0;
   display: flex;
   align-items: baseline;
   gap: 10px;
+}
+.toolbar .title :is(h2, h3) {
+  margin: 0;
+}
+.table.deployments {
+  --cols: 104px minmax(120px, 200px) minmax(0, 1fr) 112px 76px 124px 32px;
+}
+/* A column heading that sorts its column. */
+.t-head .sort {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  justify-self: start;
+  border-radius: 4px;
+  overflow: visible;
+}
+.t-head .sort:hover {
+  color: var(--d-text);
+}
+.sort-arrow {
+  display: flex;
+  transition: transform 0.15s;
+}
+.sort-arrow.up {
+  transform: rotate(180deg);
+}
+/* What a table says when a search or a filter leaves it empty. */
+.t-empty {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 64px;
+  padding: 12px 20px;
+}
+.t-row .commit > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .table {
   display: flex;
@@ -877,11 +1058,22 @@ a.t-row:hover,
   gap: 8px;
   color: var(--d-muted);
 }
+.branch > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .paging {
   display: flex;
   align-items: center;
   justify-content: space-between;
   height: 40px;
+}
+.paging .count {
+  color: var(--d-text);
+}
+.paging-buttons {
+  display: flex;
+  gap: 8px;
 }
 
 /* ---- Deployment page (Components 5) ----------------------------------- */
@@ -1242,17 +1434,11 @@ select.input {
   background: rgba(255, 255, 255, 0.03);
 }
 .t-row > .row-more {
-  position: relative;
   overflow: visible;
   display: flex;
   justify-content: flex-end;
 }
-.row-more .icon-btn {
-  opacity: 0;
-}
-.t-row:hover .row-more .icon-btn,
-.row-more .icon-btn:focus-visible,
-.row-more .icon-btn[aria-expanded='true'] {
+.t-row:hover .row-more .icon-btn.bare {
   opacity: 1;
 }
 .table {
@@ -1260,6 +1446,9 @@ select.input {
 }
 .table > .t-head {
   border-radius: var(--radius-panel) var(--radius-panel) 0 0;
+}
+.table > :last-child {
+  border-radius: 0 0 var(--radius-panel) var(--radius-panel);
 }
 .menu-item:disabled {
   opacity: 0.5;

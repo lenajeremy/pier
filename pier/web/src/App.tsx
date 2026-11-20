@@ -74,7 +74,14 @@ function Signed({ session, path, now }: { session: Session; path: string; now: n
       <ProjectPage name={name} path={path} visit={!deployment}>
         {(project, reload) =>
           deployment ? (
-            <DeploymentPage project={name} id={deployment.id} now={now} />
+            <DeploymentPage
+              project={name}
+              id={deployment.id}
+              now={now}
+              host={project.address}
+              current={project.production?.deployment?.id}
+              branch={project.production_branch || session.server.production_branch}
+            />
           ) : tab?.tab === 'logs' ? (
             <Logs project={name} address={project.address} />
           ) : tab?.tab === 'variables' ? (

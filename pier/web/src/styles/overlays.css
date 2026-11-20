@@ -1,0 +1,203 @@
+/* What appears over the page (Components 4): the confirmation and form
+   dialog, toasts, tooltips and the floating menu. Overlays open in 160ms
+   with a 4px rise. */
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+}
+
+/* ---- Dialog -------------------------------------------------------------- */
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(3, 5, 9, 0.65);
+  animation: fade 0.16s ease-out;
+  overflow-y: auto;
+}
+.dialog {
+  width: 440px;
+  max-width: 100%;
+  margin: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 26px;
+  border-radius: 14px;
+  background: var(--d-popover);
+  border: 1px solid var(--d-line-overlay);
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6);
+  animation: rise 0.16s ease-out;
+}
+.dialog.wide {
+  width: 560px;
+  gap: 22px;
+}
+.dialog-text {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.dialog.wide .dialog-text {
+  gap: 18px;
+}
+.dialog h2 {
+  margin: 0;
+}
+.dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  font-size: 15px;
+  line-height: 24px;
+  color: var(--d-muted);
+  overflow-wrap: anywhere;
+}
+.dialog.wide .dialog-body {
+  gap: 16px;
+}
+.dialog-body p {
+  margin: 0;
+}
+.dialog-body .mono,
+.dialog-body strong {
+  color: var(--d-text);
+  font-weight: 400;
+}
+.dialog-body .mono {
+  font-size: 14px;
+}
+.dialog-body .field {
+  color: var(--d-text);
+}
+.dialog-foot {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 10px;
+}
+.dialog-foot .grow {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ---- Toasts -------------------------------------------------------------- */
+
+.toasts {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 70;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 400px;
+  max-width: calc(100vw - 32px);
+  pointer-events: none;
+}
+.toast {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  padding: 10px 14px 10px 16px;
+  border-radius: 12px;
+  background: var(--d-popover);
+  border: 1px solid var(--d-line-overlay);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.5);
+  pointer-events: auto;
+  animation: rise 0.16s ease-out;
+}
+.toast.failed {
+  border-color: rgba(255, 128, 128, 0.45);
+}
+.toast-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+
+/* ---- Tooltip ------------------------------------------------------------- */
+
+.tooltip {
+  position: fixed;
+  z-index: 80;
+  max-width: 320px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--d-text);
+  color: var(--d-bg);
+  font-size: 12.5px;
+  line-height: 18px;
+  font-weight: 500;
+  pointer-events: none;
+  animation: fade 0.12s ease-out;
+}
+.tooltip.mono {
+  font-family: var(--d-mono);
+  font-size: 12px;
+  font-weight: 400;
+}
+/* Something with more to say on hover: an exact time behind "6 min ago". */
+.has-tip {
+  text-decoration: underline dotted;
+  text-decoration-color: var(--d-faint);
+  text-underline-offset: 3px;
+  cursor: default;
+}
+
+/* ---- Floating menu ------------------------------------------------------- */
+
+.menu.floating {
+  position: fixed;
+  z-index: 50;
+  max-height: min(420px, calc(100vh - 16px));
+  overflow-y: auto;
+  animation: rise 0.16s ease-out;
+}
+.menu-item .grow {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.menu-item {
+  width: 100%;
+  color: var(--d-text);
+}
+.menu-item:hover:not(:disabled),
+.menu-item:focus-visible {
+  background: var(--d-active);
+  outline: none;
+}
+.menu-item.danger {
+  color: var(--d-red-text);
+}
+.menu-hint {
+  font-family: var(--d-mono);
+  font-size: 12px;
+  color: var(--d-note);
+}
+.menu-label {
+  padding: 8px 10px 6px;
+  font-size: 12.5px;
+  line-height: 18px;
+  font-weight: 500;
+  color: var(--d-note);
+}
