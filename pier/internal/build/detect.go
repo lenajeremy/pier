@@ -30,7 +30,7 @@ type Plan struct {
 }
 
 // ErrNothingToServe means the push has nothing Pier knows how to serve yet.
-var ErrNothingToServe = errors.New("nothing to serve: add a package.json with a build script, or an index.html")
+var ErrNothingToServe = errors.New("nothing to serve: add a Dockerfile, package.json, language manifest (go.mod, pyproject.toml, requirements.txt, etc.), or index.html")
 
 type packageJSON struct {
 	Scripts         map[string]string `json:"scripts"`
@@ -48,20 +48,60 @@ var frameworks = []struct{ dep, name, output string }{
 	{"react-scripts", "create-react-app", "build"},
 }
 
+// serverManifests lists non-Node runtime markers supported by Railpack, checked in order.
+var serverManifests = []struct{ file, label string }{
+	{"go.mod", "Go"},
+	{"pyproject.toml", "Python"},
+	{"requirements.txt", "Python"},
+	{"uv.lock", "Python"},
+	{"poetry.lock", "Python"},
+	{"Pipfile", "Python"},
+	{"Cargo.toml", "Rust"},
+	{"Gemfile", "Ruby"},
+	{"composer.json", "PHP"},
+	{"deno.json", "Deno"},
+	{"deno.jsonc", "Deno"},
+	{"mix.exs", "Elixir"},
+	{"gleam.toml", "Gleam"},
+	{"pom.xml", "Java"},
+	{"build.gradle", "Java"},
+	{"build.gradle.kts", "Java"},
+}
+
 // Detect looks at a checkout and decides how to build it.
 func Detect(dir string) (Plan, error) { return DetectWith(dir, "") }
 
 // DetectWith is Detect with a hint of the package manager the developer uses.
 func DetectWith(dir, tools string) (Plan, error) {
-	if fi, err := os.Stat(filepath.Join(dir, "Dockerfile")); err == nil && fi.Mode().IsRegular() {
+	if isRegularFile(filepath.Join(dir, "Dockerfile")) {
 		return Plan{Label: "Dockerfile", Source: "Dockerfile", Runtime: "dockerfile"}, nil
 	}
+	if isRegularFile(filepath.Join(dir, "railpack.json")) {
+		return Plan{Label: "Railpack", Source: "railpack.json", Runtime: "server"}, nil
+	}
 	return detectPackage(dir, tools)
+}
+
+func isRegularFile(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && fi.Mode().IsRegular()
+}
+
+func detectServerRuntime(dir string) (Plan, bool) {
+	for _, m := range serverManifests {
+		if isRegularFile(filepath.Join(dir, m.file)) {
+			return Plan{Label: m.label, Source: m.file, Runtime: "server"}, true
+		}
+	}
+	return Plan{}, false
 }
 
 func detectPackage(dir, tools string) (Plan, error) {
 	raw, err := os.ReadFile(filepath.Join(dir, "package.json"))
 	if errors.Is(err, os.ErrNotExist) {
+		if p, ok := detectServerRuntime(dir); ok {
+			return p, nil
+		}
 		return detectStatic(dir)
 	}
 	if err != nil {
@@ -72,6 +112,9 @@ func detectPackage(dir, tools string) (Plan, error) {
 		return Plan{}, fmt.Errorf("package.json: %w", err)
 	}
 	if pkg.Scripts["build"] == "" {
+		if p, ok := detectServerRuntime(dir); ok {
+			return p, nil
+		}
 		if p, err := detectStatic(dir); err == nil {
 			return p, nil
 		}
@@ -82,8 +125,10 @@ func detectPackage(dir, tools string) (Plan, error) {
 	}
 
 	p := Plan{Label: "node build", Source: "package.json", Output: "dist"}
+	matched := false
 	for _, f := range frameworks {
 		if v, ok := dep(pkg, f.dep); ok {
+			matched = true
 			p.Label = f.name
 			if v != "" {
 				p.Label += " " + v
@@ -94,6 +139,9 @@ func detectPackage(dir, tools string) (Plan, error) {
 			p.Output = f.output
 			break
 		}
+	}
+	if !matched && pkg.Scripts["start"] != "" {
+		return Plan{Label: "Node server", Source: "package.json", Runtime: "server"}, nil
 	}
 	p.Install, p.Build, p.Tooling = commands(dir, tools)
 	return p, nil
@@ -205,7 +253,7 @@ func PlanFor(dir string, o Overrides, tools string) (Plan, string, error) {
 		p = Plan{Label: "vite", Source: "your settings", Output: "dist"}
 		p.Install, p.Build, p.Tooling = commands(at, tools)
 	case "":
-		if o.Output != "" || o.Install != "" || o.Build != "" {
+		if o.Output != "" || o.Install != "" {
 			p, err = detectPackage(at, tools)
 		} else {
 			p, err = DetectWith(at, tools)

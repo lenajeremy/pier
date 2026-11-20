@@ -47,6 +47,36 @@ func TestDetect(t *testing.T) {
 			"package.json":   `{"scripts":{"build":"next build","start":"next start"},"dependencies":{"next":"16.2.0"}}`,
 			"next.config.ts": "export default {}\n",
 		}, Plan{Label: "next 16.2", Source: "package.json", Runtime: "server"}},
+		{"typescript node api server", map[string]string{
+			"package.json": `{"scripts":{"build":"tsc","start":"node dist/index.js"},"dependencies":{"express":"^4.21.0"}}`,
+		}, Plan{Label: "Node server", Source: "package.json", Runtime: "server"}},
+		{"explicit railpack config", map[string]string{
+			"railpack.json": `{"deploy":{"startCommand":"python app.py"}}`,
+			"package.json":  `{"scripts":{"build":"vite build"},"devDependencies":{"vite":"6.0.0"}}`,
+		}, Plan{Label: "Railpack", Source: "railpack.json", Runtime: "server"}},
+		{"go module", map[string]string{
+			"go.mod":  "module example.com/api\n\ngo 1.24\n",
+			"main.go": "package main\nfunc main() {}\n",
+		}, Plan{Label: "Go", Source: "go.mod", Runtime: "server"}},
+		{"python pyproject", map[string]string{
+			"pyproject.toml": "[project]\nname = \"api\"\n",
+		}, Plan{Label: "Python", Source: "pyproject.toml", Runtime: "server"}},
+		{"python requirements with tooling package.json", map[string]string{
+			"requirements.txt": "fastapi\nuvicorn\n",
+			"package.json":     `{"devDependencies":{"tailwindcss":"^4.0.0"}}`,
+		}, Plan{Label: "Python", Source: "requirements.txt", Runtime: "server"}},
+		{"rust cargo", map[string]string{
+			"Cargo.toml": "[package]\nname = \"api\"\n",
+		}, Plan{Label: "Rust", Source: "Cargo.toml", Runtime: "server"}},
+		{"ruby gemfile", map[string]string{
+			"Gemfile": "source 'https://rubygems.org'\n",
+		}, Plan{Label: "Ruby", Source: "Gemfile", Runtime: "server"}},
+		{"php composer", map[string]string{
+			"composer.json": `{"name":"app/web"}`,
+		}, Plan{Label: "PHP", Source: "composer.json", Runtime: "server"}},
+		{"deno config", map[string]string{
+			"deno.json": `{"tasks":{"start":"deno run main.ts"}}`,
+		}, Plan{Label: "Deno", Source: "deno.json", Runtime: "server"}},
 		{"unknown builder", map[string]string{
 			"package.json": `{"scripts":{"build":"node build.js"}}`,
 		}, Plan{Label: "node build", Source: "package.json", Install: "npm install", Build: "npm run build", Output: "dist"}},
