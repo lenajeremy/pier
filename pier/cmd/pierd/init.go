@@ -79,7 +79,7 @@ func initCmd(args []string) int {
 	}
 
 	t.printf("\nSetting up Pier on %s\n", ip)
-	checkMachine(ctx, t, *data)
+	checkMachine(ctx, t, *data, ip)
 
 	owner, ok := createOwner(ctx, t, st, *email)
 	if !ok {
@@ -115,7 +115,7 @@ func initCmd(args []string) int {
 
 // checkMachine looks at what Pier needs from the machine. Nothing here stops
 // the setup: each problem is said plainly, with what to do about it.
-func checkMachine(ctx context.Context, t *tty, data string) {
+func checkMachine(ctx context.Context, t *tty, data, ip string) {
 	t.heading("Checks")
 
 	cctx, cancel := context.WithTimeout(ctx, 8*time.Second)
@@ -128,22 +128,28 @@ func checkMachine(ctx context.Context, t *tty, data string) {
 		t.note("Install it from docs.docker.com/engine/install, then start it.")
 	}
 
+	probePort := func(network, addr string) error {
+		if network == "udp" {
+			c, err := net.ListenPacket(network, addr)
+			if err == nil {
+				c.Close()
+			}
+			return err
+		}
+		l, err := net.Listen(network, addr)
+		if err == nil {
+			l.Close()
+		}
+		return err
+	}
 	ports := []struct{ network, addr, name string }{
 		{"tcp", ":80", "80"}, {"tcp", ":443", "443"}, {"udp", ":53", "53"}, {"tcp", ":53", "53"},
 	}
 	var busy, denied []string
 	for _, p := range ports {
-		var err error
-		if p.network == "udp" {
-			var c net.PacketConn
-			if c, err = net.ListenPacket(p.network, p.addr); err == nil {
-				c.Close()
-			}
-		} else {
-			var l net.Listener
-			if l, err = net.Listen(p.network, p.addr); err == nil {
-				l.Close()
-			}
+		err := probePort(p.network, p.addr)
+		if err != nil && !errors.Is(err, syscall.EACCES) && p.name == "53" && net.ParseIP(ip) != nil {
+			err = probePort(p.network, net.JoinHostPort(ip, "53"))
 		}
 		switch {
 		case errors.Is(err, syscall.EACCES):
@@ -381,14 +387,21 @@ func records(ip, address, base string) []record {
 		base = ""
 	}
 	rel := func(name string) string {
+		if base != "" && name == base {
+			return "@"
+		}
 		if base != "" && strings.HasSuffix(name, "."+base) {
 			return strings.TrimSuffix(name, "."+base)
 		}
 		return name
 	}
 	nsTarget := address
-	if address == ip && base != "" {
+	if (address == ip || address == base) && base != "" {
 		nsTarget = "pier." + base
+	}
+	if address != ip && address != nsTarget {
+		host := address
+		rs = append(rs, record{"A", rel(host), ip, func(ctx context.Context) dnscheck.Result { return dnscheck.CheckA(ctx, host, ip) }})
 	}
 	if nsTarget != ip {
 		host := nsTarget

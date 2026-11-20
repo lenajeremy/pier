@@ -47,7 +47,7 @@ func (r Railpack) Export(ctx context.Context, dir, stage, project string, p Plan
 	case p.Install == "" && p.Build == "":
 		input = railLayer{Local: true, Include: []string{p.Output}}
 		output = filepath.Base(output) // Local inputs go under /app by basename.
-	case overrides.Install != "" || overrides.Build != "" || p.Tooling != "" || r.Image != "node:22-alpine" || overrides.Preset != "":
+	case overrides.Install != "" || overrides.Build != "" || p.Tooling != "" || r.Image != DefaultNodeImage || overrides.Preset != "":
 		plan.Steps = []map[string]any{r.commandStep(p)}
 	default:
 		if err := prepare(ctx, dir, p.Build, &plan, false, log); err != nil {
@@ -167,7 +167,7 @@ func (r Railpack) commandStep(p Plan) map[string]any {
 }
 
 func prepare(ctx context.Context, dir, command string, plan *railPlan, server bool, log io.Writer) error {
-	args := []string{"run", "--rm", "--init", "--network", "none", "--security-opt", "no-new-privileges", "--entrypoint", "/railpack",
+	args := []string{"run", "--rm", "--init", "--security-opt", "no-new-privileges", "--entrypoint", "/railpack",
 		"-v", dir + ":/app:ro", railpackImage, "prepare", "/app",
 		"--hide-pretty-plan", "--plan-out", "/dev/stdout", "--info-out", "/tmp/info.json"}
 	if command != "" {

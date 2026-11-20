@@ -88,12 +88,36 @@ func detectPackage(dir, tools string) (Plan, error) {
 			if v != "" {
 				p.Label += " " + v
 			}
+			if f.dep == "next" && pkg.Scripts["start"] != "" && !nextStaticExport(dir) {
+				return Plan{Label: p.Label, Source: "package.json", Runtime: "server"}, nil
+			}
 			p.Output = f.output
 			break
 		}
 	}
 	p.Install, p.Build, p.Tooling = commands(dir, tools)
 	return p, nil
+}
+
+var nextExportRe = regexp.MustCompile(`\boutput\s*:\s*['"]export['"]`)
+
+// nextStaticExport reports whether a Next.js config explicitly requests a static export.
+func nextStaticExport(dir string) bool {
+	for _, name := range []string{"next.config.ts", "next.config.mjs", "next.config.js", "next.config.cjs"} {
+		raw, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(raw), "\n") {
+			if i := strings.Index(line, "//"); i >= 0 {
+				line = line[:i]
+			}
+			if nextExportRe.MatchString(line) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func detectStatic(dir string) (Plan, error) {

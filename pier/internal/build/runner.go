@@ -20,10 +20,14 @@ type Runner interface {
 	Name() string
 }
 
+// DefaultNodeImage is the container image used for static Node builds.
+// Debian slim (glibc) avoids Alpine musl lockfile mismatches on native addons.
+const DefaultNodeImage = "node:22-slim"
+
 // Docker runs each command in a fresh container that has only the checkout
 // and a shared package cache mounted. The container is removed afterwards.
 type Docker struct {
-	Image       string // e.g. node:22-alpine
+	Image       string // e.g. node:22-slim
 	CacheVolume string // a named volume for npm, pnpm and yarn caches
 }
 

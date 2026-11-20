@@ -39,6 +39,14 @@ func TestDetect(t *testing.T) {
 			"yarn.lock":    ``,
 		}, Plan{Label: "next 15.1", Source: "package.json", Install: "corepack yarn@1 install --frozen-lockfile", Build: "corepack yarn@1 run build", Output: "out",
 			Tooling: "yarn 1, since package.json doesn't name a version (add packageManager to pin one)"}},
+		{"next static export with config and start script", map[string]string{
+			"package.json":   `{"scripts":{"build":"next build","start":"next start"},"dependencies":{"next":"16.2.0"}}`,
+			"next.config.ts": "export default { output: 'export' }\n",
+		}, Plan{Label: "next 16.2", Source: "package.json", Install: "npm install", Build: "npm run build", Output: "out"}},
+		{"next server app", map[string]string{
+			"package.json":   `{"scripts":{"build":"next build","start":"next start"},"dependencies":{"next":"16.2.0"}}`,
+			"next.config.ts": "export default {}\n",
+		}, Plan{Label: "next 16.2", Source: "package.json", Runtime: "server"}},
 		{"unknown builder", map[string]string{
 			"package.json": `{"scripts":{"build":"node build.js"}}`,
 		}, Plan{Label: "node build", Source: "package.json", Install: "npm install", Build: "npm run build", Output: "dist"}},

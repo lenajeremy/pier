@@ -98,7 +98,7 @@ func serve(args []string) int {
 	https := fs.Bool("https", env("PIER_HTTPS", "") == "1", "serve sites over HTTPS with certificates (production)")
 	dnsAddr := fs.String("dns", env("PIER_DNS", ":53"), "where to answer ACME DNS-01 challenges for wildcard HTTPS (empty to disable)")
 	builder := fs.String("builder", env("PIER_BUILDER", "railpack-preview"), "railpack-preview, docker, or local (host builds without isolation)")
-	image := fs.String("image", env("PIER_IMAGE", "node:22-alpine"), "the image builds run in")
+	image := fs.String("image", env("PIER_IMAGE", build.DefaultNodeImage), "the image builds run in")
 	prod := fs.String("production-branch", env("PIER_PRODUCTION_BRANCH", "main"), "the branch that deploys to production")
 	fs.Parse(args)
 
@@ -183,15 +183,16 @@ func serve(args []string) int {
 	var challengeNS string
 	if *https && *caddyAdmin == "" && *dnsAddr != "" && *domain != "" && *domain != "localhost" && !strings.HasSuffix(*domain, ".localhost") {
 		challengeNS = *address
-		if net.ParseIP(challengeNS) != nil {
+		if net.ParseIP(challengeNS) != nil || challengeNS == *domain {
 			challengeNS = "pier." + *domain
 		}
-		if srv, err := challengedns.Start(*domain, challengeNS, *dnsAddr); err != nil {
+		pubIP, _ := st.Setting(setup, store.SettingPublicIP)
+		if srv, bound, err := startChallengeDNS(*domain, challengeNS, *dnsAddr, pubIP); err != nil {
 			log.Warn("ACME DNS responder unavailable; using per-host HTTPS certificates", "addr", *dnsAddr, "err", err)
 			challengeNS = ""
 		} else {
 			defer srv.Close()
-			log.Info("ACME DNS responder listening", "zone", "_acme-challenge."+*domain, "addr", *dnsAddr)
+			log.Info("ACME DNS responder listening", "zone", "_acme-challenge."+*domain, "addr", bound)
 			probeCtx, cancel := context.WithTimeout(setup, 4*time.Second)
 			if dnscheck.ChallengeAuthority(probeCtx, *domain, challengeNS) {
 				wildcardReady.Store(true)
@@ -521,4 +522,33 @@ func token(args []string) int {
 	}
 	fmt.Println(t)
 	return 0
+}
+
+// startChallengeDNS binds Pier's ACME DNS-01 listener. When the default wildcard
+// address (e.g. ":53") collides with a local stub resolver such as Ubuntu's
+// systemd-resolved on 127.0.0.53:53, it falls back to binding the server's
+// public IP on the same port.
+func startChallengeDNS(domain, ns, addr, publicIP string) (*challengedns.Server, string, error) {
+	srv, err := challengedns.Start(domain, ns, addr)
+	if err == nil {
+		return srv, addr, nil
+	}
+	host, port, splitErr := net.SplitHostPort(addr)
+	if splitErr != nil || host != "" {
+		return nil, "", err
+	}
+	ip := publicIP
+	if net.ParseIP(ip) == nil {
+		if detected, derr := dnscheck.PublicIP(); derr == nil && net.ParseIP(detected) != nil {
+			ip = detected
+		}
+	}
+	if net.ParseIP(ip) == nil {
+		return nil, "", err
+	}
+	fallback := net.JoinHostPort(ip, port)
+	if srv2, err2 := challengedns.Start(domain, ns, fallback); err2 == nil {
+		return srv2, fallback, nil
+	}
+	return nil, "", err
 }
