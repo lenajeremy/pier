@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { Address, Deployment, LogLine } from '../lib/api'
+import type { Address, ContainerStatus, Deployment, LogLine } from '../lib/api'
 import { api, ApiError } from '../lib/api'
 import { useData } from '../lib/data'
 import { ago, exact, plural, seconds, short, size } from '../lib/format'
@@ -8,15 +8,16 @@ import * as I from '../components/Icons'
 import { deploymentStatus } from '../components/ui'
 import { StatusFlaps } from '../flap/Flaps'
 
-type Detail = { deployment: Deployment; addresses: Address[] }
+type Detail = { deployment: Deployment; addresses: Address[]; container?: ContainerStatus | null }
 
 // DeploymentPage is one deployment (D3, D4, E3): what it is, where it's
 // served, and its build log, which follows the build while it runs.
 export function DeploymentPage({ project, id, now }: { project: string; id: string; now: number }) {
   const [moving, setMoving] = useState('')
+  const [restarting, setRestarting] = useState(false)
   const { data, error, reload } = useData<Detail>(
     `/api/projects/${project}/deployments/${id}`,
-    (d) => d.deployment.status === 'building',
+    (d) => d.deployment.status === 'building' || d.container?.state === 'restarting',
     1500,
   )
   if (error) return <main className="main"><span className="t-note">{error.message}</span></main>
@@ -44,6 +45,30 @@ export function DeploymentPage({ project, id, now }: { project: string; id: stri
           <span className="t-small t-strong">Deployment details</span>
           <div className="card-actions">
             {moving && <span className="t-note">{moving}</span>}
+            {d.status === 'ready' && d.runtime && (
+              <button
+                className="btn quiet icon"
+                disabled={restarting}
+                onClick={async () => {
+                  setRestarting(true)
+                  setMoving('')
+                  try {
+                    await api(`/api/projects/${encodeURIComponent(project)}/deployments/${encodeURIComponent(d.id)}/restart`, {
+                      method: 'POST',
+                      body: '{}',
+                    })
+                    reload()
+                  } catch (e) {
+                    setMoving(e instanceof ApiError ? e.message : "Can't reach pierd.")
+                  } finally {
+                    setRestarting(false)
+                  }
+                }}
+              >
+                <I.Redeploy />
+                {restarting ? 'Restarting…' : 'Restart'}
+              </button>
+            )}
             {d.status !== 'building' && (
               <button
                 className="btn quiet icon"
@@ -106,6 +131,11 @@ export function DeploymentPage({ project, id, now }: { project: string; id: stri
               </Field>
               <Field label="Environment">{env}</Field>
             </div>
+            {data.container && (
+              <Field label="Container">
+                <ContainerSummary c={data.container} now={now} />
+              </Field>
+            )}
             <Field label="Domains">
               {data.addresses.length === 0 ? (
                 <span className="t-muted">{building ? 'Given once the build works.' : 'None. A failed build gets no address.'}</span>
@@ -157,6 +187,44 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
         {children}
       </div>
     </div>
+  )
+}
+
+function ContainerSummary({ c, now }: { c: ContainerStatus; now: number }) {
+  const swatch =
+    c.state === 'running' && c.health !== 'unhealthy'
+      ? 'done'
+      : c.state === 'restarting' || c.health === 'starting'
+        ? 'warning'
+        : c.state === 'not_found'
+          ? ''
+          : 'failed'
+  const label =
+    c.state === 'oom_killed'
+      ? 'Out of memory (OOM killed)'
+      : c.state === 'running'
+        ? c.health === 'unhealthy'
+          ? 'Running (unhealthy)'
+          : 'Running'
+        : c.state === 'restarting'
+          ? 'Restarting'
+          : c.state === 'not_found'
+            ? 'Container removed'
+            : `Stopped (exit ${c.exit_code ?? 0})`
+  const parts: string[] = []
+  if (c.memory_limit_mb) {
+    parts.push(c.memory_limit_mb >= 1024 && c.memory_limit_mb % 1024 === 0 ? `${c.memory_limit_mb / 1024} GB RAM` : `${c.memory_limit_mb} MB RAM`)
+  }
+  if (c.cpu_limit) parts.push(`${c.cpu_limit} vCPU`)
+  if (c.restarts) parts.push(plural(c.restarts, 'restart'))
+  if (c.oom_killed && c.state !== 'oom_killed') parts.push('OOM killed')
+  if (c.state === 'running' && c.started_at) parts.push(`started ${ago(c.started_at, now).toLowerCase()}`)
+  return (
+    <span className="line">
+      <i className={swatch ? 'swatch ' + swatch : 'swatch'} aria-hidden />
+      <span>{label}</span>
+      {parts.length > 0 && <span className="t-muted">· {parts.join(' · ')}</span>}
+    </span>
   )
 }
 

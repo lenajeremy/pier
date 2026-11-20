@@ -1,21 +1,24 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { api, ApiError, changePreset, type Build, type Settings } from '../lib/api'
+import { api, ApiError, changePreset, type Build, type RuntimeSettings, type Settings } from '../lib/api'
 import { useData } from '../lib/data'
 import { Info } from '../components/Icons'
 
 const empty: Build = { root: '', preset: '', install: '', command: '', output: '' }
+const emptyRuntime: RuntimeSettings = { start_command: '', health_path: '', memory_mb: 0, cpus: 0 }
 
 // ProjectSettings is the Build panel of D2, on its own tab: Pier detects how
 // to build on every deploy, and anything filled in here overrides it.
 export function ProjectSettings({ project }: { project: string }) {
   const { data, error } = useData<Settings>(`/api/projects/${encodeURIComponent(project)}/settings`)
   const [b, setB] = useState<Build>(empty)
+  const [rt, setRt] = useState<RuntimeSettings>(emptyRuntime)
   const [branch, setBranch] = useState('')
   const [state, setState] = useState<{ saving?: boolean; saved?: boolean; error?: string; field?: string }>({})
 
   useEffect(() => {
     if (data) {
       setB(data.project.build)
+      setRt(data.project.runtime ?? emptyRuntime)
       setBranch(data.project.production_branch)
     }
   }, [data])
@@ -24,7 +27,9 @@ export function ProjectSettings({ project }: { project: string }) {
   if (!data) return <div className="loading">Loading settings…</div>
 
   const server = b.preset === 'dockerfile' || b.preset === 'server'
+  const staticOnly = b.preset === 'static' || b.preset === 'vite'
   const plan = data.last_build_plan
+  const defaultMem = data.default_memory_mb ?? 1024
   const set = (k: keyof Build) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     setB(k === 'preset' ? changePreset(b, e.target.value as Build['preset']) : { ...b, [k]: e.target.value })
     setState({})
@@ -35,7 +40,7 @@ export function ProjectSettings({ project }: { project: string }) {
     try {
       await api(`/api/projects/${encodeURIComponent(project)}/settings`, {
         method: 'PUT',
-        body: JSON.stringify({ production_branch: branch, build: b }),
+        body: JSON.stringify({ production_branch: branch, build: b, runtime: rt }),
       })
       setState({ saved: true })
     } catch (err) {
@@ -117,6 +122,80 @@ export function ProjectSettings({ project }: { project: string }) {
             </label>
           </div>
         </section>
+        {!staticOnly && (
+          <section className="panel form-panel">
+            <span className="t-small t-strong">Runtime</span>
+            <div className="form-grid">
+              <label className={field('start_command')}>
+                <span className="field-label">Start command</span>
+                <input
+                  className="input mono"
+                  placeholder="Image default"
+                  value={rt.start_command}
+                  onChange={(e) => {
+                    setRt({ ...rt, start_command: e.target.value })
+                    setState({})
+                  }}
+                  spellCheck={false}
+                />
+                <span className="t-note">Overrides the container start command on the next server deploy.</span>
+              </label>
+              <label className={field('health_path')}>
+                <span className="field-label">Healthcheck path</span>
+                <input
+                  className="input mono"
+                  placeholder="/"
+                  value={rt.health_path}
+                  onChange={(e) => {
+                    setRt({ ...rt, health_path: e.target.value })
+                    setState({})
+                  }}
+                  spellCheck={false}
+                />
+                <span className="t-note">HTTP path checked before traffic switches to a new container.</span>
+              </label>
+              <label className={field('memory_mb')}>
+                <span className="field-label">Memory limit</span>
+                <select
+                  className="input"
+                  value={String(rt.memory_mb)}
+                  onChange={(e) => {
+                    setRt({ ...rt, memory_mb: Number(e.target.value) })
+                    setState({})
+                  }}
+                >
+                  <option value="0">Default ({defaultMem >= 1024 ? `${defaultMem / 1024} GB` : `${defaultMem} MB`})</option>
+                  <option value="256">256 MB</option>
+                  <option value="512">512 MB</option>
+                  <option value="1024">1 GB</option>
+                  <option value="2048">2 GB</option>
+                  <option value="4096">4 GB</option>
+                  <option value="8192">8 GB</option>
+                  <option value="-1">Unlimited</option>
+                </select>
+                <span className="t-note">Prevents one container from exhausting the server's memory.</span>
+              </label>
+              <label className={field('cpus')}>
+                <span className="field-label">CPU limit</span>
+                <select
+                  className="input"
+                  value={String(rt.cpus)}
+                  onChange={(e) => {
+                    setRt({ ...rt, cpus: Number(e.target.value) })
+                    setState({})
+                  }}
+                >
+                  <option value="0">Unlimited</option>
+                  <option value="0.5">0.5 vCPU</option>
+                  <option value="1">1 vCPU</option>
+                  <option value="2">2 vCPU</option>
+                  <option value="4">4 vCPU</option>
+                </select>
+                <span className="t-note">Applies to server containers on the next deploy.</span>
+              </label>
+            </div>
+          </section>
+        )}
         <div style={{ display: 'flex', alignItems: 'center', gap: 16, justifyContent: 'flex-end' }}>
           {state.error && <span className="field-message">{state.error}</span>}
           {state.saved && <span className="t-note">Saved. The next deployment uses these.</span>}

@@ -27,6 +27,7 @@ type Plan struct {
 	// Tooling says which package manager version runs, and why.
 	Tooling string
 	Runtime string // server or dockerfile for an HTTP process
+	Start   string // optional start command override for server builds
 }
 
 // ErrNothingToServe means the push has nothing Pier knows how to serve yet.

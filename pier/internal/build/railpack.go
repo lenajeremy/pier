@@ -91,6 +91,12 @@ func BuildImage(ctx context.Context, dir, stage, project, tag string, p Plan, en
 		if err := prepare(ctx, dir, p.Build, plan, true, log); err != nil {
 			return err
 		}
+		if p.Start != "" {
+			if plan.Deploy == nil {
+				plan.Deploy = map[string]any{}
+			}
+			plan.Deploy["startCommand"] = p.Start
+		}
 		// Railpack v0.43 emits an LLB MergeOp for disjoint image layers.
 		// Docker's classic image store only supports its sequential copy path.
 		// A local input with no selected paths copies no files and selects

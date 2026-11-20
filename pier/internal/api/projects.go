@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"os"
@@ -222,6 +223,14 @@ func (a *API) project(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	host := names.Production(name, a.Deployer.Domain)
+	var containerStatus *apphost.ContainerStatus
+	if ps.production != nil && ps.production.Deployment != nil && ps.production.Deployment.Runtime != "" && a.Deployer.Apps != nil {
+		sctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		if st, err := a.Deployer.Apps.Status(sctx, ps.production.Deployment.Runtime); err == nil {
+			containerStatus = &st
+		}
+		cancel()
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"name": name, "address": host, "url": a.Deployer.URL(host),
 		"production_branch": ps.productionBranch,
@@ -229,6 +238,7 @@ func (a *API) project(w http.ResponseWriter, r *http.Request) {
 		"rollback_to":       ps.rollbackTarget(),
 		"status":            ps.status(),
 		"production":        ps.production,
+		"container":         containerStatus,
 		"preview":           ps.latestPreview(),
 		"branches":          nonNil(ps.branches),
 		"deployments":       nonNil(ps.deployments),
@@ -344,7 +354,15 @@ func (a *API) deployment(w http.ResponseWriter, r *http.Request) {
 	if d.Host != "" {
 		addrs = append(addrs, Address{Host: d.Host, URL: d.URL, Kind: "deployment"})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"deployment": d, "addresses": addrs})
+	var containerStatus *apphost.ContainerStatus
+	if d.Runtime != "" && d.Status == store.Ready && a.Deployer.Apps != nil {
+		sctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		if st, err := a.Deployer.Apps.Status(sctx, d.Runtime); err == nil {
+			containerStatus = &st
+		}
+		cancel()
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"deployment": d, "addresses": addrs, "container": containerStatus})
 }
 
 // deploymentLog returns a build's log from line `from` onwards, so the
@@ -413,6 +431,45 @@ func (a *API) deploymentRuntimeLog(w http.ResponseWriter, r *http.Request) {
 		"runtime": d.Runtime,
 		"lines":   nonNil(lines),
 	})
+}
+
+// deploymentRestart restarts a running server deployment's Docker container
+// without rebuilding its image, then re-syncs router endpoints.
+func (a *API) deploymentRestart(w http.ResponseWriter, r *http.Request) {
+	name, id := r.PathValue("project"), r.PathValue("id")
+	ps, ok := a.findProject(w, r, name)
+	if !ok {
+		return
+	}
+	i := slices.IndexFunc(ps.deployments, func(d Deployment) bool { return d.ID == id })
+	if i < 0 {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": name + " has no deployment " + id})
+		return
+	}
+	d := ps.deployments[i]
+	if d.Runtime == "" || d.Status != store.Ready {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "Only ready server deployments can be restarted."})
+		return
+	}
+	if a.Deployer.Apps == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Application runtime is unavailable."})
+		return
+	}
+	if err := a.Deployer.Apps.Restart(r.Context(), d.Runtime); err != nil {
+		if errors.Is(err, apphost.ErrNotFound) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "The container for deployment " + id + " is no longer present."})
+			return
+		}
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "Restart failed: " + err.Error()})
+		return
+	}
+	if err := a.Deployer.Sync(r.Context()); err != nil {
+		a.Log.Warn("sync router after container restart", "project", name, "deployment", id, "err", err)
+	}
+	st, _ := a.Deployer.Apps.Status(r.Context(), d.Runtime)
+	a.event(r.Context(), name, "Restarted container", id, id)
+	a.Log.Info("container restarted", "project", name, "deployment", id, "runtime", d.Runtime)
+	writeJSON(w, http.StatusOK, map[string]any{"container": st})
 }
 
 // favicon serves the icon of the project's production deployment, so the

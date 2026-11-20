@@ -116,7 +116,66 @@ func appPort(env []string, exposed map[string]struct{}) (network.Port, error) {
 	return port, nil
 }
 
+// DefaultMemoryMB caps server containers at 1 GB when a project leaves memory
+// unset, so one runaway app cannot OOM-kill the rest of the server.
+const DefaultMemoryMB = 1024
+
+// StartOptions configures resource limits and startup overrides for a container.
+// MemoryMB 0 applies DefaultMemoryMB; negative disables the memory limit.
+type StartOptions struct {
+	StartCommand string
+	HealthPath   string
+	MemoryMB     int
+	CPUs         float64
+}
+
+// ContainerStatus summarizes the live state of an application container.
+type ContainerStatus struct {
+	State         string    `json:"state"`
+	Health        string    `json:"health,omitempty"`
+	ExitCode      int       `json:"exit_code,omitempty"`
+	OOMKilled     bool      `json:"oom_killed,omitempty"`
+	Restarts      int       `json:"restarts,omitempty"`
+	StartedAt     time.Time `json:"started_at,omitempty"`
+	MemoryLimitMB int64     `json:"memory_limit_mb,omitempty"`
+	CPULimit      float64   `json:"cpu_limit,omitempty"`
+}
+
+func resolveResources(opts StartOptions) container.Resources {
+	limit := int64(512)
+	res := container.Resources{PidsLimit: &limit}
+	memMB := opts.MemoryMB
+	if memMB == 0 {
+		memMB = DefaultMemoryMB
+	}
+	if memMB > 0 {
+		res.Memory = int64(memMB) * 1024 * 1024
+	}
+	if opts.CPUs > 0 {
+		res.NanoCPUs = int64(opts.CPUs * 1e9)
+	}
+	return res
+}
+
+func withHealthPath(env []string, healthPath string) []string {
+	if healthPath == "" {
+		return env
+	}
+	out := make([]string, 0, len(env)+1)
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "PIER_HEALTH_PATH=") {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return append(out, "PIER_HEALTH_PATH="+healthPath)
+}
+
 func (h *Host) Start(ctx context.Context, name string, env []string) error {
+	return h.StartWithOptions(ctx, name, env, StartOptions{})
+}
+
+func (h *Host) StartWithOptions(ctx context.Context, name string, env []string, opts StartOptions) error {
 	c, err := h.engine(ctx)
 	if err != nil {
 		return err
@@ -128,6 +187,7 @@ func (h *Host) Start(ctx context.Context, name string, env []string) error {
 	if img.Config == nil {
 		return errors.New("image has no container configuration")
 	}
+	env = withHealthPath(env, opts.HealthPath)
 	port, err := appPort(append(append([]string{}, env...), img.Config.Env...), img.Config.ExposedPorts)
 	if err != nil {
 		return err
@@ -149,16 +209,85 @@ func (h *Host) Start(ctx context.Context, name string, env []string) error {
 	if err := socket.Close(); err != nil {
 		return err
 	}
-	limit := int64(512)
 	config := &container.Config{Env: env, Labels: map[string]string{ownerLabel: h.owner}, ExposedPorts: network.PortSet{port: {}}}
+	if opts.StartCommand != "" {
+		config.Entrypoint = []string{"/bin/sh", "-c"}
+		config.Cmd = []string{opts.StartCommand}
+	}
 	host := &container.HostConfig{NetworkMode: container.NetworkMode(h.owner), PortBindings: network.PortMap{port: {{HostIP: loopback, HostPort: published}}},
-		RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyAlways}, SecurityOpt: []string{"no-new-privileges"}, Resources: container.Resources{PidsLimit: &limit},
+		RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyAlways}, SecurityOpt: []string{"no-new-privileges"}, Resources: resolveResources(opts),
 		LogConfig: container.LogConfig{Type: "json-file", Config: map[string]string{"max-size": "10m", "max-file": "2"}}}
 	created, err := c.ContainerCreate(ctx, client.ContainerCreateOptions{Name: name, Image: img.ID, Config: config, HostConfig: host})
 	if err != nil {
 		return err
 	}
 	if _, err = c.ContainerStart(ctx, created.ID, client.ContainerStartOptions{}); err != nil {
+		return err
+	}
+	return h.Ready(ctx, name)
+}
+
+// Status inspects an owned application container and reports its health, restart count, and limits.
+func (h *Host) Status(ctx context.Context, name string) (ContainerStatus, error) {
+	c, err := h.engine(ctx)
+	if err != nil {
+		return ContainerStatus{}, err
+	}
+	res, err := c.ContainerInspect(ctx, name, client.ContainerInspectOptions{})
+	if err != nil {
+		if errdefs.IsNotFound(err) {
+			return ContainerStatus{State: "not_found"}, nil
+		}
+		return ContainerStatus{}, err
+	}
+	app := res.Container
+	if app.Config == nil || app.Config.Labels[ownerLabel] != h.owner {
+		return ContainerStatus{}, errors.New("application container ownership mismatch")
+	}
+	st := ContainerStatus{State: "unknown", Restarts: app.RestartCount}
+	if app.State != nil {
+		st.State = string(app.State.Status)
+		st.ExitCode = app.State.ExitCode
+		st.OOMKilled = app.State.OOMKilled
+		if app.State.OOMKilled && !app.State.Running {
+			st.State = "oom_killed"
+		}
+		if app.State.Health != nil {
+			st.Health = string(app.State.Health.Status)
+		}
+		if t, err := time.Parse(time.RFC3339Nano, app.State.StartedAt); err == nil && !t.IsZero() && t.Year() > 1 {
+			st.StartedAt = t
+		}
+	}
+	if app.HostConfig != nil {
+		if app.HostConfig.Memory > 0 {
+			st.MemoryLimitMB = app.HostConfig.Memory / (1024 * 1024)
+		}
+		if app.HostConfig.NanoCPUs > 0 {
+			st.CPULimit = float64(app.HostConfig.NanoCPUs) / 1e9
+		}
+	}
+	return st, nil
+}
+
+// Restart restarts an owned application container and waits for its HTTP readiness check.
+func (h *Host) Restart(ctx context.Context, name string) error {
+	c, err := h.engine(ctx)
+	if err != nil {
+		return err
+	}
+	res, err := c.ContainerInspect(ctx, name, client.ContainerInspectOptions{})
+	if err != nil {
+		if errdefs.IsNotFound(err) {
+			return ErrNotFound
+		}
+		return err
+	}
+	if res.Container.Config == nil || res.Container.Config.Labels[ownerLabel] != h.owner {
+		return errors.New("application container ownership mismatch")
+	}
+	timeout := 10
+	if _, err := c.ContainerRestart(ctx, res.Container.ID, client.ContainerRestartOptions{Timeout: &timeout}); err != nil {
 		return err
 	}
 	return h.Ready(ctx, name)

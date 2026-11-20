@@ -100,6 +100,7 @@ func (a *API) Public() http.Handler {
 	mux.Handle("GET /api/projects/{project}/deployments/{id}", a.auth(http.HandlerFunc(a.deployment)))
 	mux.Handle("GET /api/projects/{project}/deployments/{id}/log", a.auth(http.HandlerFunc(a.deploymentLog)))
 	mux.Handle("GET /api/projects/{project}/deployments/{id}/runtime-log", a.auth(http.HandlerFunc(a.deploymentRuntimeLog)))
+	mux.Handle("POST /api/projects/{project}/deployments/{id}/restart", a.auth(http.HandlerFunc(a.deploymentRestart)))
 
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such API endpoint"})

@@ -212,6 +212,10 @@ var migrations = []string{
 	CREATE TRIGGER keep_production_update AFTER UPDATE ON aliases WHEN NEW.kind='production' BEGIN UPDATE deployments SET keep_history=1 WHERE id=NEW.deployment_id; END;`,
 	`CREATE TABLE server_samples(at INTEGER PRIMARY KEY, cpu REAL NOT NULL, memory REAL NOT NULL, disk REAL NOT NULL);`,
 	`CREATE TABLE app_resources(deployment TEXT PRIMARY KEY, name TEXT UNIQUE NOT NULL);`,
+	`ALTER TABLE projects ADD COLUMN start_cmd   TEXT NOT NULL DEFAULT '';
+	ALTER TABLE projects ADD COLUMN health_path TEXT NOT NULL DEFAULT '';
+	ALTER TABLE projects ADD COLUMN memory_mb   INTEGER NOT NULL DEFAULT 0;
+	ALTER TABLE projects ADD COLUMN cpus        REAL NOT NULL DEFAULT 0;`,
 }
 
 // Open opens (and if needed creates) the database at path.

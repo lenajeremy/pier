@@ -54,6 +54,17 @@ export interface BuildStats {
   bytes: number
 }
 
+export interface ContainerStatus {
+  state: 'running' | 'restarting' | 'exited' | 'oom_killed' | 'dead' | 'paused' | 'not_found' | 'unknown' | string
+  health?: string
+  exit_code?: number
+  oom_killed?: boolean
+  restarts?: number
+  started_at?: string
+  memory_limit_mb?: number
+  cpu_limit?: number
+}
+
 export interface Project {
   name: string
   address: string
@@ -63,6 +74,7 @@ export interface Project {
   rollback_to: string
   status: Status
   production: Address | null
+  container?: ContainerStatus | null
   preview: Address | null
   branches: Address[]
   deployments: Deployment[]
@@ -129,9 +141,17 @@ export function changePreset(build: Build, preset: Build['preset']): Build {
   return { ...build, preset }
 }
 
+export interface RuntimeSettings {
+  start_command: string
+  health_path: string
+  memory_mb: number
+  cpus: number
+}
+
 export interface Settings {
-  project: { name: string; production_branch: string; repo: string; build: Build }
+  project: { name: string; production_branch: string; repo: string; build: Build; runtime: RuntimeSettings }
   default_branch: string
+  default_memory_mb?: number
   last_build_plan: Record<string, string> | null
 }
 

@@ -58,3 +58,25 @@ func TestParseContainerLogs(t *testing.T) {
 		t.Fatalf("line 1 = %+v", lines[1])
 	}
 }
+
+func TestResolveResourcesAndHealthPath(t *testing.T) {
+	def := resolveResources(StartOptions{})
+	if def.Memory != DefaultMemoryMB*1024*1024 || def.NanoCPUs != 0 {
+		t.Fatalf("default resources = %+v", def)
+	}
+	unlimited := resolveResources(StartOptions{MemoryMB: -1})
+	if unlimited.Memory != 0 {
+		t.Fatalf("unlimited memory = %d, want 0", unlimited.Memory)
+	}
+	custom := resolveResources(StartOptions{MemoryMB: 512, CPUs: 1.5})
+	if custom.Memory != 512*1024*1024 || custom.NanoCPUs != 1_500_000_000 {
+		t.Fatalf("custom resources = %+v", custom)
+	}
+	env := withHealthPath([]string{"PORT=3000", "PIER_HEALTH_PATH=/old"}, "/api/health")
+	if got := envValue(env, "PIER_HEALTH_PATH"); got != "/api/health" {
+		t.Fatalf("health path = %q, want /api/health", got)
+	}
+	if len(env) != 2 {
+		t.Fatalf("expected deduplicated env, got %v", env)
+	}
+}

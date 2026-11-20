@@ -110,6 +110,48 @@ export function ProjectDeployments({ project, session, now, reload }: {
             </button>
           </div>
         )}
+        {project.container && project.production?.deployment?.runtime && project.container.state !== 'running' && (
+          <div className="alert error" role="alert">
+            <Info />
+            <div>
+              <span className="t-small t-strong">
+                {project.container.state === 'oom_killed' || project.container.oom_killed
+                  ? 'Production container ran out of memory'
+                  : project.container.state === 'restarting'
+                    ? 'Production container is restarting'
+                    : 'Production container is not running'}
+              </span>
+              <span className="t-caption t-muted">
+                {project.container.oom_killed
+                  ? 'Increase the memory limit in Settings or inspect the runtime logs.'
+                  : `Current state: ${project.container.state}${project.container.restarts ? ` (${plural(project.container.restarts, 'restart')})` : ''}.`}
+              </span>
+            </div>
+            <button
+              className="btn quiet"
+              disabled={busy}
+              onClick={async () => {
+                const depId = project.production?.deployment?.id
+                if (!depId) return
+                setBusy(true)
+                setFailed('')
+                try {
+                  await api(`/api/projects/${encodeURIComponent(project.name)}/deployments/${encodeURIComponent(depId)}/restart`, {
+                    method: 'POST',
+                    body: '{}',
+                  })
+                  reload()
+                } catch (e) {
+                  setFailed(e instanceof ApiError ? e.message : "Can't reach pierd.")
+                } finally {
+                  setBusy(false)
+                }
+              }}
+            >
+              Restart
+            </button>
+          </div>
+        )}
         {failed && (
           <div className="alert error" role="alert">
             <div>

@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"slices"
 	"strconv"
 	"strings"
 
+	"pier/internal/apphost"
 	"pier/internal/build"
 	"pier/internal/deploy"
 	"pier/internal/names"
@@ -88,16 +90,18 @@ func (a *API) settings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"project":         p,
-		"default_branch":  a.Deployer.ProductionBranch,
-		"presets":         build.Presets,
-		"last_build_plan": detected,
+		"project":           p,
+		"default_branch":    a.Deployer.ProductionBranch,
+		"default_memory_mb": apphost.DefaultMemoryMB,
+		"presets":           build.Presets,
+		"last_build_plan":   detected,
 	})
 }
 
 type settingsRequest struct {
-	ProductionBranch string      `json:"production_branch"`
-	Build            store.Build `json:"build"`
+	ProductionBranch string         `json:"production_branch"`
+	Build            store.Build    `json:"build"`
+	Runtime          *store.Runtime `json:"runtime"`
 }
 
 func (a *API) saveSettings(w http.ResponseWriter, r *http.Request) {
@@ -130,7 +134,40 @@ func (a *API) saveSettings(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "That isn't a branch name.", "field": "production_branch"})
 		return
 	}
-	if err := a.Store.SetProjectBuild(r.Context(), name, req.ProductionBranch, b); err != nil {
+	existing, err := a.Store.Project(r.Context(), name)
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	rt := existing.Runtime
+	if req.Runtime != nil {
+		rt = *req.Runtime
+		rt.StartCommand = strings.TrimSpace(rt.StartCommand)
+		rt.HealthPath = strings.TrimSpace(rt.HealthPath)
+		if len(rt.StartCommand) > 1024 {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "Start command is too long.", "field": "start_command"})
+			return
+		}
+		if rt.HealthPath != "" {
+			if len(rt.HealthPath) > 256 || !strings.HasPrefix(rt.HealthPath, "/") || strings.HasPrefix(rt.HealthPath, "//") || strings.ContainsAny(rt.HealthPath, " \t\r\n") {
+				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "Use a local HTTP path starting with /, like /health.", "field": "health_path"})
+				return
+			}
+			if _, err := url.ParseRequestURI(rt.HealthPath); err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "Use a valid HTTP path starting with /, like /health.", "field": "health_path"})
+				return
+			}
+		}
+		if rt.MemoryMB < -1 || (rt.MemoryMB > 0 && (rt.MemoryMB < 64 || rt.MemoryMB > 65536)) {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "Choose a memory limit between 64 MB and 64 GB, default, or unlimited.", "field": "memory_mb"})
+			return
+		}
+		if rt.CPUs < 0 || (rt.CPUs > 0 && (rt.CPUs < 0.25 || rt.CPUs > 64)) {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "Choose a CPU limit between 0.25 and 64 vCPU, or unlimited.", "field": "cpus"})
+			return
+		}
+	}
+	if err := a.Store.SetProjectSettings(r.Context(), name, req.ProductionBranch, b, rt); err != nil {
 		a.fail(w, err)
 		return
 	}

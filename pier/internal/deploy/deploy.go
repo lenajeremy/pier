@@ -297,7 +297,7 @@ func (d *Deployer) run(ctx context.Context, project string, src Source, out io.W
 	if len(varNames) > 0 {
 		say(out, "build", "with %s for %s: %s", plural(len(varNames), "variable"), src.Target, strings.Join(varNames, ", "))
 	}
-	res, err := d.build(buildCtx, dep, src, p.Build, env, out)
+	res, err := d.build(buildCtx, dep, src, p.Build, p.Runtime, env, out)
 	elapsed := time.Since(start)
 	dep.BuildMS = elapsed.Milliseconds()
 	dep.Framework, dep.Files, dep.Bytes, dep.Plan = res.label, res.files, res.bytes, res.plan
@@ -368,7 +368,7 @@ type result struct {
 	plan   string
 }
 
-func (d *Deployer) build(ctx context.Context, dep store.Deployment, src Source, settings store.Build, env []string, out io.Writer) (result, error) {
+func (d *Deployer) build(ctx context.Context, dep store.Deployment, src Source, settings store.Build, runtime store.Runtime, env []string, out io.Writer) (result, error) {
 	var res result
 	if err := os.MkdirAll(d.Tmp, 0o755); err != nil {
 		return res, err
@@ -423,6 +423,9 @@ func (d *Deployer) build(ctx context.Context, dep store.Deployment, src Source, 
 		if d.Apps == nil {
 			return res, errors.New("application runtime is unavailable")
 		}
+		if plan.Runtime == "server" && runtime.StartCommand != "" {
+			plan.Start = runtime.StartCommand
+		}
 		name := "pier-app-" + strings.ToLower(rand.Text())
 		if err := d.Store.TrackApp(ctx, dep.ID, name); err != nil {
 			return res, err
@@ -434,8 +437,16 @@ func (d *Deployer) build(ctx context.Context, dep store.Deployment, src Source, 
 		if err != nil {
 			return res, err
 		}
+		opts := apphost.StartOptions{
+			HealthPath: runtime.HealthPath,
+			MemoryMB:   runtime.MemoryMB,
+			CPUs:       runtime.CPUs,
+		}
+		if plan.Runtime == "dockerfile" && runtime.StartCommand != "" {
+			opts.StartCommand = runtime.StartCommand
+		}
 		say(out, "deploy", "starting the process and checking HTTP readiness")
-		if err := d.Apps.Start(ctx, name, env); err != nil {
+		if err := d.Apps.StartWithOptions(ctx, name, env, opts); err != nil {
 			return res, fmt.Errorf("starting application: %w", err)
 		}
 		res.server = true
