@@ -7,6 +7,7 @@ package deploy
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,10 +17,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 
+	"pier/internal/apphost"
 	"pier/internal/build"
 	"pier/internal/bundle"
 	"pier/internal/names"
@@ -41,15 +44,19 @@ type Deployer struct {
 	PierUpstream     string       // the dashboard's own listener, e.g. 127.0.0.1:7777
 	ProductionBranch string       // e.g. main
 	Runner           build.Runner
+	PreviewRailpack  *build.Railpack
+	Apps             *apphost.Host
 	Router           router.Caddy
 	URL              func(host string) string // how an address is reached, for the log
 	Log              *slog.Logger
 	BuildTimeout     time.Duration
 
-	mu      sync.Mutex
-	locks   map[string]*sync.Mutex
-	routeMu sync.Mutex // serializes snapshots and loads across projects
-	dirty   bool       // protected by routeMu
+	mu         sync.Mutex
+	locks      map[string]*sync.Mutex
+	routeMu    sync.Mutex // serializes snapshots and loads across projects
+	lastRoutes []router.Route
+	hasApps    bool
+	dirty      bool // protected by routeMu
 }
 
 // RepoPath is where a project's bare repository lives.
@@ -280,6 +287,10 @@ func (d *Deployer) run(ctx context.Context, project string, src Source, out io.W
 	defer cancel()
 	env, varNames, err := d.variables(ctx, project, src.Target)
 	if err != nil {
+		dep.Status, dep.Error, dep.BuildMS = store.Failed, err.Error(), time.Since(start).Milliseconds()
+		if ferr := d.Store.FinishDeployment(context.WithoutCancel(ctx), dep); ferr != nil {
+			d.Log.Error("record failed build", "err", ferr)
+		}
 		say(out, "pier", "can't open this project's variables: %s", err)
 		return err
 	}
@@ -295,6 +306,13 @@ func (d *Deployer) run(ctx context.Context, project string, src Source, out io.W
 		if ferr := d.Store.FinishDeployment(context.WithoutCancel(ctx), dep); ferr != nil {
 			d.Log.Error("record failed build", "err", ferr)
 		}
+		if d.Apps != nil {
+			clean, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+			if err := d.CleanupApps(clean); err != nil {
+				d.Log.Warn("application cleanup deferred", "err", err)
+			}
+			cancel()
+		}
 		say(out, "pier", "build failed after %s: %s", seconds(elapsed), err)
 		if host := d.addressFor(project, src); host != "" {
 			if prev := d.serving(ctx, host); prev != "" {
@@ -304,10 +322,14 @@ func (d *Deployer) run(ctx context.Context, project string, src Source, out io.W
 		return err
 	}
 	dep.Status = store.Ready
-	if err := d.Store.FinishDeployment(ctx, dep); err != nil {
+	if err := d.Store.FinishDeployment(context.WithoutCancel(ctx), dep); err != nil {
 		return err
 	}
-	say(out, "deploy", "kept as %s: %s, %s, never changed again", dep.ID, plural(res.files, "file"), size(res.bytes))
+	if res.server {
+		say(out, "deploy", "application %s passed its startup check", dep.ID)
+	} else {
+		say(out, "deploy", "kept as %s: %s, %s, never changed again", dep.ID, plural(res.files, "file"), size(res.bytes))
+	}
 
 	held := false
 	if src.Target == store.TargetProduction {
@@ -339,10 +361,11 @@ func (d *Deployer) run(ctx context.Context, project string, src Source, out io.W
 }
 
 type result struct {
-	label string
-	files int
-	bytes int64
-	plan  string
+	server bool
+	label  string
+	files  int
+	bytes  int64
+	plan   string
 }
 
 func (d *Deployer) build(ctx context.Context, dep store.Deployment, src Source, settings store.Build, env []string, out io.Writer) (result, error) {
@@ -356,21 +379,29 @@ func (d *Deployer) build(ctx context.Context, dep store.Deployment, src Source, 
 	}
 	defer os.RemoveAll(work)
 
-	if err := src.extract(ctx, work); err != nil {
+	checkout := filepath.Join(work, "src")
+	if err := os.Mkdir(checkout, 0o755); err != nil {
+		return res, err
+	}
+	if err := src.extract(ctx, checkout); err != nil {
 		if src.Kind == store.SourceCLI {
 			return res, fmt.Errorf("unpacking the upload: %w", err)
 		}
 		return res, fmt.Errorf("checking out %s: %w", short(src.Commit), err)
 	}
 	o := build.Overrides{Root: settings.Root, Preset: settings.Preset, Install: settings.Install, Build: settings.Command, Output: settings.Output}
-	plan, root, err := build.PlanFor(work, o, src.Tools)
+	railpack := d.PreviewRailpack != nil && src.Target == store.TargetPreview
+	if err := build.CheckTree(checkout); err != nil {
+		return res, err
+	}
+	plan, root, err := build.PlanFor(checkout, o, src.Tools)
 	if err != nil {
 		return res, err
 	}
 	res.label = plan.Label
 	if raw, err := json.Marshal(map[string]string{
 		"label": plan.Label, "source": plan.Source, "root": root,
-		"install": plan.Install, "build": plan.Build, "output": plan.Output,
+		"install": plan.Install, "build": plan.Build, "output": plan.Output, "runtime": plan.Runtime,
 	}); err == nil {
 		res.plan = string(raw)
 	}
@@ -385,9 +416,40 @@ func (d *Deployer) build(ctx context.Context, dep store.Deployment, src Source, 
 	if plan.Tooling != "" {
 		say(out, "build", "using %s", plan.Tooling)
 	}
-	dir := filepath.Join(work, root)
+	dir := filepath.Join(checkout, root)
+	output := filepath.Join(dir, plan.Output)
 
-	if plan.Build != "" || plan.Install != "" {
+	if plan.Runtime != "" {
+		if d.Apps == nil {
+			return res, errors.New("application runtime is unavailable")
+		}
+		name := "pier-app-" + strings.ToLower(rand.Text())
+		if err := d.Store.TrackApp(ctx, dep.ID, name); err != nil {
+			return res, err
+		}
+		log := prefixed(out, "build   ")
+		say(out, "build", "building a runnable image with %s", plan.Label)
+		err := build.BuildImage(ctx, dir, work, dep.Project, name+":app", plan, env, log)
+		log.Flush()
+		if err != nil {
+			return res, err
+		}
+		say(out, "deploy", "starting the process and checking HTTP readiness")
+		if err := d.Apps.Start(ctx, name, env); err != nil {
+			return res, fmt.Errorf("starting application: %w", err)
+		}
+		res.server = true
+		return res, nil
+	}
+	if railpack {
+		say(out, "build", "using Railpack for this preview")
+		log := prefixed(out, "build   ")
+		output, err = d.PreviewRailpack.Export(ctx, dir, work, dep.Project, plan, o, env, log)
+		log.Flush()
+		if err != nil {
+			return res, err
+		}
+	} else if plan.Build != "" || plan.Install != "" {
 		say(out, "build", "running in %s", d.Runner.Name())
 		log := prefixed(out, "build   ")
 		for _, step := range []string{plan.Install, plan.Build} {
@@ -408,12 +470,21 @@ func (d *Deployer) build(ctx context.Context, dep store.Deployment, src Source, 
 		}
 	}
 
-	output := filepath.Join(dir, filepath.Clean(plan.Output))
-	if rel, err := filepath.Rel(work, output); err != nil || strings.HasPrefix(rel, "..") {
+	rel, err := filepath.Rel(work, output)
+	if err != nil || strings.HasPrefix(rel, "..") {
 		return res, fmt.Errorf("output folder %q is outside the project", plan.Output)
 	}
-	if fi, err := os.Stat(output); err != nil || !fi.IsDir() {
+	workRoot, err := os.OpenRoot(work)
+	if err != nil {
+		return res, err
+	}
+	fi, lerr := workRoot.Lstat(rel)
+	workRoot.Close()
+	if lerr != nil || !fi.IsDir() || fi.Mode()&os.ModeSymlink != 0 {
 		return res, fmt.Errorf("the build didn't produce %s/; check the output folder in the project's settings", plan.Output)
+	}
+	if err := build.CheckTree(output); err != nil {
+		return res, fmt.Errorf("check output folder %q: %w", plan.Output, err)
 	}
 	res.files, res.bytes, err = count(output)
 	if err != nil {
@@ -433,30 +504,37 @@ func (d *Deployer) build(ctx context.Context, dep store.Deployment, src Source, 
 
 // extract writes the commit's files (and nothing from .git) into dir.
 func (d *Deployer) extract(ctx context.Context, project, commit, dir string) error {
+	if commit == "" || strings.HasPrefix(commit, "-") {
+		return fmt.Errorf("invalid commit %q", commit)
+	}
 	archive := exec.CommandContext(ctx, "git", "--git-dir", d.RepoPath(project), "archive", "--format=tar", commit)
 	untar := exec.CommandContext(ctx, "tar", "-x", "-C", dir)
 	pipe, err := archive.StdoutPipe()
 	if err != nil {
 		return err
 	}
-	var errs bytes.Buffer
-	archive.Stderr, untar.Stderr = &errs, &errs
+	var archiveErr, untarErr bytes.Buffer
+	archive.Stderr, untar.Stderr = &archiveErr, &untarErr
 	untar.Stdin = pipe
 	if err := archive.Start(); err != nil {
 		return err
 	}
 	if err := untar.Run(); err != nil {
 		archive.Wait()
-		return fmt.Errorf("%w: %s", err, strings.TrimSpace(errs.String()))
+		msg := strings.TrimSpace(untarErr.String() + " " + archiveErr.String())
+		return fmt.Errorf("%w: %s", err, msg)
 	}
 	if err := archive.Wait(); err != nil {
-		return fmt.Errorf("%w: %s", err, strings.TrimSpace(errs.String()))
+		return fmt.Errorf("%w: %s", err, strings.TrimSpace(archiveErr.String()))
 	}
 	return nil
 }
 
 func (d *Deployer) commitMessage(commit, project string) string {
-	out, err := exec.Command("git", "--git-dir", d.RepoPath(project), "log", "-1", "--format=%s", commit).Output()
+	if commit == "" || strings.HasPrefix(commit, "-") {
+		return ""
+	}
+	out, err := exec.Command("git", "--git-dir", d.RepoPath(project), "log", "-1", "--format=%s", commit, "--").Output()
 	if err != nil {
 		return ""
 	}
@@ -474,6 +552,14 @@ func (d *Deployer) SetProduction(ctx context.Context, project, id string) error 
 	dep, err := d.Store.Deployment(ctx, id)
 	if err != nil || dep.Project != project || dep.Status != store.Ready {
 		return ErrNotServable
+	}
+	if dep.Runtime != "" {
+		if d.Apps == nil {
+			return ErrNotServable
+		}
+		if err := d.Apps.Ready(ctx, dep.Runtime); err != nil {
+			return fmt.Errorf("%w: %v", ErrNotServable, err)
+		}
 	}
 	err = d.Store.SetAlias(ctx, store.Alias{
 		Host: names.Production(project, d.Domain), Project: project, Kind: store.KindProduction,
@@ -526,19 +612,47 @@ func (d *Deployer) Routes(ctx context.Context) ([]router.Route, error) {
 	if err != nil {
 		return nil, err
 	}
-	root := func(id string) string { return filepath.Join(d.Deployments, id) }
-	fallback := map[string]string{}
+	byID := map[string]router.Route{}
+	var endpoints map[string]string
 	var routes []router.Route
 	for _, dep := range ready {
-		fallback[dep.ID] = fallbackFor(root(dep.ID), dep.Framework)
-		routes = append(routes, router.Route{Host: names.Deployment(dep.Project, dep.ID, d.Domain), Root: root(dep.ID), DeploymentID: dep.ID, Fallback: fallback[dep.ID]})
+		r := router.Route{DeploymentID: dep.ID, Host: names.Deployment(dep.Project, dep.ID, d.Domain)}
+		if dep.Runtime != "" {
+			if endpoints == nil {
+				endpoints = map[string]string{}
+				if d.Apps != nil {
+					probe, cancel := context.WithTimeout(ctx, 3*time.Second)
+					current, err := d.Apps.Endpoints(probe)
+					cancel()
+					if err != nil {
+						d.Log.Warn("application endpoints unavailable", "err", err)
+					} else {
+						endpoints = current
+					}
+				}
+			}
+			r.Upstream = endpoints[dep.Runtime]
+			r.Unavailable = r.Upstream == ""
+		} else {
+			r.Root = filepath.Join(d.Deployments, dep.ID)
+			r.Fallback = fallbackFor(r.Root, dep.Framework)
+		}
+		byID[dep.ID] = r
+		routes = append(routes, r)
 	}
+	appendHost := func(id, host string) {
+		if r, ok := byID[id]; ok {
+			r.Host = host
+			routes = append(routes, r)
+		}
+	}
+
 	production := map[string]string{}
 	for _, a := range aliases {
 		if a.Kind == store.KindProduction {
 			production[a.Project] = a.DeploymentID
 		}
-		routes = append(routes, router.Route{Host: a.Host, Root: root(a.DeploymentID), DeploymentID: a.DeploymentID, Fallback: fallback[a.DeploymentID]})
+		appendHost(a.DeploymentID, a.Host)
 	}
 	domains, err := d.Store.Domains(ctx, "")
 	if err != nil {
@@ -549,7 +663,7 @@ func (d *Deployer) Routes(ctx context.Context) ([]router.Route, error) {
 		if !domain.Verified || id == "" {
 			continue
 		}
-		routes = append(routes, router.Route{Host: domain.Host, Root: root(id), DeploymentID: id, Fallback: fallback[id]})
+		appendHost(id, domain.Host)
 		if domain.Redirect != "" {
 			routes = append(routes, router.Route{Host: domain.Redirect, Redirect: d.URL(domain.Host)})
 		}
@@ -575,12 +689,19 @@ func fallbackFor(root, framework string) string {
 }
 
 // Sync loads the current routes into the router.
-func (d *Deployer) Sync(ctx context.Context) error {
+func (d *Deployer) Sync(ctx context.Context) error { return d.syncRoutes(ctx, true) }
+func (d *Deployer) syncRoutes(ctx context.Context, force bool) error {
 	d.routeMu.Lock()
 	defer d.routeMu.Unlock()
 	routes, err := d.Routes(ctx)
 	if err == nil {
-		err = d.Router.Apply(ctx, routes)
+		d.hasApps = slices.ContainsFunc(routes, func(r router.Route) bool { return r.DeploymentID != "" && (r.Upstream != "" || r.Unavailable) })
+		if force || d.dirty || !slices.Equal(routes, d.lastRoutes) {
+			err = d.Router.Apply(ctx, routes)
+			if err == nil {
+				d.lastRoutes = routes
+			}
+		}
 	}
 	d.dirty = err != nil
 	return err
@@ -597,18 +718,36 @@ func (d *Deployer) KeepSynced(ctx context.Context, every time.Duration) {
 			return
 		case <-t.C:
 			d.routeMu.Lock()
-			dirty := d.dirty
+			dirty := d.dirty || d.hasApps
 			d.routeMu.Unlock()
 			if !dirty {
 				continue
 			}
-			if err := d.Sync(ctx); err != nil {
+			if err := d.syncRoutes(ctx, false); err != nil {
 				d.Log.Warn("router still out of date", "err", err)
-			} else {
-				d.Log.Info("router caught up")
 			}
 		}
 	}
+}
+
+// CleanupApps retries partial Docker cleanup using durable ownership records.
+func (d *Deployer) CleanupApps(ctx context.Context) error {
+	names, err := d.Store.UnusedApps(ctx)
+	if err != nil {
+		return err
+	}
+	for _, name := range names {
+		if d.Apps == nil {
+			return errors.New("application runtime is unavailable")
+		}
+		if err := d.Apps.Remove(ctx, name); err != nil {
+			return err
+		}
+		if err := d.Store.ForgetApp(ctx, name); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func count(dir string) (files int, bytes int64, err error) {

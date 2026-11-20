@@ -98,6 +98,7 @@ func (a *API) Public() http.Handler {
 	mux.Handle("GET /api/projects/{project}/deployments", a.auth(http.HandlerFunc(a.deployments)))
 	mux.Handle("GET /api/projects/{project}/deployments/{id}", a.auth(http.HandlerFunc(a.deployment)))
 	mux.Handle("GET /api/projects/{project}/deployments/{id}/log", a.auth(http.HandlerFunc(a.deploymentLog)))
+	mux.Handle("GET /api/projects/{project}/deployments/{id}/runtime-log", a.auth(http.HandlerFunc(a.deploymentRuntimeLog)))
 
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such API endpoint"})
@@ -148,7 +149,7 @@ func (a *API) auth(next http.Handler) http.Handler {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "that token isn't valid any more; run pier login"})
 			return
 		}
-		c, err := r.Cookie(cookieName)
+		c, err := sessionCookie(r)
 		if err == nil {
 			if u, se, ok := a.lookupSession(ctx, c.Value, r); ok {
 				if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Header.Get("X-Pier") == "" {
@@ -187,7 +188,7 @@ func (a *API) board(w http.ResponseWriter, r *http.Request) {
 // The build carries on if the pusher disconnects.
 func (a *API) push(w http.ResponseWriter, r *http.Request) {
 	var p hook.Push
-	if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&p); err != nil || !validProject(p.Project) || p.Branch == "" || p.Commit == "" {
+	if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&p); err != nil || !validProject(p.Project) || p.Branch == "" || !validCommit(p.Commit) {
 		http.Error(w, "pier    bad push request\n", http.StatusBadRequest)
 		return
 	}
@@ -234,12 +235,27 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	json.NewEncoder(w).Encode(v)
 }
 
+func validCommit(s string) bool {
+	if len(s) != 40 && len(s) != 64 {
+		return false
+	}
+	for _, r := range s {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
+			return false
+		}
+	}
+	return true
+}
+
 func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Referrer-Policy", "same-origin")
 		h.Set("X-Frame-Options", "DENY")
+		if secure(r) {
+			h.Set("Strict-Transport-Security", "max-age=31536000")
+		}
 		next.ServeHTTP(w, r)
 	})
 }

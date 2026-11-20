@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -113,8 +114,8 @@ func (a *API) saveSettings(w http.ResponseWriter, r *http.Request) {
 	for _, f := range []*string{&req.ProductionBranch, &b.Root, &b.Preset, &b.Install, &b.Command, &b.Output} {
 		*f = strings.TrimSpace(*f)
 	}
-	if b.Preset != "" && b.Preset != "static" && b.Preset != "vite" {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "Choose Static HTML or Vite, or let Pier detect it.", "field": "preset"})
+	if b.Preset != "" && !slices.Contains(build.Presets, b.Preset) {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "Choose a supported preset or let Pier detect it.", "field": "preset"})
 		return
 	}
 	if _, err := build.Folder(b.Root); err != nil {

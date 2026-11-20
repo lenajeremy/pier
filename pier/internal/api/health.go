@@ -85,13 +85,16 @@ func (a *API) health(w http.ResponseWriter, r *http.Request) {
 		svc["Caddy"] = "Running"
 		c.Close()
 	}
-	if b, ok := d.Runner.(build.Docker); ok {
+	b, dockerBuilds := d.Runner.(build.Docker)
+	if dockerBuilds || d.Apps != nil {
 		version, e := dockerOutput(ctx, "version", "--format", "{{.Server.Version}}")
 		if e == nil {
 			svc["Docker"] = version
 		} else {
 			svc["Docker"] = "Unavailable"
 		}
+	}
+	if dockerBuilds {
 		cache, e := dockerOutput(ctx, "volume", "inspect", "--format", "{{.Mountpoint}}", b.CacheVolume)
 		var size *int64
 		if e == nil && filepath.IsAbs(cache) {
@@ -128,6 +131,9 @@ func (a *API) health(w http.ResponseWriter, r *http.Request) {
 var artifactID = regexp.MustCompile("^[0-9a-f]{6}$")
 
 func (a *API) finishFiles(ctx context.Context) error {
+	if err := a.Deployer.CleanupApps(ctx); err != nil {
+		return err
+	}
 	ids, err := a.Store.CleanupFiles(ctx)
 	if err != nil {
 		return err

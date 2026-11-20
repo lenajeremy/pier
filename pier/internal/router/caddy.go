@@ -24,6 +24,7 @@ type Route struct {
 	Host         string
 	Root         string // the deployment's folder on disk
 	Redirect     string // absolute canonical URL for a permanent redirect
+	Unavailable  bool
 	DeploymentID string
 	Upstream     string // host:port to proxy to instead of serving files
 	Fallback     string // what a path that isn't a file gets: FallbackSPA, FallbackPage, or a plain 404
@@ -65,8 +66,13 @@ func (c Caddy) Config(routes []Route) ([]byte, error) {
 		if r.Redirect != "" {
 			h = map[string]any{"handler": "static_response", "status_code": 308,
 				"headers": map[string][]string{"Location": {r.Redirect + "{http.request.uri}"}}}
+		} else if r.Unavailable {
+			h = map[string]any{"handler": "static_response", "status_code": 503, "body": "Application unavailable.\n", "headers": map[string][]string{"X-Pier-Deployment": {r.DeploymentID}}}
 		} else if r.Upstream != "" {
 			h = map[string]any{"handler": "reverse_proxy", "upstreams": []any{map[string]any{"dial": r.Upstream}}}
+			if r.DeploymentID != "" {
+				h["headers"] = map[string]any{"response": map[string]any{"set": map[string][]string{"X-Pier-Deployment": {r.DeploymentID}}}}
+			}
 		}
 		handlers = append(handlers, map[string]any{
 			"match":    []any{map[string]any{"host": []string{r.Host}}},
@@ -150,12 +156,12 @@ func siteHandler(r Route) map[string]any {
 			"match": []any{map[string]any{"not": []any{missing}}},
 			"handle": []any{
 				map[string]any{"handler": "rewrite", "uri": "/404.html"},
-				map[string]any{"handler": "file_server", "root": r.Root, "status_code": 404},
+				map[string]any{"handler": "file_server", "root": r.Root, "hide": []string{".*"}, "status_code": 404},
 			},
 			"terminal": true,
 		})
 	}
-	routes = append(routes, map[string]any{"handle": []any{map[string]any{"handler": "file_server", "root": r.Root}}})
+	routes = append(routes, map[string]any{"handle": []any{map[string]any{"handler": "file_server", "root": r.Root, "hide": []string{".*"}}}})
 	return map[string]any{"handler": "subroute", "routes": routes}
 }
 

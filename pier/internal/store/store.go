@@ -48,6 +48,7 @@ type Deployment struct {
 	Message   string    `json:"message"`
 	Status    string    `json:"status"`
 	Framework string    `json:"framework"`
+	Runtime   string    `json:"runtime,omitempty"`
 	Files     int       `json:"files"`
 	Bytes     int64     `json:"bytes"`
 	BuildMS   int64     `json:"build_ms"`
@@ -210,6 +211,7 @@ var migrations = []string{
 	CREATE TRIGGER keep_production_insert AFTER INSERT ON aliases WHEN NEW.kind='production' BEGIN UPDATE deployments SET keep_history=1 WHERE id=NEW.deployment_id; END;
 	CREATE TRIGGER keep_production_update AFTER UPDATE ON aliases WHEN NEW.kind='production' BEGIN UPDATE deployments SET keep_history=1 WHERE id=NEW.deployment_id; END;`,
 	`CREATE TABLE server_samples(at INTEGER PRIMARY KEY, cpu REAL NOT NULL, memory REAL NOT NULL, disk REAL NOT NULL);`,
+	`CREATE TABLE app_resources(deployment TEXT PRIMARY KEY, name TEXT UNIQUE NOT NULL);`,
 }
 
 // Open opens (and if needed creates) the database at path.
@@ -320,13 +322,13 @@ func (s *Store) FinishDeployment(ctx context.Context, d Deployment) error {
 	return err
 }
 
-const deploymentCols = `id, project, branch, commit_sha, message, status, framework, files, bytes, build_ms, error, created_at, target, source, plan`
+const deploymentCols = `id, project, branch, commit_sha, message, status, framework, files, bytes, build_ms, error, created_at, target, source, plan, COALESCE((SELECT r.name FROM app_resources r WHERE r.deployment=id),'')`
 
 func scanDeployment(sc interface{ Scan(...any) error }) (Deployment, error) {
 	var d Deployment
 	var created int64
 	err := sc.Scan(&d.ID, &d.Project, &d.Branch, &d.Commit, &d.Message, &d.Status,
-		&d.Framework, &d.Files, &d.Bytes, &d.BuildMS, &d.Error, &created, &d.Target, &d.Source, &d.Plan)
+		&d.Framework, &d.Files, &d.Bytes, &d.BuildMS, &d.Error, &created, &d.Target, &d.Source, &d.Plan, &d.Runtime)
 	d.CreatedAt = time.UnixMilli(created)
 	return d, err
 }

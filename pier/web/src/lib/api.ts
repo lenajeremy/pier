@@ -13,6 +13,7 @@ export interface Deployment {
   message: string
   status: 'building' | 'ready' | 'failed'
   framework: string
+  runtime?: string
   files: number
   bytes: number
   build_ms: number
@@ -115,10 +116,17 @@ export const signOut = () => api<void>('/api/session', { method: 'DELETE' })
 
 export interface Build {
   root: string
-  preset: '' | 'static' | 'vite'
+  preset: '' | 'static' | 'vite' | 'server' | 'dockerfile'
   install: string
   command: string
   output: string
+}
+
+export function changePreset(build: Build, preset: Build['preset']): Build {
+  if (preset === 'server' || preset === 'dockerfile') {
+    return { ...build, preset, install: '', output: '', command: preset === 'dockerfile' ? '' : build.command }
+  }
+  return { ...build, preset }
 }
 
 export interface Settings {

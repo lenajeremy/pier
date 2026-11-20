@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"pier/internal/apphost"
 	"pier/internal/deploy"
 	"pier/internal/names"
 	"pier/internal/store"
@@ -375,6 +376,45 @@ func (a *API) deploymentLog(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// deploymentRuntimeLog returns recent stdout/stderr lines from a server
+// deployment's running Docker container.
+func (a *API) deploymentRuntimeLog(w http.ResponseWriter, r *http.Request) {
+	name, id := r.PathValue("project"), r.PathValue("id")
+	ps, ok := a.findProject(w, r, name)
+	if !ok {
+		return
+	}
+	i := slices.IndexFunc(ps.deployments, func(d Deployment) bool { return d.ID == id })
+	if i < 0 {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": name + " has no deployment " + id})
+		return
+	}
+	d := ps.deployments[i]
+	if d.Runtime == "" {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "This deployment serves static files and has no runtime container."})
+		return
+	}
+	if a.Deployer.Apps == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Application runtime is unavailable."})
+		return
+	}
+	tail, _ := strconv.Atoi(r.URL.Query().Get("tail"))
+	since := strings.TrimSpace(r.URL.Query().Get("since"))
+	lines, err := a.Deployer.Apps.Logs(r.Context(), d.Runtime, tail, since)
+	if errors.Is(err, apphost.ErrNotFound) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "The container for deployment " + id + " is no longer running."})
+		return
+	}
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"runtime": d.Runtime,
+		"lines":   nonNil(lines),
+	})
+}
+
 // favicon serves the icon of the project's production deployment, so the
 // dashboard shows each project with its own icon. 404 when it has none.
 func (a *API) favicon(w http.ResponseWriter, r *http.Request) {
@@ -387,19 +427,35 @@ func (a *API) favicon(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	root := filepath.Join(a.Deployer.Deployments, ps.production.Deployment.ID)
-	for _, f := range []string{"favicon.svg", "favicon.png", "favicon.ico", "apple-touch-icon.png", "icon.svg", "icon.png"} {
-		p := filepath.Join(root, f)
-		if fi, err := os.Stat(p); err == nil && fi.Mode().IsRegular() && fi.Size() < 1<<20 {
-			w.Header().Set("Cache-Control", "private, max-age=300")
-			if strings.HasSuffix(f, ".svg") {
-				// An SVG can carry script; as an <img> it can't run, and this
-				// stops it running if the file is opened directly.
-				w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox")
-			}
-			http.ServeFile(w, r, p)
-			return
+	root, err := os.OpenRoot(filepath.Join(a.Deployer.Deployments, ps.production.Deployment.ID))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer root.Close()
+	candidates := []struct{ file, contentType, csp string }{
+		{"favicon.svg", "image/svg+xml", "default-src 'none'; style-src 'unsafe-inline'; sandbox"},
+		{"favicon.png", "image/png", "default-src 'none'; sandbox"},
+		{"favicon.ico", "image/x-icon", "default-src 'none'; sandbox"},
+		{"apple-touch-icon.png", "image/png", "default-src 'none'; sandbox"},
+		{"icon.svg", "image/svg+xml", "default-src 'none'; style-src 'unsafe-inline'; sandbox"},
+		{"icon.png", "image/png", "default-src 'none'; sandbox"},
+	}
+	for _, c := range candidates {
+		fi, err := root.Lstat(c.file)
+		if err != nil || !fi.Mode().IsRegular() || fi.Size() >= 1<<20 {
+			continue
 		}
+		f, err := root.Open(c.file)
+		if err != nil {
+			continue
+		}
+		defer f.Close()
+		w.Header().Set("Content-Type", c.contentType)
+		w.Header().Set("Cache-Control", "private, max-age=300")
+		w.Header().Set("Content-Security-Policy", c.csp)
+		http.ServeContent(w, r, c.file, fi.ModTime(), f)
+		return
 	}
 	http.NotFound(w, r)
 }

@@ -51,7 +51,7 @@ func Files(dir string) ([]string, error) {
 		if rel == "." {
 			return nil
 		}
-		if skip[e.Name()] {
+		if skip[e.Name()] || isEnvFile(e.Name()) {
 			if e.IsDir() {
 				return filepath.SkipDir
 			}
@@ -67,11 +67,15 @@ func Files(dir string) ([]string, error) {
 
 func skipped(rel string) bool {
 	for _, part := range strings.Split(rel, "/") {
-		if skip[part] {
+		if skip[part] || isEnvFile(part) {
 			return true
 		}
 	}
 	return false
+}
+
+func isEnvFile(name string) bool {
+	return name == ".env" || (strings.HasPrefix(name, ".env.") && name != ".env.example")
 }
 
 // Pack writes files from dir to w as a gzipped tar, and returns how many

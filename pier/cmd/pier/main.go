@@ -279,10 +279,15 @@ func logout() error {
 		fmt.Println("This computer isn't signed in.")
 		return nil
 	}
+	revoked := c.Server != "" && call(c, http.MethodDelete, "/api/session", nil, nil) == nil
 	if err := os.Remove(configPath()); err != nil {
 		return err
 	}
-	fmt.Printf("Signed out of %s here. To end the session on the server too, sign it out on the dashboard's Members page.\n", host(c.Server))
+	if revoked {
+		fmt.Printf("Signed out of %s.\n", host(c.Server))
+	} else {
+		fmt.Printf("Signed out of %s locally (couldn't reach the server to revoke the session).\n", host(c.Server))
+	}
 	return nil
 }
 

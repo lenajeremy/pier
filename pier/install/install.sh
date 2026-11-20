@@ -19,11 +19,23 @@ if [ "${1:-}" = --check ]; then echo 'Bundle checks passed.'; exit 0; fi
 command -v systemctl >/dev/null || { echo 'This installer requires systemd.' >&2; exit 1; }
 command -v git >/dev/null || { echo 'Install git with your distribution package manager, then rerun.' >&2; exit 1; }
 if ! command -v docker >/dev/null; then
- printf 'Docker is missing. Install docker.io using apt? [y/N] '
- read -r answer || answer=n
- case "$answer" in y|Y|yes) command -v apt-get >/dev/null || { echo 'Install Docker Engine, then rerun.' >&2; exit 1; }; apt-get update; apt-get install -y docker.io; systemctl enable --now docker;; *) echo 'Install Docker Engine, then rerun this installer.'; exit 1;; esac
+ printf 'Docker is missing. Install Docker Engine and Buildx using apt? [y/N] '
+ if [ -r /dev/tty ]; then
+  read -r answer </dev/tty || answer=n
+ else
+  read -r answer || answer=n
+ fi
+ case "$answer" in y|Y|yes) command -v apt-get >/dev/null || { echo 'Install Docker Engine, then rerun.' >&2; exit 1; }; apt-get update
+  if apt-cache show docker-buildx >/dev/null 2>&1; then
+   apt-get install -y docker.io docker-buildx
+  else
+   echo 'Install Docker Engine and its Buildx plugin for your distribution, then rerun.' >&2
+   exit 1
+  fi
+  systemctl enable --now docker;; *) echo 'Install Docker Engine, then rerun this installer.'; exit 1;; esac
 fi
 docker info >/dev/null || { echo 'Start Docker Engine, then rerun.' >&2; exit 1; }
+docker buildx version >/dev/null || { echo 'Install the Docker Buildx CLI plugin for Railpack previews, then rerun.' >&2; exit 1; }
 getent group docker >/dev/null || { echo 'Configure the docker group for access to the local Docker socket.' >&2; exit 1; }
 getent group pier >/dev/null || groupadd --system pier
 id pier >/dev/null 2>&1 || useradd --system --gid pier --home-dir /var/lib/pier --shell /usr/sbin/nologin pier
@@ -43,6 +55,5 @@ if systemctl is-active --quiet pierd; then
  echo 'Pier has been upgraded.'
 else
  echo 'Create the owner account and choose the server address:'
- echo '  sudo -u pier /usr/local/bin/pierd init'
- echo '  sudo systemctl start pierd'
+ echo '  sudo /usr/local/bin/pierd init'
 fi

@@ -12,6 +12,7 @@ help:
 	@echo "    make pier-test     go vet and unit tests"
 	@echo "    make pier-e2e      push real projects through Caddy, pierd and Docker"
 	@echo "    make pier-release  package a Linux installer (ARCH=amd64 or arm64)"
+	@echo "    make pier-vps      install/upgrade Pier on a VPS (HOST=user@ip)"
 	@echo "    make pier-caddy    run a standalone Caddy for compatibility testing"
 	@echo "    make pier-dev      run pierd with embedded Caddy for development"
 	@echo ""
@@ -48,7 +49,7 @@ pier-test:
 	cd pier/web && npm run typecheck
 
 pier-e2e:
-	pier/scripts/e2e.sh docker
+	pier/scripts/e2e.sh railpack-preview
 
 # Development: pierd runs its own Caddy. Sites are at
 # http://<project>.pier.localhost:8088 and pushes go to ssh://git@localhost:2222.
@@ -86,7 +87,11 @@ site-test:
 	cd site/v2 && npm run typecheck
 	cd site/v3 && npm run typecheck
 
-.PHONY: pier-release
+.PHONY: pier-release pier-vps
 ARCH ?= amd64
 pier-release: pier-web
 	pier/scripts/release.sh $(ARCH)
+
+pier-vps:
+	@test -n "$(HOST)" || { echo "Usage: make pier-vps HOST=user@your-vps-ip" >&2; exit 2; }
+	pier/scripts/vps-install.sh --build "$(HOST)"

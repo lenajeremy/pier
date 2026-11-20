@@ -2,12 +2,14 @@ package build
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"runtime"
 	"strings"
+	"time"
 )
 
 // Runner runs a shell command inside a checkout, writing its output to log.
@@ -40,7 +42,9 @@ func (d Docker) Run(ctx context.Context, dir, command string, env []string, log 
 			return fmt.Errorf("prepare package cache: %w", err)
 		}
 	}
-	args := []string{"run", "--rm", "--network", "bridge",
+	cname := "pier-build-" + strings.ToLower(rand.Text())
+	args := []string{"run", "--rm", "--name", cname, "--network", "bridge",
+		"--security-opt", "no-new-privileges", "--pids-limit", "512",
 		"-v", dir + ":/app", "-w", "/app",
 		"-v", d.CacheVolume + ":/cache",
 		"-e", "CI=1",
@@ -57,17 +61,69 @@ func (d Docker) Run(ctx context.Context, dir, command string, env []string, log 
 		// Keep the build's files owned by pierd's user, so it can move them.
 		args = append(args, "--user", fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()), "-e", "HOME=/tmp")
 	}
-	// Variables are passed as -e NAME, with the value in docker's own
-	// environment, so a value never appears on a command line.
+	// Pass single-line variables through a 0600 env-file so user variable names
+	// never pollute the host docker CLI's own environment. Any multiline value
+	// falls back to -e NAME only when its name cannot reconfigure docker.
+	var singleLine, multiLine []string
 	for _, kv := range env {
-		name, _, _ := strings.Cut(kv, "=")
-		args = append(args, "-e", name)
+		name, value, _ := strings.Cut(kv, "=")
+		if strings.ContainsAny(value, "\r\n") {
+			if !hostSensitiveEnv(name) {
+				multiLine = append(multiLine, kv)
+				args = append(args, "-e", name)
+			}
+			continue
+		}
+		singleLine = append(singleLine, kv)
+	}
+	if len(singleLine) > 0 {
+		ef, err := os.CreateTemp("", "pier-build-env-*")
+		if err != nil {
+			return fmt.Errorf("create build env file: %w", err)
+		}
+		envPath := ef.Name()
+		defer os.Remove(envPath)
+		if err := ef.Chmod(0o600); err != nil {
+			ef.Close()
+			return fmt.Errorf("secure build env file: %w", err)
+		}
+		_, werr := io.WriteString(ef, strings.Join(singleLine, "\n")+"\n")
+		cerr := ef.Close()
+		if werr != nil {
+			return fmt.Errorf("write build env file: %w", werr)
+		}
+		if cerr != nil {
+			return fmt.Errorf("close build env file: %w", cerr)
+		}
+		args = append(args, "--env-file", envPath)
 	}
 	args = append(args, d.Image, "sh", "-c", command)
 	cmd := exec.CommandContext(ctx, "docker", args...)
-	cmd.Env = append(os.Environ(), env...)
+	if len(multiLine) > 0 {
+		cmd.Env = append(os.Environ(), multiLine...)
+	}
 	cmd.Stdout, cmd.Stderr = log, log
-	return cmd.Run()
+	err := cmd.Run()
+	if err != nil && ctx.Err() != nil {
+		// Killing the docker CLI does not stop the container inside the daemon.
+		cleanCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		_ = exec.CommandContext(cleanCtx, "docker", "rm", "-f", cname).Run()
+		cancel()
+	}
+	return err
+}
+
+func hostSensitiveEnv(name string) bool {
+	for _, prefix := range []string{"DOCKER_", "LD_", "DYLD_"} {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	switch strings.ToUpper(name) {
+	case "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "GODEBUG", "PATH", "HOME":
+		return true
+	}
+	return false
 }
 
 // Local runs commands directly on the host. It's for development on a

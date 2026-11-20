@@ -24,14 +24,18 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
 	"golang.org/x/crypto/ssh"
 
 	"pier/internal/api"
+	"pier/internal/apphost"
 	"pier/internal/build"
+	"pier/internal/challengedns"
 	"pier/internal/deploy"
+	"pier/internal/dnscheck"
 	"pier/internal/gitssh"
 	"pier/internal/hook"
 	"pier/internal/requests"
@@ -92,7 +96,8 @@ func serve(args []string) int {
 	caddyAdmin := fs.String("caddy-admin", env("PIER_CADDY_ADMIN", ""), "use an external Caddy admin API instead of the embedded router")
 	httpAddr := fs.String("http", env("PIER_HTTP", ":8088"), "where Caddy serves the sites")
 	https := fs.Bool("https", env("PIER_HTTPS", "") == "1", "serve sites over HTTPS with certificates (production)")
-	builder := fs.String("builder", env("PIER_BUILDER", "docker"), "docker, or local to build on the host without isolation")
+	dnsAddr := fs.String("dns", env("PIER_DNS", ":53"), "where to answer ACME DNS-01 challenges for wildcard HTTPS (empty to disable)")
+	builder := fs.String("builder", env("PIER_BUILDER", "railpack-preview"), "railpack-preview, docker, or local (host builds without isolation)")
 	image := fs.String("image", env("PIER_IMAGE", "node:22-alpine"), "the image builds run in")
 	prod := fs.String("production-branch", env("PIER_PRODUCTION_BRANCH", "main"), "the branch that deploys to production")
 	fs.Parse(args)
@@ -107,6 +112,10 @@ func serve(args []string) int {
 	}
 	*data = abs
 	paths := layout(*data)
+	if err := os.MkdirAll(*data, 0o700); err != nil {
+		log.Error("create data folder", "err", err)
+		return 1
+	}
 	for _, dir := range []string{paths.repos, paths.deployments, paths.logs, paths.sources, paths.tmp} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			log.Error("create data folder", "err", err)
@@ -155,19 +164,51 @@ func serve(args []string) int {
 	}
 
 	var runner build.Runner = build.Docker{Image: *image, CacheVolume: "pier-build-cache"}
-	if *builder == "local" {
+	var preview *build.Railpack
+	switch *builder {
+	case "railpack-preview":
+		preview = &build.Railpack{Image: *image}
+	case "docker":
+	case "local":
 		runner = build.Local{}
+	default:
+		log.Error("unknown builder", "builder", *builder)
+		return 1
 	}
 	scheme, port := "http", portOf(*httpAddr)
 	if *https {
 		scheme = "https"
 	}
+	var wildcardReady atomic.Bool
+	var challengeNS string
+	if *https && *caddyAdmin == "" && *dnsAddr != "" && *domain != "" && *domain != "localhost" && !strings.HasSuffix(*domain, ".localhost") {
+		challengeNS = *address
+		if net.ParseIP(challengeNS) != nil {
+			challengeNS = "pier." + *domain
+		}
+		if srv, err := challengedns.Start(*domain, challengeNS, *dnsAddr); err != nil {
+			log.Warn("ACME DNS responder unavailable; using per-host HTTPS certificates", "addr", *dnsAddr, "err", err)
+			challengeNS = ""
+		} else {
+			defer srv.Close()
+			log.Info("ACME DNS responder listening", "zone", "_acme-challenge."+*domain, "addr", *dnsAddr)
+			probeCtx, cancel := context.WithTimeout(setup, 4*time.Second)
+			if dnscheck.ChallengeAuthority(probeCtx, *domain, challengeNS) {
+				wildcardReady.Store(true)
+			}
+			cancel()
+		}
+	}
+	caddyCfg := router.Caddy{Admin: *caddyAdmin, Storage: filepath.Join(*data, "caddy"), Listen: []string{*httpAddr}, HTTPS: *https, BaseDomain: *domain, AccessLog: paths.accessSock}
+	if challengeNS != "" {
+		caddyCfg.WildcardReady = wildcardReady.Load
+	}
 	dep := &deploy.Deployer{
 		Store: st, Repos: paths.repos, Deployments: paths.deployments, Logs: paths.logs, Sources: paths.sources, Tmp: paths.tmp,
 		Secrets: box,
-		Domain:  *domain, ProductionBranch: *prod, Runner: runner, Log: log, BuildTimeout: 15 * time.Minute,
+		Domain:  *domain, ProductionBranch: *prod, Runner: runner, PreviewRailpack: preview, Apps: apphost.New(*data), Log: log, BuildTimeout: 15 * time.Minute,
 		PierHost: *address, PierUpstream: dialable(*apiAddr),
-		Router: router.Caddy{Admin: *caddyAdmin, Storage: filepath.Join(*data, "caddy"), Listen: []string{*httpAddr}, HTTPS: *https, BaseDomain: *domain, AccessLog: paths.accessSock},
+		Router: caddyCfg,
 		URL: func(host string) string {
 			if port == "" || (scheme == "http" && port == "80") || (scheme == "https" && port == "443") {
 				return scheme + "://" + host
@@ -184,6 +225,29 @@ func serve(args []string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	if challengeNS != "" {
+		go func() {
+			t := time.NewTicker(30 * time.Second)
+			defer t.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-t.C:
+					probeCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+					ready := dnscheck.ChallengeAuthority(probeCtx, *domain, challengeNS)
+					cancel()
+					if ready != wildcardReady.Swap(ready) {
+						log.Info("wildcard certificate delegation changed", "ready", ready)
+						if err := dep.Sync(ctx); err != nil && ctx.Err() == nil {
+							log.Warn("sync router after delegation change", "err", err)
+						}
+					}
+				}
+			}
+		}()
+	}
+
 	reqs, err := requests.Open(paths.requestsDB, projectOf(st), log)
 	if err != nil {
 		log.Error("open the requests database", "err", err)
@@ -196,6 +260,10 @@ func serve(args []string) int {
 		}
 	}()
 
+	if err := st.InterruptAppBuilds(ctx); err != nil {
+		log.Error("recover interrupted application builds", "err", err)
+		return 1
+	}
 	if err := dep.Sync(ctx); err != nil {
 		if *caddyAdmin == "" {
 			log.Error("start embedded Caddy", "err", err)
@@ -265,6 +333,20 @@ func serve(args []string) int {
 	}()
 
 	go dep.KeepSynced(ctx, 5*time.Second)
+	go func() {
+		t := time.NewTicker(time.Minute)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				if err := dep.CleanupApps(ctx); err != nil {
+					log.Warn("application cleanup", "err", err)
+				}
+			}
+		}
+	}()
 
 	fmt.Fprintf(os.Stderr, `
 pierd is running

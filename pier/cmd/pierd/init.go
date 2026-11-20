@@ -40,16 +40,24 @@ func initCmd(args []string) int {
 	ctx, stop := signalContext()
 	defer stop()
 
-	if err := os.MkdirAll(*data, 0o755); err != nil {
+	if err := os.MkdirAll(*data, 0o700); err != nil {
 		fmt.Fprintln(os.Stderr, "pierd:", err)
 		return 1
 	}
+	defer chownDB(*data)
 	st, err := store.Open(layout(*data).db)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "pierd: open the database:", err)
 		return 1
 	}
-	defer st.Close()
+	closed := false
+	closeStore := func() {
+		if !closed {
+			closed = true
+			st.Close()
+		}
+	}
+	defer closeStore()
 	if owner, err := st.Owner(ctx); err == nil {
 		t.printf("Pier is already set up here, and %s is its owner.\n", owner.Email)
 		t.printf("  Forgot the password?  pierd reset-password\n")
@@ -90,6 +98,8 @@ func initCmd(args []string) int {
 	}
 	checkRecords(ctx, t, records(ip, addr, baseDomain))
 
+	closeStore()
+	chownDB(*data)
 	t.println()
 	startService(t, *data)
 	t.heading("Pier is ready.")
@@ -506,6 +516,7 @@ func resetPassword(args []string) int {
 		t.interactive = false
 	}
 	ctx := context.Background()
+	defer chownDB(*data)
 	st, err := store.Open(layout(*data).db)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "pierd: open the database:", err)
@@ -679,4 +690,29 @@ func addSwap(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func chownDB(data string) {
+	if os.Geteuid() != 0 {
+		return
+	}
+	uid, gid := dirOwner(data)
+	if uid == 0 && gid == 0 {
+		return
+	}
+	db := layout(data).db
+	for _, p := range []string{db, db + "-wal", db + "-shm"} {
+		_ = os.Chown(p, uid, gid)
+	}
+}
+
+func dirOwner(path string) (int, int) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return 0, 0
+	}
+	if st, ok := fi.Sys().(*syscall.Stat_t); ok {
+		return int(st.Uid), int(st.Gid)
+	}
+	return 0, 0
 }

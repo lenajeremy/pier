@@ -160,3 +160,40 @@ func TestLineWriter(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestDeployRejectsEscapingSymlink(t *testing.T) {
+	caddy, _ := fakeCaddy(t)
+	d := newDeployer(t, caddy)
+	ctx := context.Background()
+
+	// Build script creates a symlink inside dist/ pointing outside the checkout.
+	src := t.TempDir()
+	run := func(dir string, args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	run(src, "init", "-q", "-b", "main")
+	os.WriteFile(filepath.Join(src, "package.json"), []byte(`{"name":"evil","scripts":{"build":"mkdir -p dist && ln -s /etc/hosts dist/leak.txt && printf ok > dist/index.html"}}`), 0o644)
+	run(src, "add", ".")
+	run(src, "commit", "-q", "-m", "Add symlink build")
+	repo := d.RepoPath("evil")
+	run(d.Repos, "init", "-q", "--bare", repo)
+	run(src, "push", "-q", "-f", repo, "main")
+	commit := run(src, "rev-parse", "HEAD")
+
+	var log bytes.Buffer
+	if err := d.Deploy(ctx, "evil", "main", commit, &log); err == nil {
+		t.Fatalf("expected symlink escape to be rejected:\n%s", log.String())
+	}
+	ds, err := d.Store.Deployments(ctx, "evil")
+	if err != nil || len(ds) != 1 || ds[0].Status != store.Failed {
+		t.Fatalf("expected failed deployment record, got %+v, %v", ds, err)
+	}
+}

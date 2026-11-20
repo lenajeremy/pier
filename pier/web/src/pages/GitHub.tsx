@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import { api, type Build } from '../lib/api'
+import { api, changePreset, type Build } from '../lib/api'
 import { useData } from '../lib/data'
 import { Link, navigate } from '../lib/router'
 
@@ -100,11 +100,13 @@ function Configure({ repo, onCreated }: { repo: Repo; onCreated: () => void }) {
           <select
             className="input"
             value={build.preset}
-            onChange={(e) => setBuild({ ...build, preset: e.target.value as Build['preset'] })}
+            onChange={(e) => setBuild(changePreset(build, e.target.value as Build['preset']))}
           >
             <option value="">Detect automatically</option>
             <option value="static">Static HTML</option>
             <option value="vite">Vite</option>
+            <option value="server">Railpack web server</option>
+            <option value="dockerfile">Dockerfile</option>
           </select>
         </label>
         <div className="form-grid">
@@ -120,6 +122,7 @@ function Configure({ repo, onCreated }: { repo: Repo; onCreated: () => void }) {
               <span className="field-label">{label}</span>
               <input
                 className="input mono"
+                disabled={(build.preset === 'server' || build.preset === 'dockerfile') && (key === 'output' || key === 'install' || (key === 'command' && build.preset === 'dockerfile'))}
                 value={build[key]}
                 placeholder="Automatic"
                 onChange={(e) => setBuild({ ...build, [key]: e.target.value })}

@@ -9,7 +9,7 @@ The first slice, end to end:
 
 1. `git push pier <branch>` over SSH, with the developer's own key.
 2. pierd looks at the push (package.json and its framework, or plain HTML),
-   builds it in a throwaway Docker container, and keeps the output as a
+   builds the site and keeps its static files as a
    deployment that never changes.
 3. It points the branch's address at the new deployment (production for
    `main`), and reloads the router inside pierd.
@@ -31,6 +31,22 @@ And the start of the second slice:
 10. `pier deploy` uploads the folder (what git would keep, in a checkout) and
     narrates its build: a preview at its own address, or production with
     `--prod`. The folder remembers its project in `.pier/project.json`.
+
+## Preview builds
+
+The default `pierd serve -builder railpack-preview` uses Railpack v0.43.0 and Docker Buildx for new previews from Git, GitHub, and the CLI. Docker pulls the pinned Railpack frontend on first use. HTML previews export their static files directly through BuildKit. Node builds use Node 22, and projects with explicit build commands, package-manager hints, or a custom Pier image use those settings in the Railpack plan.
+
+Production static builds still use Pier’s existing Docker builder. Both builders publish static files to shared Caddy. Promoting a preview or rolling back switches the files served without rebuilding. Use `-builder docker` or `PIER_BUILDER=docker` to return new previews to the previous builder. BuildKit manages its own cache separately from the package cache shown on Pier’s Server screen.
+
+## HTTP applications
+
+Deploy an Express app with a `package.json` start script and no static entry point. The process should listen on `0.0.0.0` and `process.env.PORT`. For an app with both build and start scripts, such as server-rendered Next.js, select **Railpack web server** in the project’s build settings. Railpack supplies the image and its start command. Use `railpack.json` for provider-specific settings.
+
+Pier detects a `Dockerfile` in the selected project root and builds it directly. Specify the HTTP port with the project’s `PORT` variable, the image’s `PORT`, or a single TCP `EXPOSE`. The default is 8080. A Compose project can deploy an individual HTTP service by selecting a root with its own Dockerfile. Compose stacks and prebuilt registry image imports are outside this release.
+
+Use `pier deploy` for a preview or `pier deploy --prod` for production. Pier publishes one loopback port per container and forwards requests through Caddy. The startup probe accepts an HTTP response below 500 at `/` so an API can return 404 at its root. Set `PIER_HEALTH_PATH` to a readiness endpoint such as `/health` to require a 2xx or 3xx response. Pier also waits for any image-defined Docker health check. A failed startup leaves the previous deployment serving.
+
+Each retained server deployment runs its own container, including older versions with immutable URLs. Promotion and rollback point production at that deployment with the environment it received when it was built and started. Deploy with `--prod` to use production variables. Docker restarts the process on exit. Pier rediscovers current port bindings after a restart. Preview cleanup removes eligible containers, anonymous volumes and image tags. Treat container files as ephemeral across deployments. View process `stdout`/`stderr` in the deployment's **Runtime logs** panel or with `pier logs <project> --runtime` (`-f` to follow).
 
 ## Deploy from GitHub
 
@@ -72,15 +88,23 @@ pier logs docs --follow
 
 ## Linux installer
 
-From the repository root, run `make pier-web-deps` once, then `make pier-release ARCH=amd64` or `make pier-release ARCH=arm64`. Copy the matching archive from `pier/bin/releases` to the Linux machine. For example, on an ARM64 server with systemd, git and Docker Engine installed:
+To install or upgrade a VPS directly from this repository in one command (auto-detecting `amd64` vs `arm64`, uploading the bundle, installing `pierd.service`, and running `pierd init` on a fresh server):
+
+```sh
+./pier/scripts/vps-install.sh root@YOUR_VPS_IP
+# or: make pier-vps HOST=ubuntu@YOUR_VPS_IP
+```
+
+Once release tarballs are hosted on a URL or GitHub Releases, [install/get.sh](install/get.sh) supports `curl -fsSL <url> | sudo sh` (configured via `PIER_BASE_URL` or `PIER_REPO`).
+
+For manual installation from the repository root, run `make pier-web-deps` once, then `make pier-release ARCH=amd64` or `make pier-release ARCH=arm64`. Copy the matching archive from `pier/bin/releases` to the Linux machine. For example, on an ARM64 server with systemd, git, Docker Engine and the Buildx plugin installed:
 
 ```sh
 tar -xzf pier-linux-arm64.tar.gz
 cd pier-linux-arm64
 ./install.sh --check
 sudo ./install.sh
-sudo -u pier /usr/local/bin/pierd init
-sudo systemctl start pierd
+sudo /usr/local/bin/pierd init
 ```
 
 The installer verifies the bundle, creates the `pier` service account and gives it access to the local Docker engine. On apt-based systems it can install Docker with your confirmation. Running the installer again upgrades the binaries and restarts an active service. Pier stores its database, uploads, deployment files and keys under `/var/lib/pier`.
@@ -109,7 +133,7 @@ scripts/e2e.sh     the end-to-end check
 
 ## Developing
 
-You need Go, git, and Docker (OrbStack on a Mac).
+You need Go, git, and Docker with Buildx (OrbStack on a Mac).
 
 ```sh
 make pier-dev                      # pierd with embedded Caddy, data in pier/.data

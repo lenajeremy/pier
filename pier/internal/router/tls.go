@@ -47,7 +47,7 @@ func (c Caddy) tlsConfig(routes []Route) map[string]any {
 		switch {
 		case net.ParseIP(r.Host) != nil:
 			ips = append(ips, r.Host)
-		case r.Upstream == "" && strings.HasSuffix(r.Host, "."+c.BaseDomain):
+		case (r.Upstream == "" || r.DeploymentID != "") && strings.HasSuffix(r.Host, "."+c.BaseDomain):
 			generated = append(generated, r.Host)
 		default:
 			custom = append(custom, r.Host)

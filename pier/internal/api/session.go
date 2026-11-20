@@ -13,7 +13,19 @@ import (
 	"pier/internal/store"
 )
 
-const cookieName = "pier_session"
+const (
+	cookieName       = "pier_session"
+	secureCookieName = "__Host-pier_session"
+)
+
+func sessionCookie(r *http.Request) (*http.Cookie, error) {
+	if secure(r) {
+		if c, err := r.Cookie(secureCookieName); err == nil {
+			return c, nil
+		}
+	}
+	return r.Cookie(cookieName)
+}
 
 // lookupSession finds the user behind a session token and records that the
 // session was used. Sessions last 30 days from their last use.
@@ -40,10 +52,21 @@ func (a *API) lookupSession(ctx context.Context, token string, r *http.Request) 
 }
 
 func (a *API) setCookie(w http.ResponseWriter, r *http.Request, token string, maxAge int) {
+	isSecure := secure(r)
+	name := cookieName
+	if isSecure {
+		name = secureCookieName
+	}
 	http.SetCookie(w, &http.Cookie{
-		Name: cookieName, Value: token, Path: "/", MaxAge: maxAge,
-		HttpOnly: true, Secure: secure(r), SameSite: http.SameSiteLaxMode,
+		Name: name, Value: token, Path: "/", MaxAge: maxAge,
+		HttpOnly: true, Secure: isSecure, SameSite: http.SameSiteLaxMode,
 	})
+	if maxAge < 0 && isSecure {
+		http.SetCookie(w, &http.Cookie{
+			Name: cookieName, Value: "", Path: "/", MaxAge: -1,
+			HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode,
+		})
+	}
 }
 
 // refreshCookie keeps the browser's cookie in step with the session's 30 days.

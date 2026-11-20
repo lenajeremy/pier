@@ -182,7 +182,7 @@ function Preview({ d, url }: { d: Deployment; url?: string }) {
   }
   return (
     <a className="preview-box" href={url} target="_blank" rel="noreferrer" aria-label={`Open ${d.id}`}>
-      <iframe src={url} title={`Preview of ${d.id}`} tabIndex={-1} loading="lazy" sandbox="allow-scripts allow-same-origin" />
+      <iframe src={url} title={`Preview of ${d.id}`} tabIndex={-1} loading="lazy" sandbox="allow-scripts" />
     </a>
   )
 }
@@ -246,12 +246,13 @@ function Sections({ project, d }: { project: string; d: Deployment }) {
           <Log lines={lines} following={building} />
         </div>
       )}
+      {d.runtime && d.status === 'ready' && <RuntimeLogSection project={project} id={d.id} />}
       <div className="section-row" style={{ cursor: 'default', opacity: d.status === 'ready' ? 1 : 0.6 }}>
         <span style={{ width: 14 }} />
         <span className="title">Output</span>
         <span className="t-note">
           {d.status === 'ready'
-            ? `${plural(d.files, 'file')}, ${size(d.bytes)}${d.framework ? `, built with ${d.framework}` : ''}`
+            ? d.runtime ? `HTTP server · ${d.framework}` : `${plural(d.files, 'file')}, ${size(d.bytes)}${d.framework ? `, built with ${d.framework}` : ''}`
             : d.status === 'building'
               ? 'Waiting for the build'
               : 'Skipped'}
@@ -284,5 +285,76 @@ function Log({ lines, following }: { lines: LogLine[]; following: boolean }) {
         </div>
       ))}
     </div>
+  )
+}
+
+type RuntimeLine = { at?: string; stream: string; text: string }
+
+function RuntimeLogSection({ project, id }: { project: string; id: string }) {
+  const [open, setOpen] = useState(false)
+  const [lines, setLines] = useState<RuntimeLine[]>([])
+  const [err, setErr] = useState('')
+  const box = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    setLines([])
+    setErr('')
+  }, [id])
+
+  useEffect(() => {
+    if (!open) return
+    let stopped = false
+    let timer: number | undefined
+    const pull = async () => {
+      try {
+        const r = await api<{ lines: RuntimeLine[] }>(
+          `/api/projects/${encodeURIComponent(project)}/deployments/${encodeURIComponent(id)}/runtime-log?tail=200`,
+        )
+        if (stopped) return
+        setLines(r.lines)
+        setErr('')
+      } catch (e) {
+        if (!stopped) setErr(e instanceof ApiError ? e.message : "Can't reach pierd.")
+      }
+      if (!stopped) timer = window.setTimeout(pull, 2000)
+    }
+    pull()
+    return () => {
+      stopped = true
+      window.clearTimeout(timer)
+    }
+  }, [project, id, open])
+
+  useEffect(() => {
+    if (open && box.current) box.current.scrollTop = box.current.scrollHeight
+  }, [lines.length, open])
+
+  return (
+    <>
+      <button className={'section-row' + (open ? ' open' : '')} onClick={() => setOpen(!open)} aria-expanded={open}>
+        <I.Disclosure />
+        <span className="title">Runtime logs</span>
+        <span className="t-note">{lines.length ? plural(lines.length, 'line') : 'stdout and stderr'}</span>
+      </button>
+      {open && (
+        <div className="section-body">
+          {err ? (
+            <div className="log-empty">{err}</div>
+          ) : lines.length === 0 ? (
+            <div className="log-empty">No container output yet.</div>
+          ) : (
+            <div className="log" ref={box}>
+              {lines.map((l, i) => (
+                <div key={i} className={'line' + (l.stream === 'stderr' ? ' error' : '')}>
+                  <span className="time">{l.at ? l.at.slice(11, 19) : ''}</span>
+                  <span className={'tag ' + (l.stream === 'stderr' ? 'build' : 'pier')}>{l.stream}</span>
+                  <span className="text">{l.text}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </>
   )
 }

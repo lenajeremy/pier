@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { api, ApiError, type Build, type Settings } from '../lib/api'
+import { api, ApiError, changePreset, type Build, type Settings } from '../lib/api'
 import { useData } from '../lib/data'
 import { Info } from '../components/Icons'
 
@@ -23,9 +23,10 @@ export function ProjectSettings({ project }: { project: string }) {
   if (error) return <main className="main"><span className="t-note">{error.message}</span></main>
   if (!data) return <div className="loading">Loading settings…</div>
 
+  const server = b.preset === 'dockerfile' || b.preset === 'server'
   const plan = data.last_build_plan
   const set = (k: keyof Build) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-    setB({ ...b, [k]: e.target.value })
+    setB(k === 'preset' ? changePreset(b, e.target.value as Build['preset']) : { ...b, [k]: e.target.value })
     setState({})
   }
   const save = async (e: FormEvent) => {
@@ -62,7 +63,7 @@ export function ProjectSettings({ project }: { project: string }) {
                 <>
                   <span className="t-small t-strong">Pier works out how to build on every deploy</span>
                   <span className="t-caption t-muted">
-                    It looks for package.json and its framework, or an index.html. Fill in a field to override what it finds.
+                    Pier checks the project root for a Dockerfile, a Node application, or static files.
                   </span>
                 </>
               )}
@@ -75,27 +76,29 @@ export function ProjectSettings({ project }: { project: string }) {
                 <option value="">Detect it</option>
                 <option value="static">Static HTML</option>
                 <option value="vite">Vite</option>
+                <option value="server">Railpack web server</option>
+                <option value="dockerfile">Dockerfile</option>
               </select>
-              <span className="t-note">Static HTML and Vite for now. Next.js and Node servers are coming.</span>
+              <span className="t-note">Choose Railpack web server for a server-rendered app.</span>
             </label>
             <label className={field('root')}>
               <span className="field-label">Root directory</span>
               <input className="input mono" placeholder="./" value={b.root} onChange={set('root')} spellCheck={false} />
-              <span className="t-note">Where package.json is. Change it for a monorepo.</span>
+              <span className="t-note">The directory containing the app or Dockerfile.</span>
             </label>
             <label className={field('output')}>
               <span className="field-label">Output folder</span>
-              <input className="input mono" placeholder={plan?.output || 'dist'} value={b.output} onChange={set('output')} spellCheck={false} />
-              <span className="t-note">The folder Pier serves.</span>
+              <input className="input mono" disabled={server} placeholder={plan?.output || 'dist'} value={b.output} onChange={set('output')} spellCheck={false} />
+              <span className="t-note">Applies to static sites.</span>
             </label>
             <label className={field('install')}>
               <span className="field-label">Install command</span>
-              <input className="input mono" placeholder={plan ? plan.install || 'none' : 'npm ci'} value={b.install} onChange={set('install')} spellCheck={false} />
+              <input className="input mono" disabled={server} placeholder={plan ? plan.install || 'none' : 'npm ci'} value={b.install} onChange={set('install')} spellCheck={false} />
               <span className="t-note">Picked from the lockfile.</span>
             </label>
             <label className={field('command')}>
               <span className="field-label">Build command</span>
-              <input className="input mono" placeholder={plan ? plan.build || 'none' : 'npm run build'} value={b.command} onChange={set('command')} spellCheck={false} />
+              <input className="input mono" disabled={b.preset === 'dockerfile'} placeholder={plan ? plan.build || 'none' : 'npm run build'} value={b.command} onChange={set('command')} spellCheck={false} />
               <span className="t-note">The build script in package.json.</span>
             </label>
             <label className={field('production_branch')}>
@@ -127,6 +130,7 @@ export function ProjectSettings({ project }: { project: string }) {
 }
 
 function steps(plan: Record<string, string>): string {
+  if (plan.runtime) return 'The image supplies the start command.'
   const ran = [plan.install, plan.build].filter(Boolean)
   const where = plan.root && plan.root !== '.' ? ` in ${plan.root}/` : ''
   const serve = `served ${plan.output === '.' ? 'the folder itself' : plan.output + '/'}`

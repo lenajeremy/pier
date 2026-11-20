@@ -4,12 +4,13 @@
 # Starts pierd with embedded Caddy on this machine with a throwaway data folder and SSH
 # key, pushes a plain HTML project and a Vite project, and checks that each
 # one answers at its address. Needs git and (for the Docker builder)
-# a running Docker. Usage: scripts/e2e.sh [docker|local]
+# a running Docker with Buildx. Usage: scripts/e2e.sh [railpack-preview|docker|local]
 set -euo pipefail
 
-BUILDER=${1:-docker}
+BUILDER=${1:-railpack-preview}
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-WORK=$(mktemp -d "${TMPDIR:-/tmp}/pier-e2e.XXXXXX")
+tempbase=${TMPDIR:-/tmp}
+WORK=$(mktemp -d "${tempbase%/}/pier-e2e.XXXXXX")
 DATA=$WORK/data
 DOMAIN=pier.localhost
 HTTP_PORT=18088 SSH_PORT=12222 API_PORT=17777
@@ -18,6 +19,13 @@ PIERD_PID=
 cleanup() {
 	if [[ -n $PIERD_PID ]]; then kill "$PIERD_PID" 2>/dev/null || true; fi
 	wait 2>/dev/null || true
+	if [[ ${BUILDER:-} == railpack-preview ]]; then
+		owner=pier-$(printf '%s' "$DATA" | shasum -a 256 | cut -c1-16)
+		for app in $(docker ps -a --filter "label=io.pier.instance=$owner" --format '{{.Names}}'); do
+			docker rm -fv "$app" >/dev/null && docker image rm "$app:app" >/dev/null || true
+		done
+		docker network rm "$owner" >/dev/null 2>&1 || true
+	fi
 	if [[ ${KEEP:-} == 1 ]]; then echo "kept $WORK"; else rm -rf "$WORK"; fi
 }
 trap cleanup EXIT
@@ -98,6 +106,24 @@ fetch_any() { curl -s --max-time 5 --resolve "$1:$HTTP_PORT:127.0.0.1" "http://$
 fetch_any docs.$DOMAIN /nowhere | grep -q "wandered off" || fail "the site's own 404.html wasn't served"
 fetch docs.$DOMAIN /guide | grep -q "Install guide" || fail "a 404.html broke clean URLs"
 echo "app routes, 404 pages and plain 404s all answer as they should"
+
+if [[ $BUILDER == railpack-preview ]]; then
+	step "compare Railpack previews with production builds of the same commits"
+	push "$WORK/docs" docs candidate
+	grep -q "using Railpack" "$WORK/push-docs-candidate.log" || fail "HTML preview missed Railpack"
+	[[ $(fetch candidate--docs.$DOMAIN /guide) == "$(fetch docs.$DOMAIN /guide)" ]] || fail "HTML differs between builders"
+	[[ $(status candidate--docs.$DOMAIN /nowhere) == 404 ]] || fail "HTML preview lost its 404 status"
+	[[ $(fetch_any candidate--docs.$DOMAIN /nowhere) == "$(fetch_any docs.$DOMAIN /nowhere)" ]] || fail "custom 404 differs"
+	push "$WORK/blog" blog main
+	grep -q "using Railpack" "$WORK/push-blog-feat-search.log" || fail "Vite preview missed Railpack"
+	if grep -q "using Railpack" "$WORK/push-blog-main.log"; then fail "production used the preview builder"; fi
+	[[ $(fetch feat-search--blog.$DOMAIN /settings/profile) == "$(fetch blog.$DOMAIN /settings/profile)" ]] || fail "Vite route differs"
+	asset=$(fetch blog.$DOMAIN / | sed -n 's|.*src="\(/assets/[^"]*\)".*|\1|p')
+	[[ -n $asset ]] || fail "the Vite build has no JS asset"
+	fetch blog.$DOMAIN "$asset" > "$WORK/production.js"
+	fetch feat-search--blog.$DOMAIN "$asset" > "$WORK/preview.js"
+	cmp "$WORK/production.js" "$WORK/preview.js" || fail "Vite asset differs"
+fi
 
 step "a push that can't build leaves the address serving"
 cd "$WORK/docs"
@@ -187,6 +213,21 @@ fetch site.$DOMAIN / | grep -q "From the web folder" || fail "undo didn't restor
 PREVIEW_ID=$(echo "$PREVIEW" | sed 's/^site-\([0-9a-f]*\)\..*/\1/')
 "$PIER" promote "$PREVIEW_ID" > /dev/null || fail "pier promote failed"
 fetch site.$DOMAIN / | grep -q "Version two" || fail "promote didn't move production to the preview"
+if [[ $BUILDER == railpack-preview ]]; then
+	"$PIER" rollback > /dev/null || fail "rollback after promoting a Railpack preview failed"
+	fetch site.$DOMAIN / | grep -q "Version one" || fail "rollback across builders served the wrong version"
+	"$PIER" rollback --undo > /dev/null || fail "undo after cross-builder rollback failed"
+	fetch site.$DOMAIN / | grep -q "Version two" || fail "undo lost the promoted Railpack preview"
+	step "preview honors a project root, explicit commands and a nested output folder"
+	curl -fsS -b "$JAR" -H 'X-Pier: 1' -X PUT --data-binary @- "$API/api/projects/site/settings" > /dev/null <<'JSON'
+{"build":{"root":"web","install":"mkdir -p .deps && printf '%s' installed > .deps/proof","command":"mkdir -p publish/site && cp index.html publish/site/index.html && cp .deps/proof publish/site/proof.txt","output":"publish/site"}}
+JSON
+	"$PIER" deploy > "$WORK/custom-preview.log" || { cat "$WORK/custom-preview.log"; fail "custom Railpack preview failed"; }
+	custom_host=$(sed -n 's|.*alias   http://\(site-[0-9a-f]*\.[a-z.]*\):.*|\1|p' "$WORK/custom-preview.log" | tail -1)
+	[[ $(fetch "$custom_host" /proof.txt) == installed ]] || fail "custom install or output folder was ignored"
+	[[ $(status "$custom_host" /.deps/proof) == 404 ]] || fail "files outside the publish directory were served"
+
+fi
 cd "$WORK"
 echo "rollback, undo and promote move production without rebuilding"
 
@@ -216,6 +257,8 @@ fetch greet.$DOMAIN / | grep -q "hello again" || fail "the redeploy didn't pick 
 curl -fsS -b "$JAR" "$API/api/projects/greet/variables" | grep -q '"production":false' || fail "production still looks out of date after the redeploy"
 cd "$WORK"
 echo "variables are scoped, kept out of the log, and a redeploy picks up a change"
+
+if [[ $BUILDER == railpack-preview ]]; then source "$ROOT/scripts/e2e-apps.sh"; fi
 
 step "every request a site answers is in its Logs"
 for p in / /missing-page; do curl -s -o /dev/null --resolve "greet.$DOMAIN:$HTTP_PORT:127.0.0.1" "http://greet.$DOMAIN:$HTTP_PORT$p"; done

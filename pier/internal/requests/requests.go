@@ -208,8 +208,19 @@ func (l *Log) Flush(ctx context.Context) error {
 	if len(batch) == 0 {
 		return nil
 	}
+	requeue := func() {
+		const maxPending = 10_000
+		l.mu.Lock()
+		merged := append(batch, l.pending...)
+		if len(merged) > maxPending {
+			merged = merged[len(merged)-maxPending:]
+		}
+		l.pending = merged
+		l.mu.Unlock()
+	}
 	tx, err := l.db.BeginTx(ctx, nil)
 	if err != nil {
+		requeue()
 		return err
 	}
 	defer tx.Rollback()
@@ -217,6 +228,7 @@ func (l *Log) Flush(ctx context.Context) error {
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO requests(project, deployment, ts, method, path, status, ms, bytes) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
 			r.Project, r.Deployment, r.At, r.Method, r.Path, r.Status, r.MS, r.Bytes); err != nil {
+			requeue()
 			return err
 		}
 		e4, e5 := 0, 0
@@ -230,10 +242,15 @@ func (l *Log) Flush(ctx context.Context) error {
 			INSERT INTO hours(project, hour, requests, e4xx, e5xx) VALUES(?, ?, 1, ?, ?)
 			ON CONFLICT(project, hour) DO UPDATE SET requests = requests + 1, e4xx = e4xx + excluded.e4xx, e5xx = e5xx + excluded.e5xx`,
 			r.Project, hour, e4, e5); err != nil {
+			requeue()
 			return err
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		requeue()
+		return err
+	}
+	return nil
 }
 
 func (l *Log) cleanUp(ctx context.Context) {
@@ -380,7 +397,11 @@ func (l *Log) Chart(ctx context.Context, project string, from, to int64, status,
 		if err := rows.Scan(&at, &count, &e4, &e5); err != nil {
 			return nil, step, err
 		}
-		b := &buckets[(at-start)/step]
+		idx := int((at - start) / step)
+		if idx < 0 || idx >= len(buckets) {
+			continue
+		}
+		b := &buckets[idx]
 		b.Requests += count
 		b.Errors += e4 + e5
 		b.E4xx += e4

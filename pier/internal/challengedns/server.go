@@ -46,9 +46,19 @@ func Start(base, ns, addr string) (*Server, error) {
 	s.servers = []*dns.Server{{Listener: tcp, Handler: s}, {PacketConn: udp, Handler: s}}
 	for _, srv := range s.servers {
 		ready := make(chan struct{})
+		errCh := make(chan error, 1)
 		srv.NotifyStartedFunc = func() { close(ready) }
-		go srv.ActivateAndServe()
-		<-ready
+		go func(srv *dns.Server) {
+			if err := srv.ActivateAndServe(); err != nil {
+				errCh <- err
+			}
+		}(srv)
+		select {
+		case <-ready:
+		case err := <-errCh:
+			s.Close()
+			return nil, err
+		}
 	}
 	return s, nil
 }
@@ -64,7 +74,7 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, req *dns.Msg) {
 	m := new(dns.Msg)
 	m.SetReply(req)
 	if opt := req.IsEdns0(); opt != nil {
-		m.SetEdns0(min(opt.UDPSize(), 1232), opt.Do())
+		m.SetEdns0(max(min(opt.UDPSize(), 1232), dns.MinMsgSize), opt.Do())
 	}
 	if req.Opcode != dns.OpcodeQuery || len(req.Question) != 1 || req.Question[0].Qclass != dns.ClassINET || !strings.EqualFold(req.Question[0].Name, s.zone) {
 		m.Rcode = dns.RcodeRefused
@@ -102,7 +112,7 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, req *dns.Msg) {
 	if w.LocalAddr().Network() == "udp" {
 		size := dns.MinMsgSize
 		if opt := m.IsEdns0(); opt != nil {
-			size = int(opt.UDPSize())
+			size = max(int(opt.UDPSize()), dns.MinMsgSize)
 		}
 		m.Truncate(size)
 	}

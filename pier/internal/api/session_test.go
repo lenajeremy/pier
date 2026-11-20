@@ -139,3 +139,30 @@ func TestBrowserName(t *testing.T) {
 		t.Errorf("got %q", got)
 	}
 }
+
+func TestSecureCookieAndHSTS(t *testing.T) {
+	srv, _ := newServer(t)
+	req, _ := http.NewRequest("POST", srv.URL+"/api/session", strings.NewReader(`{"email":"owner@example.com","password":"correct horse battery"}`))
+	req.Header.Set("X-Pier", "1")
+	req.Header.Set("X-Forwarded-Proto", "https")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("got %d", resp.StatusCode)
+	}
+	if resp.Header.Get("Strict-Transport-Security") == "" {
+		t.Fatal("missing HSTS header on HTTPS request")
+	}
+	var found bool
+	for _, c := range resp.Cookies() {
+		if c.Name == secureCookieName && c.Secure && c.HttpOnly {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected %s cookie on HTTPS, got %+v", secureCookieName, resp.Cookies())
+	}
+}

@@ -12,7 +12,7 @@ import (
 	"strings"
 )
 
-// Plan says how to turn a checkout into static files.
+// Plan describes a static build or an HTTP application image.
 type Plan struct {
 	// Label names what was found, for the log: "astro 4.16", "Static HTML".
 	Label string
@@ -26,6 +26,7 @@ type Plan struct {
 	Output string
 	// Tooling says which package manager version runs, and why.
 	Tooling string
+	Runtime string // server or dockerfile for an HTTP process
 }
 
 // ErrNothingToServe means the push has nothing Pier knows how to serve yet.
@@ -52,6 +53,13 @@ func Detect(dir string) (Plan, error) { return DetectWith(dir, "") }
 
 // DetectWith is Detect with a hint of the package manager the developer uses.
 func DetectWith(dir, tools string) (Plan, error) {
+	if fi, err := os.Stat(filepath.Join(dir, "Dockerfile")); err == nil && fi.Mode().IsRegular() {
+		return Plan{Label: "Dockerfile", Source: "Dockerfile", Runtime: "dockerfile"}, nil
+	}
+	return detectPackage(dir, tools)
+}
+
+func detectPackage(dir, tools string) (Plan, error) {
 	raw, err := os.ReadFile(filepath.Join(dir, "package.json"))
 	if errors.Is(err, os.ErrNotExist) {
 		return detectStatic(dir)
@@ -67,7 +75,10 @@ func DetectWith(dir, tools string) (Plan, error) {
 		if p, err := detectStatic(dir); err == nil {
 			return p, nil
 		}
-		return Plan{}, errors.New(`package.json has no "build" script`)
+		if pkg.Scripts["start"] != "" {
+			return Plan{Label: "Railpack server", Source: "package.json", Runtime: "server"}, nil
+		}
+		return Plan{}, errors.New(`package.json has no "build" or "start" script`)
 	}
 
 	p := Plan{Label: "node build", Source: "package.json", Output: "dist"}
@@ -131,7 +142,7 @@ func isNum(s string) bool {
 }
 
 // Overrides are the owner's build settings. Empty fields keep what Pier
-// detects; Preset forces one ("static" or "vite").
+// detects. Preset selects an explicit static or server build.
 type Overrides struct {
 	Root, Preset, Install, Build, Output string
 }
@@ -140,7 +151,7 @@ type Overrides struct {
 func (o Overrides) Empty() bool { return o == Overrides{} }
 
 // Presets Pier knows how to build today.
-var Presets = []string{"static", "vite"}
+var Presets = []string{"static", "vite", "server", "dockerfile"}
 
 // PlanFor works out how to build dir with the owner's overrides: it detects
 // in the root folder, or uses the forced preset, then applies any command or
@@ -156,6 +167,10 @@ func PlanFor(dir string, o Overrides, tools string) (Plan, string, error) {
 	}
 	var p Plan
 	switch o.Preset {
+	case "server":
+		p = Plan{Label: "Railpack server", Source: "your settings", Runtime: "server"}
+	case "dockerfile":
+		p = Plan{Label: "Dockerfile", Source: "Dockerfile", Runtime: "dockerfile"}
 	case "static":
 		p, err = detectStatic(at)
 		if err != nil {
@@ -166,7 +181,11 @@ func PlanFor(dir string, o Overrides, tools string) (Plan, string, error) {
 		p = Plan{Label: "vite", Source: "your settings", Output: "dist"}
 		p.Install, p.Build, p.Tooling = commands(at, tools)
 	case "":
-		p, err = DetectWith(at, tools)
+		if o.Output != "" || o.Install != "" || o.Build != "" {
+			p, err = detectPackage(at, tools)
+		} else {
+			p, err = DetectWith(at, tools)
+		}
 		if err != nil && o.Build != "" {
 			// Nothing detected, but the owner says how to build it.
 			p, err = Plan{Label: "your build", Source: "your settings", Output: "dist"}, nil
@@ -176,6 +195,13 @@ func PlanFor(dir string, o Overrides, tools string) (Plan, string, error) {
 	}
 	if err != nil {
 		return Plan{}, "", err
+	}
+	if p.Runtime != "" {
+		if o.Output != "" || o.Install != "" || p.Runtime == "dockerfile" && o.Build != "" {
+			return Plan{}, "", errors.New("server builds use the image start command; configure install and output in railpack.json or Dockerfile, or select a static preset")
+		}
+		p.Build = o.Build
+		return p, root, nil
 	}
 	if o.Install != "" {
 		p.Install = o.Install

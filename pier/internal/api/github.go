@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -239,7 +240,7 @@ func (a *API) ghImport(w http.ResponseWriter, r *http.Request) {
 		githubError(w, 400, "Choose an output folder inside the project.")
 		return
 	}
-	if req.Build.Preset != "" && req.Build.Preset != "vite" && req.Build.Preset != "static" {
+	if req.Build.Preset != "" && !slices.Contains(build.Presets, req.Build.Preset) {
 		githubError(w, 400, "Choose a supported build preset.")
 		return
 	}
@@ -289,15 +290,21 @@ func (a *API) ghEvent(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, err)
 		return
 	}
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 25<<20))
+	rawSig, ok := strings.CutPrefix(r.Header.Get("X-Hub-Signature-256"), "sha256=")
+	sig, decErr := hex.DecodeString(rawSig)
+	if app.Secret == "" || !ok || decErr != nil || len(sig) != sha256.Size {
+		githubError(w, 401, "Invalid delivery signature.")
+		return
+	}
+	_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(10 * time.Second))
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 5<<20))
 	if err != nil {
 		githubError(w, 413, "Delivery too large.")
 		return
 	}
 	mac := hmac.New(sha256.New, []byte(app.Secret))
 	mac.Write(body)
-	sig, _ := hex.DecodeString(strings.TrimPrefix(r.Header.Get("X-Hub-Signature-256"), "sha256="))
-	if app.Secret == "" || !strings.HasPrefix(r.Header.Get("X-Hub-Signature-256"), "sha256=") || !hmac.Equal(sig, mac.Sum(nil)) {
+	if !hmac.Equal(sig, mac.Sum(nil)) {
 		githubError(w, 401, "Invalid delivery signature.")
 		return
 	}

@@ -18,8 +18,26 @@ import (
 
 var varName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,255}$`)
 
-// reservedVar names are set by Pier for every build, or would break it.
-var reservedVar = map[string]bool{"PATH": true, "HOME": true, "CI": true, "PWD": true}
+// reservedVar names are set by Pier for every build, or would break host tooling.
+var reservedVar = map[string]bool{
+	"PATH": true, "HOME": true, "CI": true, "PWD": true,
+	"NO_COLOR": true, "FORCE_COLOR": true, "YARN_CACHE_FOLDER": true, "PNPM_HOME": true,
+	"NODE_OPTIONS": true, "GODEBUG": true,
+	"HTTP_PROXY": true, "HTTPS_PROXY": true, "ALL_PROXY": true, "NO_PROXY": true,
+	"http_proxy": true, "https_proxy": true, "all_proxy": true, "no_proxy": true,
+}
+
+func isReservedVar(name string) bool {
+	if reservedVar[name] {
+		return true
+	}
+	for _, prefix := range []string{"npm_config_", "COREPACK_", "DOCKER_", "LD_", "DYLD_"} {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
+}
 
 // MaxValue is the longest a variable's value may be.
 const MaxValue = 64 << 10
@@ -141,8 +159,8 @@ func readVar(w http.ResponseWriter, r *http.Request, needValue bool) (varRequest
 	case !varName.MatchString(req.Name):
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "Use letters, numbers and underscores, starting with a letter, like API_URL.", "field": "name"})
 		return req, false
-	case reservedVar[req.Name] || strings.HasPrefix(req.Name, "npm_config_") || strings.HasPrefix(req.Name, "COREPACK_"):
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": req.Name + " is set by Pier for every build. Choose another name.", "field": "name"})
+	case isReservedVar(req.Name):
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": req.Name + " is reserved by Pier for builds. Choose another name.", "field": "name"})
 		return req, false
 	case needValue && len(req.Value) > MaxValue:
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "Values can be up to 64 KB.", "field": "value"})
