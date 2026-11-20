@@ -1,144 +1,234 @@
-import { useState, type FormEvent } from 'react'
-import { api, changePreset, type Build } from '../lib/api'
-import { useData } from '../lib/data'
+import { useMemo, useState, type FormEvent } from 'react'
+import { api, ApiError, type Build, type Session } from '../lib/api'
+import { useData, useNow } from '../lib/data'
 import { Link, navigate } from '../lib/router'
+import { BuildFields } from '../components/BuildFields'
+import { ChevronRight, GitHubMark, Visit } from '../components/Icons'
+import { Paging, Problem, SearchField, Skeleton, usePaged } from '../components/ui'
+import { RepoTable, type Repo as Listed } from './Integrations'
 
-type Repo = {
-  id: number
-  full_name: string
-  default_branch: string
-  private: boolean
-  installation: number
-  project?: string
-}
-const message = (e: unknown) => (e instanceof Error ? e.message : 'Could not reach Pier.')
-const githubPage = '/api/github'
+type Repo = Listed & { default_branch: string; installation: number }
+type Catalog = { repositories: Repo[]; installations?: { html_url: string }[] }
 const defaults: Build = { root: '', preset: '', install: '', command: '', output: '' }
+const PAGE = 10
 
+// GitHubRepos is the Import from GitHub panel of D1: the repos the App can
+// read, each one import away from being a project.
 export function GitHubRepos() {
-  const { data, error } = useData<{ repositories: Repo[] }>(githubPage + '/repositories')
-  if (error) return <span role="alert">{error.message}</span>
-  if (!data) return <span className="t-note">Loading repositories…</span>
-  if (!data.repositories.length)
-    return (
-      <span className="t-caption">
-        Install the App on the repositories you want to deploy. <Link to="/integrations">GitHub settings</Link>
-      </span>
-    )
+  const info = useData<{ slug: string }>('/api/github')
+  const { data, error } = useData<Catalog>(info.data?.slug ? '/api/github/repositories' : null)
+  const now = useNow()
+  const [query, setQuery] = useState('')
+  const repos = data?.repositories ?? []
+  const shown = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    return repos.filter((r) => !q || r.full_name.toLowerCase().includes(q))
+  }, [repos, query])
+  const paged = usePaged(shown, PAGE, query)
+  const owners = new Set(repos.map((r) => r.full_name.split('/')[0])).size > 1
+  const connected = !!info.data?.slug
+
   return (
-    <div>
-      {data.repositories.map((r) => (
-        <div className="github-row" key={r.id}>
-          <span className="t-caption">
-            {r.full_name} <span className="t-note">{r.private ? 'Private' : 'Public'}</span>
+    <div className="stack">
+      <div className="toolbar">
+        <div className="title">
+          <GitHubMark />
+          <h2 className="t-small t-strong">Import from GitHub</h2>
+          {repos.length > 0 && <span className="count">{repos.length}</span>}
+        </div>
+        {repos.length > PAGE && <SearchField value={query} onChange={setQuery} placeholder="Search repos" hotkey="/" />}
+        {connected && repos.length > 0 && (
+          <Link className="btn quiet visit" to="/integrations">
+            Choose repos
+            <Visit />
+          </Link>
+        )}
+      </div>
+      {info.error || error ? (
+        <Problem>{(info.error ?? error)!.message}</Problem>
+      ) : !info.data || (connected && !data) ? (
+        <div className="panel">
+          <Skeleton rows={3} />
+        </div>
+      ) : !connected ? (
+        <div className="empty">
+          <span className="t-small t-strong">GitHub isn't connected yet</span>
+          <span className="t-caption t-muted" style={{ maxWidth: 480 }}>
+            Connect it once, pick the repos Pier can read, and every push to them deploys. Pull requests get their own preview
+            address.
           </span>
-          <Link className="btn quiet" to={r.project ? '/projects/' + r.project : '/new/github/' + r.id}>
-            {r.project ? 'View project' : 'Import'}
+          <Link className="btn primary" to="/integrations">
+            Connect GitHub
           </Link>
         </div>
-      ))}
+      ) : repos.length === 0 ? (
+        <div className="empty">
+          <span className="t-small t-strong">Pier can't see any repos yet</span>
+          <span className="t-caption t-muted" style={{ maxWidth: 480 }}>
+            On GitHub, install the App and choose which repos it can read. They show up here, ready to import.
+          </span>
+          <Link className="btn primary" to="/integrations">
+            Choose repos
+          </Link>
+        </div>
+      ) : (
+        <RepoTable repos={paged.shown} owners={owners} now={now} query={shown.length === 0 ? query : ''} onClear={() => setQuery('')} />
+      )}
+      <Paging paged={paged} noun="repo" />
     </div>
   )
 }
 
-export function GitHubImport({ id, onCreated }: { id: string; onCreated: () => void }) {
-  const { data, error } = useData<{ repositories: Repo[] }>(githubPage + '/repositories')
+// GitHubImport is D2: a repo's name, branch and build, before its first deploy.
+export function GitHubImport({ id, session, onCreated }: { id: string; session: Session; onCreated: () => void }) {
+  const { data, error } = useData<Catalog>('/api/github/repositories')
   const repo = data?.repositories.find((r) => String(r.id) === id)
-  if (error)
+  if (error) {
     return (
-      <main className="main">
-        <p role="alert">{error.message}</p>
+      <main className="main global">
+        <Problem>{error.message}</Problem>
       </main>
     )
-  if (!repo) return <main className="main">{data ? 'This repository is unavailable.' : 'Loading repository…'}</main>
-  return <Configure key={id} repo={repo} onCreated={onCreated} />
+  }
+  if (!data) {
+    return (
+      <main className="main global">
+        <div className="panel">
+          <Skeleton rows={4} tall />
+        </div>
+      </main>
+    )
+  }
+  if (!repo) {
+    return (
+      <main className="main global">
+        <div className="empty">
+          <span className="t-small t-strong">Pier can't see that repo</span>
+          <span className="t-caption t-muted" style={{ maxWidth: 480 }}>
+            It may have been removed from the App's repos, or renamed. Pick one from the list instead.
+          </span>
+          <Link className="btn quiet" to="/new">
+            Back to New project
+          </Link>
+        </div>
+      </main>
+    )
+  }
+  return <Configure key={id} repo={repo} session={session} onCreated={onCreated} />
 }
-function Configure({ repo, onCreated }: { repo: Repo; onCreated: () => void }) {
-  const [name, setName] = useState(
-    repo.full_name
-      .split('/')[1]
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .slice(0, 39)
-      .replace(/^-|-$/g, ''),
-  )
+
+const slug = (s: string) =>
+  s
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .slice(0, 39)
+    .replace(/^-|-$/g, '')
+
+function Configure({ repo, session, onCreated }: { repo: Repo; session: Session; onCreated: () => void }) {
+  const [name, setName] = useState(slug(repo.full_name.split('/')[1]))
   const [branch, setBranch] = useState(repo.default_branch)
   const [build, setBuild] = useState<Build>(defaults)
-  const [error, setError] = useState('')
+  const [problem, setProblem] = useState<{ error?: string; field?: string }>({})
   const [busy, setBusy] = useState(false)
+  const domain = session.server.domain
+
   async function submit(e: FormEvent) {
     e.preventDefault()
     setBusy(true)
-    setError('')
+    setProblem({})
     try {
-      await api(githubPage + '/import', {
+      await api('/api/github/import', {
         method: 'POST',
         body: JSON.stringify({ name, branch, build, repo: repo.id, installation: repo.installation }),
       })
       onCreated()
       navigate('/projects/' + name)
-    } catch (e) {
-      setError(message(e))
+    } catch (err) {
+      setProblem(err instanceof ApiError ? { error: err.message, field: String(err.body.field ?? '') } : { error: "Can't reach pierd." })
       setBusy(false)
     }
   }
+  const bad = (k: string) => problem.field === k
   return (
     <main className="main global">
-      <h1 className="t-title">Configure {repo.full_name}</h1>
-      <form className="panel form-panel github-fields" onSubmit={submit}>
-        <label className="field">
-          <span className="field-label">Project name</span>
-          <input className="input" value={name} onChange={(e) => setName(e.target.value)} required />
-        </label>
-        <label className="field">
-          <span className="field-label">Production branch</span>
-          <input className="input mono" value={branch} onChange={(e) => setBranch(e.target.value)} required />
-        </label>
-        <h2 className="t-small">Build</h2>
-        <label className="field">
-          <span className="field-label">Preset</span>
-          <select
-            className="input"
-            value={build.preset}
-            onChange={(e) => setBuild(changePreset(build, e.target.value as Build['preset']))}
-          >
-            <option value="">Detect automatically</option>
-            <option value="static">Static HTML</option>
-            <option value="vite">Vite</option>
-            <option value="server">Railpack web server</option>
-            <option value="dockerfile">Dockerfile</option>
-          </select>
-        </label>
-        <div className="form-grid">
-          {(
-            [
-              ['root', 'Root directory'],
-              ['install', 'Install command'],
-              ['command', 'Build command'],
-              ['output', 'Output folder'],
-            ] as const
-          ).map(([key, label]) => (
-            <label className="field" key={key}>
-              <span className="field-label">{label}</span>
+      <nav className="breadcrumb" aria-label="Breadcrumb">
+        <Link to="/">Projects</Link>
+        <ChevronRight />
+        <Link to="/new">New project</Link>
+        <ChevronRight />
+        <span className="mono" style={{ color: 'var(--d-text)' }}>
+          {name || repo.full_name.split('/')[1]}
+        </span>
+      </nav>
+      <header className="page-heading">
+        <div>
+          <h1 className="t-title">Configure {name || 'the project'}</h1>
+          <p className="t-caption t-muted repo-line">
+            <GitHubMark size={15} />
+            <span className="mono">{repo.full_name}</span>
+          </p>
+        </div>
+      </header>
+      <form className="settings" onSubmit={submit} noValidate>
+        <section className="panel form-panel">
+          <h2 className="t-small t-strong">Project</h2>
+          <div className="form-grid two">
+            <label className={'field' + (bad('name') ? ' error' : '')}>
+              <span className="field-label">Project name</span>
               <input
                 className="input mono"
-                disabled={(build.preset === 'server' || build.preset === 'dockerfile') && (key === 'output' || key === 'install' || (key === 'command' && build.preset === 'dockerfile'))}
-                value={build[key]}
-                placeholder="Automatic"
-                onChange={(e) => setBuild({ ...build, [key]: e.target.value })}
+                value={name}
+                spellCheck={false}
+                autoCapitalize="off"
+                onChange={(e) => {
+                  setName(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '-'))
+                  setProblem({})
+                }}
               />
+              {bad('name') ? (
+                <span className="field-message" role="alert">
+                  {problem.error}
+                </span>
+              ) : (
+                <span className="t-note">
+                  It lives at {name || 'my-site'}.{domain}.
+                </span>
+              )}
             </label>
-          ))}
-        </div>
-        {error && (
-          <span role="alert" className="field-message">
-            {error}
-          </span>
-        )}
-        <div>
-          <button disabled={busy} className="btn primary">
-            {busy ? 'Importing…' : 'Deploy ' + name}
+            <label className={'field' + (bad('branch') ? ' error' : '')}>
+              <span className="field-label">Production branch</span>
+              <input
+                className="input mono"
+                value={branch}
+                spellCheck={false}
+                autoCapitalize="off"
+                onChange={(e) => {
+                  setBranch(e.target.value)
+                  setProblem({})
+                }}
+              />
+              {bad('branch') ? (
+                <span className="field-message" role="alert">
+                  {problem.error}
+                </span>
+              ) : (
+                <span className="t-note">
+                  Pushes to {branch || repo.default_branch} go to production. Every other branch and pull request gets a preview.
+                </span>
+              )}
+            </label>
+          </div>
+        </section>
+        <section className="panel form-panel">
+          <h2 className="t-small t-strong">Build</h2>
+          <BuildFields build={build} onChange={setBuild} problem={problem} />
+        </section>
+        {problem.error && !problem.field && <Problem>{problem.error}</Problem>}
+        <div className="form-foot">
+          <button disabled={busy || !name || !branch} className="btn primary large">
+            {busy ? 'Starting the first build…' : `Deploy ${name || 'the project'}`}
           </button>
+          <span className="t-note">Pier builds {branch || repo.default_branch} now, and again on every push. Variables can be added once it exists.</span>
         </div>
       </form>
     </main>

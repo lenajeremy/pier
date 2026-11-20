@@ -7,9 +7,9 @@ import { Integrations } from './pages/Integrations'
 import { useCallback, useEffect, useState } from 'react'
 import { api, ApiError, type Project, type ProjectSummary, type Session } from './lib/api'
 import { useData, useNow } from './lib/data'
-import { match, usePath } from './lib/router'
+import { Link, match, usePath } from './lib/router'
 import { Shell } from './components/Shell'
-import { ProjectHeader } from './components/ui'
+import { Problem, ProjectHeader, Skeleton } from './components/ui'
 import { SignIn } from './pages/SignIn'
 import { Projects } from './pages/Projects'
 import { ProjectDeployments } from './pages/ProjectDeployments'
@@ -87,7 +87,7 @@ function Signed({ session, path, now }: { session: Session; path: string; now: n
           ) : tab?.tab === 'variables' ? (
             <Variables project={name} now={now} />
           ) : tab?.tab === 'settings' ? (
-            <ProjectSettings project={name} onDeleted={list.reload} />
+            <ProjectSettings key={name} project={name} address={project.address} onDeleted={list.reload} />
           ) : tab?.tab === 'domains' ? (
             <Domains key={name} project={name} now={now} />
           ) : (
@@ -97,11 +97,23 @@ function Signed({ session, path, now }: { session: Session; path: string; now: n
       </ProjectPage>
     )
   } else if (path === '/') {
-    page = list.data ? <Projects session={session} projects={projects} now={now} /> : <div className="loading">Loading…</div>
+    page = list.data ? (
+      <Projects session={session} projects={projects} now={now} />
+    ) : list.error ? (
+      <main className="main global">
+        <Problem>{list.error.message}</Problem>
+      </main>
+    ) : (
+      <main className="main global">
+        <div className="panel">
+          <Skeleton rows={4} tall />
+        </div>
+      </main>
+    )
   } else if (path === '/integrations') {
     page = <Integrations />
   } else if (importing) {
-    page = <GitHubImport id={importing.id} onCreated={list.reload} />
+    page = <GitHubImport id={importing.id} session={session} onCreated={list.reload} />
   } else if (path === '/new') {
     page = <NewProject session={session} onCreated={list.reload} />
   } else if (path === '/members') {
@@ -117,10 +129,13 @@ function Signed({ session, path, now }: { session: Session; path: string; now: n
   } else {
     page = (
       <main className="main global">
-        <h1 className="t-title" style={{ margin: 0 }}>
-          Nothing here
-        </h1>
-        <span className="t-caption t-muted">There's no page at {path}.</span>
+        <div className="empty">
+          <span className="t-small t-strong">There's no page at {path}</span>
+          <span className="t-caption t-muted">The address may be mistyped, or the page may have moved.</span>
+          <Link className="btn quiet" to="/">
+            Go to Projects
+          </Link>
+        </div>
       </main>
     )
   }
@@ -143,13 +158,20 @@ function ProjectPage({ name, path, visit, children }: {
     () => true,
     3000,
   )
-  if (error) {
+  // A project that's gone, or pierd being away before anything has loaded.
+  // Once it has loaded, a failed refresh keeps what's on screen.
+  if (error && (error.status === 404 || !data)) {
     return (
       <main className="main global">
-        <h1 className="t-title" style={{ margin: 0 }}>
-          {error.status === 404 ? `No project called ${name}` : "Couldn't load this project"}
-        </h1>
-        <span className="t-caption t-muted">{error.message}</span>
+        <div className="empty">
+          <span className="t-small t-strong">{error.status === 404 ? `There's no project called ${name}` : `Couldn't load ${name}`}</span>
+          <span className="t-caption t-muted">
+            {error.status === 404 ? 'It may have been deleted, or the address may be mistyped.' : error.message}
+          </span>
+          <Link className="btn quiet" to="/">
+            Go to Projects
+          </Link>
+        </div>
       </main>
     )
   }
@@ -162,7 +184,18 @@ function ProjectPage({ name, path, visit, children }: {
         live={visit && !!data?.production}
         path={path}
       />
-      {data ? children(data, reload) : <div className="loading">Loading {name}…</div>}
+      {data ? (
+        children(data, reload)
+      ) : (
+        <main className="main">
+          <div className="panel">
+            <Skeleton rows={2} tall />
+          </div>
+          <div className="panel">
+            <Skeleton rows={5} />
+          </div>
+        </main>
+      )}
     </>
   )
 }

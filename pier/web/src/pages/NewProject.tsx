@@ -1,12 +1,13 @@
-import { GitHubMark } from '../components/Icons'
-import { GitHubRepos } from './GitHub'
 import { useState, type FormEvent } from 'react'
 import { api, ApiError, type Session } from '../lib/api'
-import { navigate } from '../lib/router'
+import { Link, navigate } from '../lib/router'
+import { ChevronRight, Terminal } from '../components/Icons'
+import { GitHubRepos } from './GitHub'
 
 const nameRule = /^[a-z0-9]([a-z0-9-]{0,37}[a-z0-9])?$/
 
-// D1 offers a GitHub import or an empty project for the CLI.
+// NewProject is D1: import a repo from GitHub, or make an empty project to
+// deploy into from a computer.
 export function NewProject({ session, onCreated }: { session: Session; onCreated: () => void }) {
   const [name, setName] = useState('')
   const [error, setError] = useState('')
@@ -35,55 +36,63 @@ export function NewProject({ session, onCreated }: { session: Session; onCreated
   }
 
   return (
-    <main className="main global" style={{ gap: 24 }}>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        <h1 className="t-title" style={{ margin: 0 }}>
-          New project
-        </h1>
-        <span className="t-caption t-muted">Pick where the code comes from. Pier builds it, and keeps every deployment.</span>
+    <main className="main global" style={{ gap: 28 }}>
+      <div className="stack">
+        <nav className="breadcrumb" aria-label="Breadcrumb">
+          <Link to="/">Projects</Link>
+          <ChevronRight />
+          <span style={{ color: 'var(--d-text)' }}>New project</span>
+        </nav>
+        <header className="page-heading">
+          <div>
+            <h1 className="t-title">New project</h1>
+            <p className="t-caption t-muted">Pick where the code comes from. Pier builds it, and keeps every deployment.</p>
+          </div>
+        </header>
       </div>
-      <div className="columns">
-        <section className="panel" style={{ flex: 1, minWidth: 0 }}>
-          <div className="panel-head">
-            <GitHubMark />
-            <span className="t-small t-strong">Import from GitHub</span>
+
+      <GitHubRepos />
+
+      <div className="stack">
+        <div className="toolbar">
+          <div className="title">
+            <Terminal size={20} color="#ECEEF4" />
+            <h2 className="t-small t-strong">Deploy from your computer</h2>
           </div>
-          <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <GitHubRepos />
+        </div>
+        <form className="panel form-panel" onSubmit={submit} noValidate>
+          <p className="t-caption t-muted">
+            Start with an empty project, then run <span className="mono">pier deploy</span> in any folder. No GitHub needed.
+          </p>
+          <div className="inline-form">
+            <label className={'field' + (error ? ' error' : '')}>
+              <span className="field-label">Project name</span>
+              <input
+                className="input mono"
+                placeholder="my-site"
+                value={name}
+                spellCheck={false}
+                autoCapitalize="off"
+                autoComplete="off"
+                onChange={(e) => {
+                  setName(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '-'))
+                  setError('')
+                }}
+              />
+            </label>
+            <button className="btn quiet large" type="submit" disabled={busy || !name}>
+              {busy ? 'Creating…' : 'Create empty project'}
+            </button>
           </div>
-        </section>
-        <form className="panel cli-panel" onSubmit={submit} noValidate>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <span className="t-small t-strong">Deploy from your computer</span>
-            <span className="t-caption t-muted">Start with an empty project, then run pier deploy in any folder. No GitHub needed.</span>
-          </div>
-          <label className={'field' + (error ? ' error' : '')}>
-            <span className="field-label">Project name</span>
-            <input
-              className="input mono"
-              placeholder="my-site"
-              value={name}
-              autoFocus
-              spellCheck={false}
-              autoCapitalize="off"
-              onChange={(e) => {
-                setName(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '-'))
-                setError('')
-              }}
-            />
-            {error ? (
-              <span className="field-message" role="alert">
-                {error}
-              </span>
-            ) : (
-              <span className="t-note" style={{ color: 'var(--d-muted)' }}>
-                Lowercase letters, numbers and dashes. It becomes {shown}.{domain}.
-              </span>
-            )}
-          </label>
-          <button className="btn primary large" type="submit" disabled={busy}>
-            {busy ? 'Creating…' : 'Create empty project'}
-          </button>
+          {error ? (
+            <span className="field-message" role="alert">
+              {error}
+            </span>
+          ) : (
+            <span className="t-note">
+              Lowercase letters, numbers and dashes. It becomes {shown}.{domain}.
+            </span>
+          )}
         </form>
       </div>
     </main>

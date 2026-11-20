@@ -261,7 +261,7 @@ function SharedDialog({ variable, projects, onClose, onDone }: {
       <div className="field">
         <div className="field-top">
           <span className="field-label">
-            Linked projects <span className="count">{linked.length}</span>
+            Linked projects {linked.length > 0 && <span className="count">{linked.length}</span>}
           </span>
           {projects.length > 1 && (
             <button

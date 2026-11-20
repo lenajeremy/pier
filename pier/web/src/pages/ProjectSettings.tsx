@@ -1,268 +1,292 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { api, ApiError, changePreset, type Build, type RuntimeSettings, type Settings } from '../lib/api'
+import { api, ApiError, type Build, type RuntimeSettings, type Settings } from '../lib/api'
 import { useData } from '../lib/data'
 import { navigate } from '../lib/router'
-import { Info } from '../components/Icons'
+import { BuildFields } from '../components/BuildFields'
+import { Dialog } from '../components/Dialog'
+import { toast } from '../components/Toast'
+import { Problem, Skeleton } from '../components/ui'
 
 const empty: Build = { root: '', preset: '', install: '', command: '', output: '' }
 const emptyRuntime: RuntimeSettings = { start_command: '', health_path: '', memory_mb: 0, cpus: 0 }
+type Draft = { build: Build; runtime: RuntimeSettings; branch: string }
 
-// ProjectSettings is the Build panel of D2, on its own tab: Pier detects how
-// to build on every deploy, and anything filled in here overrides it.
-export function ProjectSettings({ project, onDeleted }: { project: string; onDeleted?: () => void }) {
-  const { data, error } = useData<Settings>(`/api/projects/${encodeURIComponent(project)}/settings`)
-  const [b, setB] = useState<Build>(empty)
-  const [rt, setRt] = useState<RuntimeSettings>(emptyRuntime)
-  const [branch, setBranch] = useState('')
-  const [state, setState] = useState<{ saving?: boolean; saved?: boolean; error?: string; field?: string }>({})
-  const [confirmDelete, setConfirmDelete] = useState('')
+// ProjectSettings is the project's Settings tab: the Project and Build
+// panels of D2, the runtime of a server app, and deleting the project.
+// Pier detects how to build on every deploy; anything filled in overrides it.
+export function ProjectSettings({ project, address, onDeleted }: { project: string; address: string; onDeleted?: () => void }) {
+  const { data, error, reload } = useData<Settings>(`/api/projects/${encodeURIComponent(project)}/settings`)
+  const [draft, setDraft] = useState<Draft>({ build: empty, runtime: emptyRuntime, branch: '' })
+  const [saved, setSaved] = useState<Draft | null>(null)
+  const [state, setState] = useState<{ saving?: boolean; error?: string; field?: string }>({})
   const [deleting, setDeleting] = useState(false)
-  const [deleteError, setDeleteError] = useState('')
 
   useEffect(() => {
-    if (data) {
-      setB(data.project.build)
-      setRt(data.project.runtime ?? emptyRuntime)
-      setBranch(data.project.production_branch)
-    }
+    if (!data) return
+    const d = { build: data.project.build, runtime: data.project.runtime ?? emptyRuntime, branch: data.project.production_branch }
+    setDraft(d)
+    setSaved(d)
   }, [data])
 
-  if (error) return <main className="main"><span className="t-note">{error.message}</span></main>
-  if (!data) return <div className="loading">Loading settings…</div>
+  if (error) {
+    return (
+      <main className="main">
+        <Problem>{error.message}</Problem>
+      </main>
+    )
+  }
+  if (!data || !saved) {
+    return (
+      <main className="main">
+        <div className="panel">
+          <Skeleton rows={4} tall />
+        </div>
+      </main>
+    )
+  }
 
-  const server = b.preset === 'dockerfile' || b.preset === 'server'
+  const b = draft.build
+  const rt = draft.runtime
+  const dirty = JSON.stringify(draft) !== JSON.stringify(saved)
   const staticOnly = b.preset === 'static' || b.preset === 'vite'
-  const plan = data.last_build_plan
   const defaultMem = data.default_memory_mb ?? 1024
-  const set = (k: keyof Build) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-    setB(k === 'preset' ? changePreset(b, e.target.value as Build['preset']) : { ...b, [k]: e.target.value })
+  const change = (d: Partial<Draft>) => {
+    setDraft({ ...draft, ...d })
     setState({})
   }
+  const setRt = (r: Partial<RuntimeSettings>) => change({ runtime: { ...rt, ...r } })
   const save = async (e: FormEvent) => {
     e.preventDefault()
     setState({ saving: true })
     try {
       await api(`/api/projects/${encodeURIComponent(project)}/settings`, {
         method: 'PUT',
-        body: JSON.stringify({ production_branch: branch, build: b, runtime: rt }),
+        body: JSON.stringify({ production_branch: draft.branch, build: b, runtime: rt }),
       })
-      setState({ saved: true })
+      setSaved(draft)
+      setState({})
+      reload()
+      toast('Saved. The next deployment uses these settings.')
     } catch (err) {
       setState(err instanceof ApiError ? { error: err.message, field: String(err.body.field ?? '') } : { error: "Can't reach pierd." })
     }
   }
   const field = (k: string) => 'field' + (state.field === k ? ' error' : '')
+  const help = (k: string, text: string) =>
+    state.field === k && state.error ? (
+      <span className="field-message" role="alert">
+        {state.error}
+      </span>
+    ) : (
+      <span className="t-note">{text}</span>
+    )
 
   return (
     <main className="main">
-      <form onSubmit={save} style={{ display: 'flex', flexDirection: 'column', gap: 20 }} noValidate>
+      <form className="settings" onSubmit={save} noValidate>
         <section className="panel form-panel">
-          <span className="t-small t-strong">Build</span>
-          <div className="alert info">
-            <Info />
-            <div>
-              {plan ? (
-                <>
-                  <span className="t-small t-strong">The last build used {plan.label}</span>
-                  <span className="t-caption t-muted">
-                    {steps(plan)} Pier works this out again on every deploy. Fill in a field to override it.
-                  </span>
-                </>
-              ) : (
-                <>
-                  <span className="t-small t-strong">Pier works out how to build on every deploy</span>
-                  <span className="t-caption t-muted">
-                    Pier checks the project root for a Dockerfile, a Node application, or static files.
-                  </span>
-                </>
-              )}
-            </div>
-          </div>
-          <div className="form-grid">
-            <label className={field('preset')}>
-              <span className="field-label">Preset</span>
-              <select className="input" value={b.preset} onChange={set('preset')}>
-                <option value="">Detect it</option>
-                <option value="static">Static HTML</option>
-                <option value="vite">Vite</option>
-                <option value="server">Railpack web server</option>
-                <option value="dockerfile">Dockerfile</option>
-              </select>
-              <span className="t-note">Choose Railpack web server for a server-rendered app.</span>
-            </label>
-            <label className={field('root')}>
-              <span className="field-label">Root directory</span>
-              <input className="input mono" placeholder="./" value={b.root} onChange={set('root')} spellCheck={false} />
-              <span className="t-note">The directory containing the app or Dockerfile.</span>
-            </label>
-            <label className={field('output')}>
-              <span className="field-label">Output folder</span>
-              <input className="input mono" disabled={server} placeholder={plan?.output || 'dist'} value={b.output} onChange={set('output')} spellCheck={false} />
-              <span className="t-note">Applies to static sites.</span>
-            </label>
-            <label className={field('install')}>
-              <span className="field-label">Install command</span>
-              <input className="input mono" disabled={server} placeholder={plan ? plan.install || 'none' : 'npm ci'} value={b.install} onChange={set('install')} spellCheck={false} />
-              <span className="t-note">Picked from the lockfile.</span>
-            </label>
-            <label className={field('command')}>
-              <span className="field-label">Build command</span>
-              <input className="input mono" disabled={b.preset === 'dockerfile'} placeholder={plan ? plan.build || 'none' : 'npm run build'} value={b.command} onChange={set('command')} spellCheck={false} />
-              <span className="t-note">The build script in package.json.</span>
+          <h2 className="t-small t-strong">Project</h2>
+          <div className="form-grid two">
+            <label className="field">
+              <span className="field-label">Project name</span>
+              <input className="input mono" value={project} readOnly tabIndex={-1} />
+              <span className="t-note">It lives at {address}. The name is set when the project is made.</span>
             </label>
             <label className={field('production_branch')}>
               <span className="field-label">Production branch</span>
               <input
                 className="input mono"
                 placeholder={data.default_branch}
-                value={branch}
-                onChange={(e) => {
-                  setBranch(e.target.value)
-                  setState({})
-                }}
+                value={draft.branch}
+                onChange={(e) => change({ branch: e.target.value })}
                 spellCheck={false}
+                autoCapitalize="off"
               />
-              <span className="t-note">For git pushes. pier deploy goes to production with --prod.</span>
+              {help(
+                'production_branch',
+                `Pushes to ${draft.branch || data.default_branch} go to production. Every other branch gets a preview, and so does pier deploy without --prod.`,
+              )}
             </label>
           </div>
         </section>
+
+        <section className="panel form-panel">
+          <h2 className="t-small t-strong">Build</h2>
+          <BuildFields build={b} onChange={(build) => change({ build })} plan={data.last_build_plan} problem={state} />
+        </section>
+
         {!staticOnly && (
           <section className="panel form-panel">
-            <span className="t-small t-strong">Runtime</span>
-            <div className="form-grid">
+            <div className="form-title">
+              <h2 className="t-small t-strong">Runtime</h2>
+              <span className="t-note">For server apps. A change applies from the next deployment.</span>
+            </div>
+            <div className="form-grid two">
               <label className={field('start_command')}>
                 <span className="field-label">Start command</span>
                 <input
                   className="input mono"
-                  placeholder="Image default"
+                  placeholder="The image's own"
                   value={rt.start_command}
-                  onChange={(e) => {
-                    setRt({ ...rt, start_command: e.target.value })
-                    setState({})
-                  }}
+                  onChange={(e) => setRt({ start_command: e.target.value })}
                   spellCheck={false}
+                  autoCapitalize="off"
                 />
-                <span className="t-note">Overrides the container start command on the next server deploy.</span>
+                {help('start_command', 'What the container runs. Leave it empty to use what the image starts with.')}
               </label>
               <label className={field('health_path')}>
-                <span className="field-label">Healthcheck path</span>
+                <span className="field-label">Health check path</span>
                 <input
                   className="input mono"
                   placeholder="/"
                   value={rt.health_path}
-                  onChange={(e) => {
-                    setRt({ ...rt, health_path: e.target.value })
-                    setState({})
-                  }}
+                  onChange={(e) => setRt({ health_path: e.target.value })}
                   spellCheck={false}
+                  autoCapitalize="off"
                 />
-                <span className="t-note">HTTP path checked before traffic switches to a new container.</span>
+                {help('health_path', 'Pier asks for this path, and sends visitors to a new container only once it answers.')}
               </label>
               <label className={field('memory_mb')}>
                 <span className="field-label">Memory limit</span>
-                <select
-                  className="input"
-                  value={String(rt.memory_mb)}
-                  onChange={(e) => {
-                    setRt({ ...rt, memory_mb: Number(e.target.value) })
-                    setState({})
-                  }}
-                >
-                  <option value="0">Default ({defaultMem >= 1024 ? `${defaultMem / 1024} GB` : `${defaultMem} MB`})</option>
+                <select className="input" value={String(rt.memory_mb)} onChange={(e) => setRt({ memory_mb: Number(e.target.value) })}>
+                  <option value="0">The server's default, {defaultMem >= 1024 ? `${defaultMem / 1024} GB` : `${defaultMem} MB`}</option>
                   <option value="256">256 MB</option>
                   <option value="512">512 MB</option>
                   <option value="1024">1 GB</option>
                   <option value="2048">2 GB</option>
                   <option value="4096">4 GB</option>
                   <option value="8192">8 GB</option>
-                  <option value="-1">Unlimited</option>
+                  <option value="-1">No limit</option>
                 </select>
-                <span className="t-note">Prevents one container from exhausting the server's memory.</span>
+                {help('memory_mb', "Stops one container from using up the server's memory.")}
               </label>
               <label className={field('cpus')}>
                 <span className="field-label">CPU limit</span>
-                <select
-                  className="input"
-                  value={String(rt.cpus)}
-                  onChange={(e) => {
-                    setRt({ ...rt, cpus: Number(e.target.value) })
-                    setState({})
-                  }}
-                >
-                  <option value="0">Unlimited</option>
-                  <option value="0.5">0.5 vCPU</option>
-                  <option value="1">1 vCPU</option>
-                  <option value="2">2 vCPU</option>
-                  <option value="4">4 vCPU</option>
+                <select className="input" value={String(rt.cpus)} onChange={(e) => setRt({ cpus: Number(e.target.value) })}>
+                  <option value="0">No limit</option>
+                  <option value="0.5">Half a CPU</option>
+                  <option value="1">1 CPU</option>
+                  <option value="2">2 CPUs</option>
+                  <option value="4">4 CPUs</option>
                 </select>
-                <span className="t-note">Applies to server containers on the next deploy.</span>
+                {help('cpus', 'The most CPU time the container can take.')}
               </label>
             </div>
           </section>
         )}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 16, justifyContent: 'flex-end' }}>
-          {state.error && <span className="field-message">{state.error}</span>}
-          {state.saved && <span className="t-note">Saved. The next deployment uses these.</span>}
-          <button className="btn primary large" type="submit" disabled={state.saving}>
-            {state.saving ? 'Saving…' : 'Save changes'}
-          </button>
-        </div>
+
+        {(dirty || state.error) && (
+          <div className="save-bar" role="region" aria-label="Unsaved changes">
+            <span className={state.error && !state.field ? 'field-message' : 't-caption'}>
+              {state.error && !state.field ? state.error : state.error ? 'One field needs fixing before this can be saved.' : 'You have changes that aren’t saved.'}
+            </span>
+            <button
+              className="btn quiet medium"
+              type="button"
+              disabled={state.saving}
+              onClick={() => {
+                setDraft(saved)
+                setState({})
+              }}
+            >
+              Discard
+            </button>
+            <button className="btn primary medium" type="submit" disabled={state.saving || !dirty}>
+              {state.saving ? 'Saving…' : 'Save changes'}
+            </button>
+          </div>
+        )}
       </form>
 
-      <section className="panel form-panel" style={{ marginTop: 12 }}>
-        <span className="t-small t-strong">Delete project</span>
-        <span className="t-caption t-muted" style={{ maxWidth: 640 }}>
-          Permanently removes <span className="mono">{project}</span>, stops its running containers, removes its routes and custom domains, and deletes all deployments, variables, and saved build logs.
-        </span>
-        <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12, flexWrap: 'wrap' }}>
-          <label className="field" style={{ flex: '1 1 260px', maxWidth: 360 }}>
-            <span className="field-label">Type {project} to confirm</span>
-            <input
-              className="input mono"
-              placeholder={project}
-              value={confirmDelete}
-              onChange={(e) => {
-                setConfirmDelete(e.target.value)
-                setDeleteError('')
-              }}
-              spellCheck={false}
-            />
-          </label>
-          <button
-            className="btn danger large"
-            type="button"
-            disabled={deleting || confirmDelete.trim() !== project}
-            onClick={async () => {
-              setDeleting(true)
-              setDeleteError('')
-              try {
-                await api(`/api/projects/${encodeURIComponent(project)}`, { method: 'DELETE' })
-                onDeleted?.()
-                navigate('/')
-              } catch (err) {
-                setDeleteError(err instanceof ApiError ? err.message : "Can't reach pierd.")
-                setDeleting(false)
-              }
-            }}
-          >
-            {deleting ? 'Deleting…' : 'Delete project'}
-          </button>
+      <section className="panel danger-row">
+        <div>
+          <h2 className="t-small t-strong">Delete this project</h2>
+          <p className="t-caption t-muted">
+            Takes {address} offline and removes every deployment, variable, domain and log of {project}. It can't be undone.
+          </p>
         </div>
-        {deleteError && (
-          <span className="field-message" role="alert">
-            {deleteError}
-          </span>
-        )}
+        <button className="btn danger" type="button" onClick={() => setDeleting(true)}>
+          Delete project
+        </button>
       </section>
+
+      {deleting && (
+        <DeleteDialog
+          project={project}
+          address={address}
+          onClose={() => setDeleting(false)}
+          onDone={() => {
+            onDeleted?.()
+            navigate('/')
+            toast(`Deleted ${project}`)
+          }}
+        />
+      )}
     </main>
   )
 }
 
-function steps(plan: Record<string, string>): string {
-  if (plan.runtime) return 'The image supplies the start command.'
-  const ran = [plan.install, plan.build].filter(Boolean)
-  const where = plan.root && plan.root !== '.' ? ` in ${plan.root}/` : ''
-  const serve = `served ${plan.output === '.' ? 'the folder itself' : plan.output + '/'}`
-  if (ran.length === 0) return `It ran nothing${where} and ${serve}.`
-  return `It ran ${ran.join(', then ')}${where}, and ${serve}.`
+// Deleting a project is the one action that asks for its name: it takes a
+// live site down and nothing brings it back.
+function DeleteDialog({ project, address, onClose, onDone }: { project: string; address: string; onClose: () => void; onDone: () => void }) {
+  const [typed, setTyped] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [problem, setProblem] = useState('')
+  const submit = async (e: FormEvent) => {
+    e.preventDefault()
+    if (typed.trim() !== project) return
+    setBusy(true)
+    setProblem('')
+    try {
+      await api(`/api/projects/${encodeURIComponent(project)}`, { method: 'DELETE' })
+      onDone()
+    } catch (err) {
+      setProblem(err instanceof ApiError ? err.message : "Can't reach pierd.")
+      setBusy(false)
+    }
+  }
+  return (
+    <Dialog
+      title={`Delete ${project}?`}
+      busy={busy}
+      onClose={onClose}
+      onSubmit={submit}
+      footer={
+        <>
+          <button className="btn quiet medium" type="button" disabled={busy} onClick={onClose}>
+            Cancel
+          </button>
+          <button className="btn danger medium" type="submit" disabled={busy || typed.trim() !== project}>
+            {busy ? 'Deleting…' : 'Delete project'}
+          </button>
+        </>
+      }
+    >
+      <p>
+        {address} and every preview go offline at once. Pier stops the project's containers and deletes all of its
+        deployments, variables, domains and logs. Nothing brings them back.
+      </p>
+      <label className={'field' + (problem ? ' error' : '')}>
+        <span className="field-label">
+          Type <span className="mono">{project}</span> to confirm
+        </span>
+        <input
+          className="input mono"
+          value={typed}
+          onChange={(e) => {
+            setTyped(e.target.value)
+            setProblem('')
+          }}
+          spellCheck={false}
+          autoCapitalize="off"
+          autoComplete="off"
+        />
+        {problem && (
+          <span className="field-message" role="alert">
+            {problem}
+          </span>
+        )}
+      </label>
+    </Dialog>
+  )
 }

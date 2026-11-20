@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { localDay } from '../lib/calendar'
 import { api } from '../lib/api'
-import { Search } from '../components/Icons'
+import { Calendar, Search } from '../components/Icons'
 import { RequestsChart, type ChartData } from '../components/RequestsChart'
 import { DateRangePicker, type Span } from '../components/DateRangePicker'
+import { Problem, Skeleton } from '../components/ui'
 
 type Line = { id: number; deployment: string; at: number; method: string; path: string; status: number; ms: number; bytes: number }
 
@@ -143,10 +144,7 @@ export function Logs({ project, address }: { project: string; address: string })
               aria-expanded={picking}
               onClick={() => setPicking(!picking)}
             >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" width="14" height="14" aria-hidden>
-                <rect x="4" y="5.5" width="16" height="14" rx="2" />
-                <path d="M4 10H20M8.5 3.5V7M15.5 3.5V7" />
-              </svg>
+              <Calendar />
               {range === 'custom' ? customLabel : 'Custom'}
             </button>
           </div>
@@ -164,11 +162,19 @@ export function Logs({ project, address }: { project: string; address: string })
         </div>
       </div>
 
-      {error && <div role="alert">Couldn’t load request logs. {live ? 'Trying again shortly.' : 'Refresh to try again.'}</div>}
+      {error && <Problem>Couldn't load the request logs. {live ? 'Trying again in a moment.' : 'Reload the page to try again.'}</Problem>}
       {range === 'custom' && custom && (q || status) && custom.from.getTime() < Date.now() - 14 * 86_400_000 && (
-        <span className="t-note">Filtered charts use the last 14 days of request lines.</span>
+        <span className="t-note">With a search or a status chosen, the charts count request lines, which go back 14 days.</span>
       )}
-      {chart && <RequestsChart data={chart} live={live} />}
+      {chart ? (
+        <RequestsChart data={chart} live={live} />
+      ) : (
+        !error && (
+          <div className="panel">
+            <Skeleton rows={3} tall />
+          </div>
+        )
+      )}
 
       <section className="panel log-viewer">
         <div className="panel-head" style={{ minHeight: 44, padding: '0 16px' }}>
@@ -178,9 +184,13 @@ export function Logs({ project, address }: { project: string; address: string })
           </span>
           <span className="mono t-note">{project}</span>
           <span style={{ flex: 1 }} />
-          <span className="t-note">Lines are kept for 14 days</span>
+          <span className="t-note">
+            {lines.length >= 500 ? 'The newest 500 lines of this range. ' : ''}Lines are kept for 14 days.
+          </span>
         </div>
-        {loaded && lines.length === 0 ? (
+        {!loaded && !error ? (
+          <Skeleton rows={5} />
+        ) : loaded && lines.length === 0 ? (
           <div className="log-empty">
             No request lines {status || q ? 'match these filters' : 'in this range'}.{' '}
             {live && !status && !q && <>Open <span className="mono">{address}</span> and they show up here within a second.</>}
