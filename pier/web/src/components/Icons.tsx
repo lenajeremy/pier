@@ -248,6 +248,13 @@ export const Close = ({ size = 16, color = '#A3ABBE' }: P) => (
   </svg>
 )
 
+export const Eye = ({ size = 16, color = '#8A92A8' }: P) => (
+  <svg {...line(size, color, 1.6)}>
+    <path d="M2.5 12C4.5 7.5 8 5.5 12 5.5S19.5 7.5 21.5 12C19.5 16.5 16 18.5 12 18.5S4.5 16.5 2.5 12Z" />
+    <circle cx="12" cy="12" r="3" />
+  </svg>
+)
+
 export const Pencil = ({ size = 16, color = '#A3ABBE' }: P) => (
   <svg {...line(size, color)}>
     <path d="M5 19L5.8 15.4L15.9 5.3A1.6 1.6 0 0 1 18.2 5.3L18.7 5.8A1.6 1.6 0 0 1 18.7 8.1L8.6 18.2Z" />

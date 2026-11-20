@@ -1,19 +1,20 @@
-import { useEffect, useId, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
+import { useEffect, useId, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { ApiError } from '../lib/api'
 
 // Dialog is the Confirmation and the Form dialog (Components 4): the page
 // behind dims, focus stays inside until it closes, and Escape or a click on
 // the dimmed page closes it.
-export function Dialog({ title, children, footer, onClose, wide, busy }: {
+export function Dialog({ title, children, footer, onClose, onSubmit, wide, busy }: {
   title: ReactNode
   children?: ReactNode
   footer: ReactNode
   onClose: () => void
+  onSubmit?: (e: FormEvent) => void // a form: Enter in a field submits it
   wide?: boolean // a form, rather than a question
   busy?: boolean // an action is running: closing waits for it
 }) {
-  const panel = useRef<HTMLDivElement>(null)
+  const panel = useRef<HTMLFormElement & HTMLDivElement>(null)
   const heading = useId()
 
   useEffect(() => {
@@ -54,9 +55,18 @@ export function Dialog({ title, children, footer, onClose, wide, busy }: {
     }
   }
 
+  const Panel = onSubmit ? 'form' : 'div'
   return createPortal(
     <div className="scrim" onMouseDown={(e) => e.target === e.currentTarget && !busy && onClose()} onKeyDown={key}>
-      <div ref={panel} className={'dialog' + (wide ? ' wide' : '')} role="dialog" aria-modal="true" aria-labelledby={heading}>
+      <Panel
+        ref={panel}
+        className={'dialog' + (wide ? ' wide' : '')}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={heading}
+        onSubmit={onSubmit}
+        noValidate={onSubmit ? true : undefined}
+      >
         <div className="dialog-text">
           <h2 id={heading} className="t-title">
             {title}
@@ -64,7 +74,7 @@ export function Dialog({ title, children, footer, onClose, wide, busy }: {
           {children && <div className="dialog-body">{children}</div>}
         </div>
         <div className="dialog-foot">{footer}</div>
-      </div>
+      </Panel>
     </div>,
     document.body,
   )

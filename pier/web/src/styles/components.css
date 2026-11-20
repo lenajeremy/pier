@@ -1454,95 +1454,166 @@ select.input {
   opacity: 0.5;
 }
 
-/* ---- Variables (G1): the add form and the Variable row (Components 5) --- */
+/* ---- Variables (G1): the table, and the long value field (Components 2) -- */
 
-.add-fields {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto;
-  gap: 14px;
-  align-items: end;
+.table.variables {
+  --cols: minmax(0, 1.1fr) minmax(0, 1.4fr) 196px 128px 32px;
 }
-.add-fields.multiline {
-  grid-template-columns: minmax(0, 1fr);
+.table.inherited {
+  --cols: minmax(0, 1.1fr) 196px minmax(0, 1.4fr);
 }
-textarea.input {
+/* A row that grows when what's in it runs over several lines. */
+.t-row.grow {
   height: auto;
-  min-height: 92px;
-  padding: 10px 12px;
-  line-height: 1.5;
-  resize: vertical;
-  white-space: pre;
-  overflow-wrap: normal;
-  overflow-x: auto;
+  min-height: 52px;
+  padding-top: 8px;
+  padding-bottom: 8px;
 }
-.import-footer {
+.t-row .scopes {
+  display: flex;
+  gap: 6px;
+  overflow: visible;
+}
+.t-row .value {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
+  gap: 8px;
+  overflow: visible;
+  white-space: normal;
 }
-.var-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) 220px 170px 32px;
-  gap: 16px;
-  align-items: center;
-  min-height: 52px;
-  padding: 10px 12px 10px 20px;
-  border-bottom: 1px solid var(--d-line-faint);
-}
-.var-row:last-child {
-  border-bottom: none;
-}
-.var-row .name,
-.var-row .value > span {
+.t-row .value > span {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.var-row .value > pre {
+.t-row .value > pre {
+  flex: 1;
+  min-width: 0;
   margin: 0;
-  padding: 8px 10px;
+  padding: 8px 12px;
   border-radius: 8px;
   background: var(--d-well);
   border: 1px solid var(--d-line-faint);
-  max-height: 140px;
+  max-height: 148px;
   overflow: auto;
+  font-size: 13px;
+  line-height: 21px;
   white-space: pre-wrap;
   word-break: break-all;
-  flex: 1;
-  min-width: 0;
 }
-.var-row .value {
+.reveal {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-.var-row .value .input {
-  height: 36px;
-}
-.var-row .value textarea.input {
-  height: auto;
-  min-height: 76px;
-  width: 100%;
-}
-.var-row .reveal {
-  display: flex;
+  flex: none;
   padding: 4px;
   border-radius: 6px;
-  flex: none;
 }
-.var-row .reveal:hover {
+.reveal:hover {
   background: var(--d-active);
 }
-.var-row .scopes {
+
+.long-value {
   display: flex;
-  gap: 6px;
+  flex-direction: column;
+  border-radius: 12px;
+  background: var(--d-input);
+  border: 1px solid var(--d-line-input);
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
-.var-row .edit-actions {
+.long-value:focus-within {
+  border-color: var(--d-focus);
+  box-shadow: var(--d-focus-ring);
+}
+.field.error .long-value {
+  border-color: rgba(255, 128, 128, 0.7);
+}
+.long-value textarea {
+  display: block;
+  width: 100%;
+  min-height: 72px;
+  max-height: 320px;
+  padding: 12px 16px 10px;
+  background: none;
+  border: none;
+  outline: none;
+  resize: none;
+  color: var(--d-text);
+  font-size: 13px;
+  line-height: 21px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow: auto;
+}
+.field > .seg {
+  align-self: flex-start;
+}
+.long-value textarea::placeholder {
+  color: var(--d-faint);
+  white-space: pre-wrap;
+}
+.long-value .counter {
+  align-self: flex-end;
+  padding: 0 14px 10px;
+  font-family: var(--d-mono);
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--d-note);
+}
+/* A label with a small action at its end. */
+.field-top {
   display: flex;
-  gap: 6px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 28px;
+}
+
+/* Checkbox and radio (Components 2). */
+.check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 32px;
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--d-muted);
+  cursor: pointer;
+}
+.check:has(input:checked) {
+  color: var(--d-text);
+}
+.check input {
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  flex: none;
+  border-radius: 5px;
+  border: 1.5px solid rgba(255, 255, 255, 0.3);
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.check input[type='radio'] {
+  border-radius: 50%;
+}
+.check input:checked {
+  border-color: var(--d-text);
+  background: var(--d-text)
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2307090F' stroke-width='3.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5L10 17.5L19 7'/%3E%3C/svg%3E")
+    center / 12px no-repeat;
+}
+.check input[type='radio']:checked {
+  background: radial-gradient(circle, var(--d-text) 0 4px, transparent 4.5px);
+}
+.check input:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.check span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ---- Logs (H1): the Range control, Requests over time, the Log viewer -- */

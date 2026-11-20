@@ -1,202 +1,304 @@
-import { useState, type FormEvent } from 'react'
+import { useMemo, useState, type FormEvent } from 'react'
 import { api, type ProjectSummary } from '../lib/api'
 import { useData } from '../lib/data'
-import { Plus } from '../components/Icons'
+import { plural } from '../lib/format'
+import { Pencil, Search, Trash } from '../components/Icons'
+import { confirm, Dialog } from '../components/Dialog'
+import { Menu } from '../components/Menu'
+import { toast } from '../components/Toast'
+import { Badge, PageHeading, Paging, Problem, SearchField, Skeleton, usePaged } from '../components/ui'
+import { LongValue, ScopePicker, type Scope } from './Variables'
 
 type Shared = { name: string; projects: string[]; production: boolean; preview: boolean }
-const empty = (): Shared => ({ name: '', projects: [], production: true, preview: true })
+const PAGE = 50
+
+// Shared variables is K2: a value set once and linked to the projects that
+// need it. A project's own variable with the same name wins.
 export function SharedVariables({ projects }: { projects: ProjectSummary[] }) {
   const { data, error, reload } = useData<{ variables: Shared[] }>('/api/shared-variables')
-  const [draft, edit] = useState<Shared | null>(null),
-    [creating, setCreating] = useState(false),
-    [value, setValue] = useState(''),
-    [replace, setReplace] = useState(false),
-    [problem, setProblem] = useState(''),
-    [busy, setBusy] = useState(false)
-  function open(v?: Shared) {
-    edit(v ?? empty())
-    setCreating(!v)
-    setValue('')
-    setReplace(!v)
-    setProblem('')
+  const [open, setOpen] = useState<Shared | 'new' | null>(null)
+  const [query, setQuery] = useState('')
+
+  const all = data?.variables ?? []
+  const shown = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    return all.filter((v) => !q || v.name.toLowerCase().includes(q) || v.projects.some((p) => p.includes(q)))
+  }, [all, query])
+  const paged = usePaged(shown, PAGE, query)
+
+  const remove = (v: Shared) =>
+    confirm({
+      title: (
+        <>
+          Delete <span className="mono">{v.name}</span>?
+        </>
+      ),
+      body: (
+        <p>
+          {v.projects.length === 0
+            ? 'No project is linked to it, so nothing changes for any build.'
+            : `${listed(v.projects)} ${v.projects.length === 1 ? 'stops' : 'stop'} getting it from the next deployment on. Deployments that are already built keep the value they were built with.`}
+        </p>
+      ),
+      action: 'Delete',
+      working: 'Deleting…',
+      danger: true,
+      run: async () => {
+        await api('/api/shared-variables/' + encodeURIComponent(v.name), { method: 'DELETE' })
+        reload()
+      },
+    }).then((ok) => ok && toast(`Deleted ${v.name}`))
+
+  return (
+    <main className="main global">
+      <PageHeading
+        title="Shared variables"
+        note="Set a value once and link it to the projects that need it. A project's own variable with the same name wins."
+      >
+        {all.length > 5 && <SearchField value={query} onChange={setQuery} placeholder="Search shared variables" hotkey="/" width={280} />}
+        {all.length > 0 && (
+          <button className="btn primary" onClick={() => setOpen('new')}>
+            Add variable
+          </button>
+        )}
+      </PageHeading>
+      {error && <Problem>{error.message}</Problem>}
+      {!data && !error && (
+        <div className="panel">
+          <Skeleton rows={3} />
+        </div>
+      )}
+      {data && all.length === 0 && (
+        <div className="empty">
+          <span className="t-small t-strong">No shared variables yet</span>
+          <span className="t-caption t-muted" style={{ maxWidth: 520 }}>
+            A shared variable is one value, like an analytics key or an npm token, that several projects use. Change it here and
+            every linked project gets the new value on its next deployment.
+          </span>
+          <button className="btn primary" onClick={() => setOpen('new')}>
+            Add variable
+          </button>
+        </div>
+      )}
+      {data && all.length > 0 && (
+        <div className="stack">
+          <div className="table shared">
+            <div className="t-head">
+              <span>Name</span>
+              <span>Value</span>
+              <span>Where</span>
+              <span>Used by</span>
+              <span />
+            </div>
+            {paged.shown.map((v) => (
+              <div className="t-row" key={v.name}>
+                <span className="mono" data-tip={v.name.length > 28 ? v.name : undefined}>
+                  {v.name}
+                </span>
+                <span className="mono t-quiet" aria-label="Hidden value" data-tip="A shared value can't be shown again. Replace it instead.">
+                  ••••••••••••
+                </span>
+                <span className="scopes">
+                  {v.production && <Badge role="production" />}
+                  {v.preview && <Badge role="preview" />}
+                </span>
+                <span className={v.projects.length ? '' : 't-quiet'} data-tip={v.projects.length > 2 ? v.projects.join(', ') : undefined}>
+                  {v.projects.length ? listed(v.projects, 2) : 'No project yet'}
+                </span>
+                <span className="row-more">
+                  <Menu
+                    label={`Actions for ${v.name}`}
+                    className="icon-btn bare"
+                    items={[
+                      { label: 'Edit', icon: <Pencil />, onSelect: () => setOpen(v) },
+                      'separator',
+                      { label: 'Delete', icon: <Trash />, danger: true, onSelect: () => remove(v) },
+                    ]}
+                  />
+                </span>
+              </div>
+            ))}
+            {shown.length === 0 && (
+              <div className="t-empty">
+                <span className="t-caption t-muted">No shared variable matches “{query.trim()}”.</span>
+                <button className="btn quiet small" onClick={() => setQuery('')}>
+                  Show all
+                </button>
+              </div>
+            )}
+          </div>
+          <Paging paged={paged} noun="variable" />
+        </div>
+      )}
+      {open && (
+        <SharedDialog
+          variable={open === 'new' ? null : open}
+          projects={projects}
+          onClose={() => setOpen(null)}
+          onDone={(name) => {
+            const adding = open === 'new'
+            setOpen(null)
+            reload()
+            toast(`${adding ? 'Added' : 'Saved'} ${name}`)
+          }}
+        />
+      )}
+    </main>
+  )
+}
+
+// listed writes names as a sentence would: "blog", "blog and docs",
+// "blog, docs and 3 more".
+function listed(names: string[], most = 3): string {
+  if (names.length <= most) {
+    return names.length < 2 ? (names[0] ?? '') : names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1]
   }
-  function close() {
-    edit(null)
-    setValue('')
-    setProblem('')
-  }
-  async function save(e: FormEvent) {
+  return names.slice(0, most).join(', ') + ' and ' + (names.length - most) + ' more'
+}
+
+function SharedDialog({ variable, projects, onClose, onDone }: {
+  variable: Shared | null // null to add one
+  projects: ProjectSummary[]
+  onClose: () => void
+  onDone: (name: string) => void
+}) {
+  const adding = !variable
+  const [name, setName] = useState(variable?.name ?? '')
+  const [value, setValue] = useState('')
+  const [replace, setReplace] = useState(adding)
+  const [scopes, setScopes] = useState<Scope[]>(
+    variable ? [...(variable.production ? (['production'] as Scope[]) : []), ...(variable.preview ? (['preview'] as Scope[]) : [])] : ['production', 'preview'],
+  )
+  const [linked, setLinked] = useState<string[]>(variable?.projects ?? [])
+  const [find, setFind] = useState('')
+  const [problem, setProblem] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const listedProjects = projects.filter((p) => p.name.includes(find.trim().toLowerCase()))
+  const submit = async (e: FormEvent) => {
     e.preventDefault()
-    if (!draft) return
-    if (!draft.production && !draft.preview) {
-      setProblem('Choose at least one scope.')
-      return
-    }
     setBusy(true)
     setProblem('')
     try {
-      await api('/api/shared-variables' + (creating ? '' : '/' + encodeURIComponent(draft.name)), {
-        method: creating ? 'POST' : 'PUT',
-        body: JSON.stringify({
-          name: draft.name,
-          projects: draft.projects,
-          value,
-          keep_value: !replace,
-          scopes: [...(draft.production ? ['production'] : []), ...(draft.preview ? ['preview'] : [])],
-        }),
+      await api('/api/shared-variables' + (adding ? '' : '/' + encodeURIComponent(name)), {
+        method: adding ? 'POST' : 'PUT',
+        body: JSON.stringify({ name: name.trim(), projects: linked, value, keep_value: !replace, scopes }),
       })
-      close()
-      await reload()
-    } catch (e) {
-      setProblem((e as Error).message)
-    } finally {
-      setBusy(false)
-    }
-  }
-  async function remove() {
-    if (!draft || !window.confirm('Remove ' + draft.name + ' from all linked projects?')) return
-    setBusy(true)
-    try {
-      await api('/api/shared-variables/' + encodeURIComponent(draft.name), { method: 'DELETE' })
-      close()
-      await reload()
-    } catch (e) {
-      setProblem((e as Error).message)
-    } finally {
+      onDone(name.trim())
+    } catch (err) {
+      setProblem(err instanceof Error ? err.message : "Can't reach pierd.")
       setBusy(false)
     }
   }
   return (
-    <main className="main global operations">
-      <header className="page-heading">
-        <div>
-          <h1 className="t-title">Shared variables</h1>
-          <p className="t-caption t-muted">
-            Set a value once and link it to projects. A project’s own variable with the same name wins.
-          </p>
-        </div>
-        <button className="btn primary" onClick={() => open()}>
-          <Plus size={14} />
-          Add variable
-        </button>
-      </header>
-      {error && <p role="alert">{error.message}</p>}
-      {draft && (
-        <form className="panel ops-panel" onSubmit={save}>
-          <h2>{creating ? 'Add variable' : 'Edit ' + draft.name}</h2>
-          <label className="field">
-            <span>Name</span>
-            <input
-              autoFocus
-              className="input mono"
-              required
-              disabled={!creating}
-              value={draft.name}
-              onChange={(e) => edit({ ...draft, name: e.target.value })}
-            />
-          </label>
-          {!creating && (
-            <label className="ops-choice">
-              <input type="checkbox" checked={replace} onChange={(e) => setReplace(e.target.checked)} />
-              Replace the stored value
-            </label>
-          )}
-          {replace && (
-            <label className="field">
-              <span>Value</span>
-              <input
-                className="input mono"
-                type="password"
-                autoComplete="new-password"
-                value={value}
-                onChange={(e) => setValue(e.target.value)}
-              />
-            </label>
-          )}
-          <fieldset>
-            <legend>Where</legend>
-            {(['production', 'preview'] as const).map((s) => (
-              <label className="ops-choice" key={s}>
-                <input type="checkbox" checked={draft[s]} onChange={(e) => edit({ ...draft, [s]: e.target.checked })} />
-                {s === 'production' ? 'Production' : 'Preview'}
-              </label>
-            ))}
-          </fieldset>
-          <fieldset>
-            <legend>Linked projects</legend>
-            {!projects.length && <p className="t-note">Create a project to link it here.</p>}
-            {projects.map((p) => (
-              <label className="ops-choice" key={p.name}>
-                <input
-                  type="checkbox"
-                  checked={draft.projects.includes(p.name)}
-                  onChange={(e) =>
-                    edit({
-                      ...draft,
-                      projects: e.target.checked
-                        ? [...draft.projects, p.name]
-                        : draft.projects.filter((n) => n !== p.name),
-                    })
-                  }
-                />
-                {p.name}
-              </label>
-            ))}
-          </fieldset>
-          <div className="ops-actions">
-            <button className="btn primary" disabled={busy}>
-              Save variable
-            </button>
-            <button className="btn quiet" type="button" onClick={close} disabled={busy}>
-              Cancel
-            </button>
-            {!creating && (
-              <button className="btn quiet" type="button" onClick={remove} disabled={busy}>
-                Delete
-              </button>
-            )}
-          </div>
+    <Dialog
+      wide
+      title={
+        adding ? (
+          'Add a shared variable'
+        ) : (
+          <>
+            Edit <span className="mono">{name}</span>
+          </>
+        )
+      }
+      busy={busy}
+      onClose={onClose}
+      onSubmit={submit}
+      footer={
+        <>
           {problem && (
-            <p className="field-message" role="alert">
+            <span className="grow field-message" role="alert">
               {problem}
-            </p>
+            </span>
           )}
-        </form>
+          <button className="btn quiet medium" type="button" disabled={busy} onClick={onClose}>
+            Cancel
+          </button>
+          <button className="btn primary medium" type="submit" disabled={busy || !name.trim()}>
+            {busy ? 'Saving…' : adding ? 'Add variable' : 'Save changes'}
+          </button>
+        </>
+      }
+    >
+      {adding && (
+        <label className="field">
+          <span className="field-label">Name</span>
+          <input
+            className="input mono"
+            placeholder="NPM_TOKEN"
+            value={name}
+            spellCheck={false}
+            autoCapitalize="off"
+            autoComplete="off"
+            onChange={(e) => setName(e.target.value.replace(/\s/g, '_'))}
+          />
+        </label>
       )}
-      {data && (
-        <div className="panel ops-table">
-          <table>
-            <thead>
-              <tr>
-                {['Name', 'Value', 'Where', 'Used by', ''].map((h, i) => (
-                  <th key={i}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {data.variables.map((v) => (
-                <tr key={v.name}>
-                  <td>
-                    <strong className="mono">{v.name}</strong>
-                    {v.name.startsWith('VITE_') && <small>Built into the site, so the browser can read it.</small>}
-                  </td>
-                  <td className="mono" aria-label="Hidden value">
-                    ••••••••••••
-                  </td>
-                  <td>{[v.production && 'Production', v.preview && 'Preview'].filter(Boolean).join(', ')}</td>
-                  <td>{v.projects.join(', ') || 'No projects'}</td>
-                  <td>
-                    <button className="btn quiet" onClick={() => open(v)} aria-label={'Edit ' + v.name}>
-                      Edit
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {data.variables.length === 0 && <p className="ops-empty">No shared variables yet.</p>}
+      <div className="field">
+        <div className="field-top">
+          <span className="field-label">Value</span>
+          {!adding && (
+            <label className="check">
+              <input type="checkbox" checked={replace} onChange={(e) => setReplace(e.target.checked)} />
+              <span>Replace the stored value</span>
+            </label>
+          )}
         </div>
-      )}
-    </main>
+        {replace ? (
+          <>
+            <LongValue value={value} onChange={setValue} label="Value" placeholder="Paste the value" autoFocus={!adding} />
+            <span className="t-note">Stored encrypted. It can't be shown again after you save it.</span>
+          </>
+        ) : (
+          <span className="t-note">The stored value stays as it is.</span>
+        )}
+      </div>
+      <div className="field">
+        <span className="field-label">Where</span>
+        <ScopePicker value={scopes} onChange={setScopes} label="Where it applies" />
+      </div>
+      <div className="field">
+        <div className="field-top">
+          <span className="field-label">
+            Linked projects <span className="count">{linked.length}</span>
+          </span>
+          {projects.length > 1 && (
+            <button
+              className="btn quiet small"
+              type="button"
+              onClick={() => setLinked(linked.length === projects.length ? [] : projects.map((p) => p.name))}
+            >
+              {linked.length === projects.length ? 'Unlink all' : 'Link all'}
+            </button>
+          )}
+        </div>
+        {projects.length === 0 ? (
+          <span className="t-note">There are no projects yet. Link this once you've made one.</span>
+        ) : (
+          <div className="pick-list">
+            {projects.length > 8 && (
+              <label className="pick-find">
+                <Search />
+                <input placeholder={`Find among ${plural(projects.length, 'project')}`} value={find} onChange={(e) => setFind(e.target.value)} aria-label="Find a project" />
+              </label>
+            )}
+            <div className="pick-rows">
+              {listedProjects.map((p) => (
+                <label className="check" key={p.name}>
+                  <input
+                    type="checkbox"
+                    checked={linked.includes(p.name)}
+                    onChange={(e) => setLinked(e.target.checked ? [...linked, p.name] : linked.filter((n) => n !== p.name))}
+                  />
+                  <span>{p.name}</span>
+                </label>
+              ))}
+              {listedProjects.length === 0 && <span className="t-note">No project matches.</span>}
+            </div>
+          </div>
+        )}
+      </div>
+    </Dialog>
   )
 }
