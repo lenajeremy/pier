@@ -68,6 +68,43 @@ func (a *API) createProject(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{"name": name, "address": host, "url": a.Deployer.URL(host)})
 }
 
+// deleteProject removes a project, unroutes its addresses, stops its containers
+// and images, and removes its saved build artifacts and bare repository.
+func (a *API) deleteProject(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("project")
+	if !validProject(name) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "that isn't a project name"})
+		return
+	}
+	err := a.Store.DeleteProject(r.Context(), name)
+	if errors.Is(err, store.ErrNotFound) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "there's no project called " + name})
+		return
+	}
+	if errors.Is(err, store.ErrBuilding) {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "Wait for the running build to finish before deleting this project."})
+		return
+	}
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	if err := a.Deployer.Sync(r.Context()); err != nil {
+		a.Log.Warn("sync router after project deletion", "project", name, "err", err)
+	}
+	if err := a.finishFiles(r.Context()); err != nil {
+		a.Log.Warn("deferred cleanup after project deletion", "project", name, "err", err)
+	}
+	if a.Deployer.Repos != "" {
+		if err := os.RemoveAll(a.Deployer.RepoPath(name)); err != nil {
+			a.Log.Warn("remove repository after project deletion", "project", name, "err", err)
+		}
+	}
+	a.event(r.Context(), name, "Deleted project", "", "")
+	a.Log.Info("project deleted", "project", name)
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // settings is a project's build settings, with what the last build detected
 // so the dashboard can show it beside each field.
 func (a *API) settings(w http.ResponseWriter, r *http.Request) {

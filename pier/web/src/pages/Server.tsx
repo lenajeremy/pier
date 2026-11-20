@@ -24,15 +24,14 @@ export function Server() {
   const { data, error, reload } = useData<Health>('/api/server', () => true, 15000)
   const [busy, setBusy] = useState(false),
     [notice, setNotice] = useState('')
-  async function clean(kind: 'previews' | 'cache') {
-    if (
-      !window.confirm(
-        kind === 'previews'
-          ? 'Remove the listed inactive previews and their saved sources and build logs?'
-          : 'Clear Pier’s Docker package cache? The next build may take longer.',
-      )
-    )
-      return
+  async function clean(kind: 'previews' | 'cache' | 'docker-cache') {
+    const prompt =
+      kind === 'previews'
+        ? 'Remove the listed inactive previews and their saved sources and build logs?'
+        : kind === 'docker-cache'
+          ? 'Prune Docker Buildx layer cache and untagged dangling layers? Running containers and active deployment images are untouched.'
+          : 'Clear Pier’s Docker package cache? The next build may take longer.'
+    if (!window.confirm(prompt)) return
     setBusy(true)
     setNotice('')
     try {
@@ -108,6 +107,11 @@ export function Server() {
                 {i.name === 'Build cache' && (
                   <button className="btn quiet" disabled={busy} onClick={() => clean('cache')}>
                     Clear cache
+                  </button>
+                )}
+                {i.name === 'Docker build cache' && (
+                  <button className="btn quiet" disabled={busy} onClick={() => clean('docker-cache')}>
+                    Prune cache
                   </button>
                 )}
               </div>

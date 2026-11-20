@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { api, ApiError, changePreset, type Build, type RuntimeSettings, type Settings } from '../lib/api'
 import { useData } from '../lib/data'
+import { navigate } from '../lib/router'
 import { Info } from '../components/Icons'
 
 const empty: Build = { root: '', preset: '', install: '', command: '', output: '' }
@@ -8,12 +9,15 @@ const emptyRuntime: RuntimeSettings = { start_command: '', health_path: '', memo
 
 // ProjectSettings is the Build panel of D2, on its own tab: Pier detects how
 // to build on every deploy, and anything filled in here overrides it.
-export function ProjectSettings({ project }: { project: string }) {
+export function ProjectSettings({ project, onDeleted }: { project: string; onDeleted?: () => void }) {
   const { data, error } = useData<Settings>(`/api/projects/${encodeURIComponent(project)}/settings`)
   const [b, setB] = useState<Build>(empty)
   const [rt, setRt] = useState<RuntimeSettings>(emptyRuntime)
   const [branch, setBranch] = useState('')
   const [state, setState] = useState<{ saving?: boolean; saved?: boolean; error?: string; field?: string }>({})
+  const [confirmDelete, setConfirmDelete] = useState('')
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState('')
 
   useEffect(() => {
     if (data) {
@@ -204,6 +208,52 @@ export function ProjectSettings({ project }: { project: string }) {
           </button>
         </div>
       </form>
+
+      <section className="panel form-panel" style={{ marginTop: 12 }}>
+        <span className="t-small t-strong">Delete project</span>
+        <span className="t-caption t-muted" style={{ maxWidth: 640 }}>
+          Permanently removes <span className="mono">{project}</span>, stops its running containers, removes its routes and custom domains, and deletes all deployments, variables, and saved build logs.
+        </span>
+        <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12, flexWrap: 'wrap' }}>
+          <label className="field" style={{ flex: '1 1 260px', maxWidth: 360 }}>
+            <span className="field-label">Type {project} to confirm</span>
+            <input
+              className="input mono"
+              placeholder={project}
+              value={confirmDelete}
+              onChange={(e) => {
+                setConfirmDelete(e.target.value)
+                setDeleteError('')
+              }}
+              spellCheck={false}
+            />
+          </label>
+          <button
+            className="btn danger large"
+            type="button"
+            disabled={deleting || confirmDelete.trim() !== project}
+            onClick={async () => {
+              setDeleting(true)
+              setDeleteError('')
+              try {
+                await api(`/api/projects/${encodeURIComponent(project)}`, { method: 'DELETE' })
+                onDeleted?.()
+                navigate('/')
+              } catch (err) {
+                setDeleteError(err instanceof ApiError ? err.message : "Can't reach pierd.")
+                setDeleting(false)
+              }
+            }}
+          >
+            {deleting ? 'Deleting…' : 'Delete project'}
+          </button>
+        </div>
+        {deleteError && (
+          <span className="field-message" role="alert">
+            {deleteError}
+          </span>
+        )}
+      </section>
     </main>
   )
 }
