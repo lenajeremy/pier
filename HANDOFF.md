@@ -127,6 +127,7 @@ The design is the source of truth. It's on the Screenshotter board **"Pier websi
   - **Forms:** `.field` with the label above and the help below, in `.form-grid` (three columns) or `.form-grid.two`. A long value is `<LongValue>`. Page forms save from the `.save-bar` that appears when something changed.
   - **Narrow windows:** `styles/responsive.css` measures the content, not the window. When a table gets a new column, say there which column it gives up first.
   - **Sentences, not separators:** no middle dots between facts, no arrows typed into link text, and dates in `en-GB`.
+  - **The ground:** the sign-in page's gradient (`--d-ground`) sits still behind the whole dashboard, at half strength (`--d-ground-strength`; he asked for it, then asked for it quieter). It shows through the sidebar (`--d-sidebar-glass`), behind page headers and between panels. Panels stay nearly solid (`--d-panel`), so data sits on one even surface: see-through panels were tried on 2026-11-20 and made a table navy on one side and violet on the other.
 
 ## 4. Working rules
 

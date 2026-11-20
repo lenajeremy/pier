@@ -6,7 +6,20 @@
 .app {
   display: flex;
   min-height: 100vh;
-  background: var(--d-bg);
+  position: relative;
+  isolation: isolate;
+}
+/* The ground is the sign-in page's: the same light, held still behind the
+   whole dashboard while pages scroll over it. Panels and the sidebar are
+   slightly see-through, so it tints them. */
+.app::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background: var(--d-ground);
+  opacity: var(--d-ground-strength);
+  pointer-events: none;
 }
 .content {
   flex: 1;
@@ -109,7 +122,7 @@
   flex-direction: column;
   gap: 18px;
   padding: 16px 12px 14px;
-  background: var(--d-sidebar);
+  background: var(--d-sidebar-glass);
   border-right: 1px solid var(--d-line-soft);
   position: sticky;
   top: 0;
@@ -2384,7 +2397,11 @@ select.input.compact,
   line-height: 19px;
   font-weight: 400;
   color: var(--d-note);
-  background: #111520;
+  /* It sticks while its day scrolls under it, so it blurs what's behind
+     rather than covering the ground with a flat band. */
+  background: rgba(20, 25, 38, 0.72);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
   border-bottom: 1px solid var(--d-line-faint);
 }
 .feed-day + .feed-day .feed-date {

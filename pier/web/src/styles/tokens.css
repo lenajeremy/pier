@@ -10,6 +10,8 @@
 :root {
   --d-bg: #07090f;
   --d-sidebar: #0b0e16;
+  --d-sidebar-glass: rgba(7, 9, 15, 0.46); /* over the ground, which shows through */
+  --d-ground-strength: 0.5; /* how much of the sign-in gradient the dashboard shows: 1 is all of it */
   --d-panel: rgba(14, 18, 28, 0.92);
   --d-input: rgba(14, 18, 28, 0.9);
   --d-well: rgba(7, 9, 15, 0.72);
