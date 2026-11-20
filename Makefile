@@ -11,8 +11,9 @@ help:
 	@echo "    make pier-web-dev  the dashboard with live reload on :5175 (pierd on :7777)"
 	@echo "    make pier-test     go vet and unit tests"
 	@echo "    make pier-e2e      push real projects through Caddy, pierd and Docker"
-	@echo "    make pier-release  package a Linux installer (ARCH=amd64 or arm64)"
-	@echo "    make pier-vps      install/upgrade Pier on a VPS (HOST=user@ip)"
+	@echo "    make pier-release     package a Linux server installer (ARCH=amd64 or arm64)"
+	@echo "    make pier-cli-release package macOS and Linux CLI tarballs"
+	@echo "    make pier-vps         install/upgrade Pier on a VPS (HOST=user@ip)"
 	@echo "    make pier-caddy    run a standalone Caddy for compatibility testing"
 	@echo "    make pier-dev      run pierd with embedded Caddy for development"
 	@echo ""
@@ -87,10 +88,13 @@ site-test:
 	cd site/v2 && npm run typecheck
 	cd site/v3 && npm run typecheck
 
-.PHONY: pier-release pier-vps
+.PHONY: pier-release pier-cli-release pier-vps
 ARCH ?= amd64
 pier-release: pier-web
 	pier/scripts/release.sh $(ARCH)
+
+pier-cli-release:
+	pier/scripts/release-cli.sh
 
 pier-vps:
 	@test -n "$(HOST)" || { echo "Usage: make pier-vps HOST=user@your-vps-ip" >&2; exit 2; }
