@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"regexp"
@@ -201,6 +202,207 @@ func (a *API) setVariable(w http.ResponseWriter, r *http.Request) {
 	}
 	a.event(r.Context(), name, "Changed variable", req.Name+" · "+strings.Join(req.Scopes, ", "), "")
 	a.Log.Info("variable set", "project", name, "name", req.Name, "scopes", strings.Join(req.Scopes, ","))
+	a.variables(w, r)
+}
+
+const maxImportBytes = 1 << 20
+const maxImportVars = 256
+
+type envPair struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
+// parseDotEnv parses .env / Railway Raw Editor text, supporting comments,
+// optional "export " prefixes, and single- or double-quoted multiline values.
+func parseDotEnv(raw string) ([]envPair, error) {
+	raw = strings.TrimPrefix(raw, "\uFEFF")
+	raw = strings.ReplaceAll(raw, "\r\n", "\n")
+	raw = strings.ReplaceAll(raw, "\r", "\n")
+
+	var out []envPair
+	index := map[string]int{}
+	i, line := 0, 1
+	n := len(raw)
+
+	skipSpaces := func() {
+		for i < n && (raw[i] == ' ' || raw[i] == '\t') {
+			i++
+		}
+	}
+
+	for i < n {
+		skipSpaces()
+		if i >= n {
+			break
+		}
+		if raw[i] == '\n' {
+			i++
+			line++
+			continue
+		}
+		if raw[i] == '#' {
+			for i < n && raw[i] != '\n' {
+				i++
+			}
+			continue
+		}
+		startLine := line
+		if strings.HasPrefix(raw[i:], "export") && i+6 < n && (raw[i+6] == ' ' || raw[i+6] == '\t') {
+			i += 6
+			skipSpaces()
+		}
+		keyStart := i
+		for i < n && raw[i] != '=' && raw[i] != '\n' {
+			i++
+		}
+		if i >= n || raw[i] != '=' {
+			return nil, fmt.Errorf("line %d: expected NAME=value", startLine)
+		}
+		key := strings.TrimSpace(raw[keyStart:i])
+		i++ // consume '='
+		skipSpaces()
+
+		var val string
+		if i < n && (raw[i] == '"' || raw[i] == '\'') {
+			quote := raw[i]
+			i++
+			var b strings.Builder
+			closed := false
+			for i < n {
+				c := raw[i]
+				if c == '\n' {
+					line++
+				}
+				if quote == '"' && c == '\\' && i+1 < n {
+					next := raw[i+1]
+					switch next {
+					case 'n':
+						b.WriteByte('\n')
+					case 'r':
+						b.WriteByte('\r')
+					case 't':
+						b.WriteByte('\t')
+					case '"', '\\', '$':
+						b.WriteByte(next)
+					case '\n':
+						line++
+					default:
+						b.WriteByte('\\')
+						b.WriteByte(next)
+					}
+					i += 2
+					continue
+				}
+				if c == quote {
+					i++
+					closed = true
+					break
+				}
+				b.WriteByte(c)
+				i++
+			}
+			if !closed {
+				return nil, fmt.Errorf("line %d: unterminated quote for %s", startLine, key)
+			}
+			val = b.String()
+			for i < n && raw[i] != '\n' {
+				if raw[i] == '#' {
+					for i < n && raw[i] != '\n' {
+						i++
+					}
+					break
+				}
+				if raw[i] != ' ' && raw[i] != '\t' {
+					return nil, fmt.Errorf("line %d: unexpected characters after closing quote for %s", line, key)
+				}
+				i++
+			}
+		} else {
+			valStart := i
+			for i < n && raw[i] != '\n' {
+				i++
+			}
+			val = strings.TrimRight(raw[valStart:i], " \t")
+		}
+		if i < n && raw[i] == '\n' {
+			i++
+			line++
+		}
+
+		if !varName.MatchString(key) {
+			return nil, fmt.Errorf("line %d: %q is not a valid variable name", startLine, key)
+		}
+		if isReservedVar(key) {
+			return nil, fmt.Errorf("line %d: %s is reserved by Pier for builds", startLine, key)
+		}
+		if len(val) > MaxValue {
+			return nil, fmt.Errorf("line %d: %s exceeds the 64 KB limit", startLine, key)
+		}
+		if pos, exists := index[key]; exists {
+			out[pos].Value = val
+		} else {
+			if len(out) >= maxImportVars {
+				return nil, fmt.Errorf("import at most %d variables at once", maxImportVars)
+			}
+			index[key] = len(out)
+			out = append(out, envPair{Name: key, Value: val})
+		}
+	}
+	return out, nil
+}
+
+// importVariables parses a pasted .env block and saves all variables to the given scopes.
+func (a *API) importVariables(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("project")
+	if _, ok := a.findProject(w, r, name); !ok {
+		return
+	}
+	var req struct {
+		Raw    string   `json:"raw"`
+		Scopes []string `json:"scopes"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, maxImportBytes)).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "send the .env payload as JSON"})
+		return
+	}
+	if len(req.Scopes) == 0 {
+		req.Scopes = []string{store.TargetProduction, store.TargetPreview}
+	}
+	for _, s := range req.Scopes {
+		if s != store.TargetProduction && s != store.TargetPreview {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "Scopes are production and preview.", "field": "scopes"})
+			return
+		}
+	}
+	pairs, err := parseDotEnv(req.Raw)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error(), "field": "raw"})
+		return
+	}
+	if len(pairs) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "Paste at least one NAME=value line to import.", "field": "raw"})
+		return
+	}
+	for _, p := range pairs {
+		for _, scope := range req.Scopes {
+			sealed, err := a.Deployer.Secrets.Seal(p.Value, deploy.SealedFor(name, scope, p.Name))
+			if err != nil {
+				a.fail(w, err)
+				return
+			}
+			if err := a.Store.SetVariable(r.Context(), store.Variable{Project: name, Scope: scope, Name: p.Name, Value: sealed}); err != nil {
+				a.fail(w, err)
+				return
+			}
+		}
+	}
+	summary := fmt.Sprintf("%d variables · %s", len(pairs), strings.Join(req.Scopes, ", "))
+	if len(pairs) == 1 {
+		summary = pairs[0].Name + " · " + strings.Join(req.Scopes, ", ")
+	}
+	a.event(r.Context(), name, "Imported variables", summary, "")
+	a.Log.Info("variables imported", "project", name, "count", len(pairs), "scopes", strings.Join(req.Scopes, ","))
 	a.variables(w, r)
 }
 

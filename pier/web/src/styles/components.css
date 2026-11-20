@@ -1273,6 +1273,26 @@ select.input {
   gap: 14px;
   align-items: end;
 }
+.add-fields.multiline {
+  grid-template-columns: minmax(0, 1fr);
+}
+textarea.input {
+  height: auto;
+  min-height: 92px;
+  padding: 10px 12px;
+  line-height: 1.5;
+  resize: vertical;
+  white-space: pre;
+  overflow-wrap: normal;
+  overflow-x: auto;
+}
+.import-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
 .var-row {
   display: grid;
   grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) 220px 170px 32px;
@@ -1291,6 +1311,19 @@ select.input {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.var-row .value > pre {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--d-well);
+  border: 1px solid var(--d-line-faint);
+  max-height: 140px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  flex: 1;
+  min-width: 0;
+}
 .var-row .value {
   display: flex;
   align-items: center;
@@ -1299,6 +1332,11 @@ select.input {
 }
 .var-row .value .input {
   height: 36px;
+}
+.var-row .value textarea.input {
+  height: auto;
+  min-height: 76px;
+  width: 100%;
 }
 .var-row .reveal {
   display: flex;

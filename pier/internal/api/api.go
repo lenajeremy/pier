@@ -81,6 +81,7 @@ func (a *API) Public() http.Handler {
 	mux.Handle("GET /api/projects/{project}/requests", a.auth(http.HandlerFunc(a.requestLines)))
 	mux.Handle("GET /api/projects/{project}/requests/chart", a.auth(http.HandlerFunc(a.requestChart)))
 	mux.Handle("PUT /api/projects/{project}/variables", a.auth(http.HandlerFunc(a.setVariable)))
+	mux.Handle("POST /api/projects/{project}/variables/import", a.auth(http.HandlerFunc(a.importVariables)))
 	mux.Handle("POST /api/projects/{project}/variables/delete", a.auth(http.HandlerFunc(a.deleteVariable)))
 	mux.Handle("POST /api/projects/{project}/variables/reveal", a.auth(http.HandlerFunc(a.revealVariable)))
 	mux.Handle("POST /api/projects/{project}/rollback", a.auth(http.HandlerFunc(a.rollback)))
