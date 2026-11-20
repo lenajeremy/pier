@@ -56,6 +56,35 @@ Open a project’s **Domains** tab and enter the hostname. Copy the records show
 
 Once DNS matches, the hostname follows the project’s production deployment, including promotions and rollbacks. With HTTPS enabled, the dashboard checks the certificate served by the local site listener before showing **Live, with HTTPS**. The default development listener serves HTTP.
 
+## Operating Pier
+
+- In **Shared variables**, add an encrypted value, choose Production or Preview, and link the projects that need it. A project’s own variable overrides the shared one in that scope. Redeploy to apply a change to an existing site.
+- **Activity** shows server events and build history. Filter by project to find a deployment, promotion or rollback.
+- **Server** samples CPU, memory and disk every minute, retains seven days of measurements, and shows service status and disk usage. Cleanup can clear the Pier package cache or remove inactive previews older than 30 days, including their build logs and saved uploads. Branch heads, production history and deployments from before cleanup tracking are protected.
+- **Settings** saves the dashboard hostname and project base domain, checks DNS, and changes the owner password. Restart pierd to apply saved addresses. Explicit `-address` and `-domain` flags take precedence. Changing the password signs the owner out on every browser and linked computer.
+
+Request logs default to the linked project and the last 24 hours. Use the project name to query another project.
+
+```sh
+pier logs docs --since 1h --status 404 --path /guide
+pier logs docs --follow
+```
+
+## Linux installer
+
+From the repository root, run `make pier-web-deps` once, then `make pier-release ARCH=amd64` or `make pier-release ARCH=arm64`. Copy the matching archive from `pier/bin/releases` to the Linux machine. For example, on an ARM64 server with systemd, git and Docker Engine installed:
+
+```sh
+tar -xzf pier-linux-arm64.tar.gz
+cd pier-linux-arm64
+./install.sh --check
+sudo ./install.sh
+sudo -u pier /usr/local/bin/pierd init
+sudo systemctl start pierd
+```
+
+The installer verifies the bundle, creates the `pier` service account and gives it access to the local Docker engine. On apt-based systems it can install Docker with your confirmation. Running the installer again upgrades the binaries and restarts an active service. Pier stores its database, uploads, deployment files and keys under `/var/lib/pier`.
+
 ## Layout
 
 ```
@@ -120,7 +149,6 @@ ssh_host_ed25519_key     the SSH host key
 pierd.sock               the git hook's socket
 ```
 
-## Next
+## Public rollout
 
-The order the dashboard needs them in (design/v3/dashboard-brief.md, kept
-outside the repository): public wildcard certificate rollout, shared variables, the logs CLI, and server health.
+The public VPS test is deferred. It covers a fresh systemd installation, delegated DNS and publicly trusted certificates for the dashboard and project addresses.

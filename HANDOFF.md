@@ -12,7 +12,7 @@ and Railway, but never Railway's canvas.
 
 - **Two programs.**
   - `pierd` is the daemon on the VPS: builds, deployments, routing and the dashboard. It also has the owner-only commands, run over SSH: `pierd init`, `pierd reset-password`, `pierd domain set` (not built), `pierd status` (not built).
-  - `pier` is the CLI on a laptop: `pier login`, `pier deploy`, `pier logs` (not built), `pier rollback`.
+  - `pier` is the CLI on a laptop: `pier login`, `pier deploy`, `pier logs`, `pier rollback`.
 - **Two ways to deploy.**
   - **GitHub.** Each owner creates their own GitHub App from the dashboard, through GitHub's app-manifest flow, in one click. Every push deploys: the production branch goes to production, and other branches and pull requests get previews (`pr-42--agentman.lenajeremy.xyz`). Pier posts the preview link on the pull request. Pull requests from forks wait for the owner's approval.
   - **The CLI (built).** `pier deploy` makes a preview, and `pier deploy --prod` deploys to production, as on Vercel.
@@ -162,7 +162,7 @@ The design is the source of truth. It's on the Screenshotter board **"Pier websi
    - The Logs tab has filters (path search, status, the 15m, 1h, 24h and 7d range), the requests and errors line charts with hover, and the live list.
    - H2’s Custom picker accepts local calendar days up to six months back. Ranges ending today follow live. Filtered charts use the 14 days of request lines.
    - The project home shows yesterday’s requests and errors when either of the previous two days had traffic. Each number opens the matching range in Logs.
-   - The remaining Logs work is the `pier logs` CLI command.
+   - `pier logs [PROJECT]` prints requests in chronological order. It supports `--follow`, `--path`, `--status`, `--since` and `--limit`.
 
 10. GitHub deployments:
     - Integrations registers a private GitHub App through the manifest flow. Install it on selected repositories. New project imports a repository, confirms the production branch and build overrides, and deploys its current head.
@@ -176,8 +176,11 @@ The design is the source of truth. It's on the Screenshotter board **"Pier websi
     - The Domains page distinguishes pending DNS, pending HTTPS, HTTP development mode and verified HTTPS. F3 on the board covers the certificate wait.
     - Embedded Caddy restores production, branch and immutable routes from SQLite on restart. Local Pebble tests issue and serve custom and wildcard certificates. The delegated DNS responder has TCP and UDP tests. Activating that responder on public interfaces and verifying a publicly trusted certificate on a VPS are outstanding.
 
-**Placeholders for now:**
-- **Pages:** Activity, Shared variables, Server and Settings. They say what they'll hold.
+12. Shared variables (K2) are encrypted, scoped and linked to selected projects. Project variables override shared values in the same scope. The project Variables tab lists inherited values by name.
+13. Activity (K1) records builds, production changes, sign-ins, approvals and owner actions. Older projects and completed builds are included when upgrading.
+14. Server (I1) shows current resource usage, 24-hour and 7-day charts, service status, disk usage by category, and controls for clearing the package cache and inactive previews.
+15. Settings (K4) manages dashboard and base addresses, checks DNS, links to the GitHub App and sessions, and lets the owner change their password. Address changes take effect on restart. Password changes revoke the owner’s browser and CLI sessions.
+16. `make pier-release ARCH=amd64` and `ARCH=arm64` produce Linux bundles with checksums and a systemd installer. See `pier/README.md` for setup.
 
 ## 6. Running and testing
 
@@ -203,10 +206,7 @@ echo "a long password" | pier/bin/pierd init -data $D -email you@example.com -pa
 
 **To sign a browser in without typing a password:** run `curl -c jar -H 'X-Pier: 1' -d '{"email":…,"password":…}' http://127.0.0.1:27777/api/session`, then set `pier_session=<token from the jar>` with `document.cookie` in the page.
 
-Everything so far was tested on macOS: pierd runs natively, and builds run in Docker through OrbStack. These are untested and need Linux, either an OrbStack Ubuntu machine (`orb create ubuntu`) or the real VPS (80.20.201.29):
-- the swap and systemd steps of `pierd init`,
-- binding ports 80, 443 and 53 as root,
-- real DNS and Let's Encrypt.
+Local checks use macOS, OrbStack Docker builds and Linux containers. Public DNS delegation, public certificate issuance and a fresh VPS installation remain deferred until a VPS and domain are available.
 
 ## 7. Code map
 
@@ -228,16 +228,12 @@ The brief's backend order:
 1. **The GitHub App:** built and tested (see section 5). The older SSH push path is still available. Retiring it needs a migration for existing callers and test coverage.
 2. **Promote and rollback:** done (see §5).
 3. **Domains and embedded Caddy are built.** The challenge responder and wildcard issuance have been tested with a private CA. Connect the responder to production daemon startup, verify delegated DNS and public HTTPS with an authorized VPS and domain, then finish the Certificates step of A4 and `pierd domain set`.
-4. **Variables:** done (see §5). Still to do: Shared variables (K2), linked into several projects; a project's own variable wins.
-5. **Request logs:** the dashboard and project summary are built (see §5). The CLI still needs `pier logs`.
-6. **Server health (I1):** disk breakdown and clean-up, CPU, memory, and services.
-7. **Activity (K1), Settings,** the install script (A1), and `pier logs`.
+4. The local operator features are implemented, including shared variables, CLI logs, health monitoring and cleanup, activity, settings and the Linux installer. See `5 and `pier/README.md`.
 
 **Known gaps:**
 - The board doesn't show the tiles or the single Visit yet. Update the frames when convenient.
 - Row J (the CLI screens) isn't drawn.
 - A failed build's preview box shows a generic error; showing the first error line from the log would be better.
 - Static uploads serve dotfiles such as `.gitignore`.
-- Kept upload sources (`data/sources/`) are never cleaned up yet; the Server page's clean-up should cover them.
 - Values with newlines work in builds, but the dashboard's single-line field can't enter them; an "Import .env" (G1 shows the button) would help.
 - Sessions made by non-browser clients are named "A browser".

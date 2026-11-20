@@ -15,6 +15,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -252,6 +253,7 @@ type Filter struct {
 	Query    string // part of the path
 	After    int64  // only requests newer than this ID, for following
 	Limit    int
+	Forward  bool // read the earliest page after a follow cursor
 }
 
 func (f Filter) where(project string) (string, []any) {
@@ -268,6 +270,11 @@ func (f Filter) where(project string) (string, []any) {
 		args = append(args, lo, lo+100)
 	case "errors":
 		w = append(w, "status >= 400")
+	default:
+		if n, e := strconv.Atoi(f.Status); e == nil && n >= 100 && n <= 599 {
+			w = append(w, "status = ?")
+			args = append(args, n)
+		}
 	}
 	if q := strings.TrimSpace(f.Query); q != "" {
 		w = append(w, "instr(lower(path), lower(?)) > 0")
@@ -287,8 +294,12 @@ func (l *Log) Lines(ctx context.Context, project string, f Filter) ([]Line, erro
 		f.Limit = 200
 	}
 	where, args := f.where(project)
+	order := " DESC"
+	if f.Forward {
+		order = " ASC"
+	}
 	rows, err := l.db.QueryContext(ctx, `SELECT id, deployment, ts, method, path, status, ms, bytes FROM requests WHERE `+where+
-		` ORDER BY id DESC LIMIT ?`, append(args, f.Limit)...)
+		` ORDER BY id`+order+` LIMIT ?`, append(args, f.Limit)...)
 	if err != nil {
 		return nil, err
 	}
@@ -301,7 +312,7 @@ func (l *Log) Lines(ctx context.Context, project string, f Filter) ([]Line, erro
 		}
 		out = append(out, r)
 	}
-	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+	for i, j := 0, len(out)-1; !f.Forward && i < j; i, j = i+1, j-1 {
 		out[i], out[j] = out[j], out[i]
 	}
 	return out, rows.Err()

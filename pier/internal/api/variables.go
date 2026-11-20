@@ -86,7 +86,34 @@ func (a *API) variables(w http.ResponseWriter, r *http.Request) {
 			stale = map[string]any{"production": true, "names": nonNil(names), "deployment": ps.production.Deployment.ID}
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"variables": entries, "stale": stale})
+	shared, err := a.Store.SharedVariables(r.Context())
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	type inherited struct {
+		Name   string   `json:"name"`
+		Scopes []string `json:"scopes"`
+	}
+	inheritedVars := []inherited{}
+	for _, v := range shared {
+		if !slices.Contains(v.Projects, name) {
+			continue
+		}
+		var scopes []string
+		for _, scope := range []string{store.TargetProduction, store.TargetPreview} {
+			if (scope == store.TargetProduction && !v.Production) || (scope == store.TargetPreview && !v.Preview) {
+				continue
+			}
+			if !slices.ContainsFunc(byName[v.Name], func(own store.Variable) bool { return own.Scope == scope }) {
+				scopes = append(scopes, scope)
+			}
+		}
+		if len(scopes) > 0 {
+			inheritedVars = append(inheritedVars, inherited{v.Name, scopes})
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"variables": entries, "inherited": inheritedVars, "stale": stale})
 }
 
 func (a *API) sameValue(project string, x, y store.Variable) bool {
@@ -96,9 +123,11 @@ func (a *API) sameValue(project string, x, y store.Variable) bool {
 }
 
 type varRequest struct {
-	Name   string   `json:"name"`
-	Value  string   `json:"value"`
-	Scopes []string `json:"scopes"`
+	Name      string   `json:"name"`
+	Value     string   `json:"value"`
+	Projects  []string `json:"projects"`
+	KeepValue bool     `json:"keep_value"`
+	Scopes    []string `json:"scopes"`
 }
 
 func readVar(w http.ResponseWriter, r *http.Request, needValue bool) (varRequest, bool) {
@@ -152,6 +181,7 @@ func (a *API) setVariable(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	a.event(r.Context(), name, "Changed variable", req.Name+" · "+strings.Join(req.Scopes, ", "), "")
 	a.Log.Info("variable set", "project", name, "name", req.Name, "scopes", strings.Join(req.Scopes, ","))
 	a.variables(w, r)
 }
@@ -172,6 +202,7 @@ func (a *API) deleteVariable(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	a.event(r.Context(), name, "Removed variable", req.Name+" · "+strings.Join(req.Scopes, ", "), "")
 	a.Log.Info("variable deleted", "project", name, "name", req.Name)
 	a.variables(w, r)
 }

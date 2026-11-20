@@ -151,3 +151,28 @@ func TestHistoricalChartAfterLineRetention(t *testing.T) {
 		t.Fatalf("expected one retained server error, got %v", buckets)
 	}
 }
+
+func TestFollowReadsEveryMatchingLineAcrossPages(t *testing.T) {
+	ctx := context.Background()
+	l := open(t)
+	now := time.Now().UnixMilli()
+	for i := 0; i < 625; i++ {
+		l.Add(Line{Project: "docs", At: now, Path: "/missing", Method: "GET", Status: 404})
+	}
+	if err := l.Flush(ctx); err != nil {
+		t.Fatal(err)
+	}
+	f := Filter{From: now - 1, To: now + 1, Status: "404", Query: "missing", Forward: true, Limit: 500}
+	for _, want := range []int{500, 125, 0} {
+		rows, err := l.Lines(ctx, "docs", f)
+		if err != nil || len(rows) != want {
+			t.Fatalf("after %d: got %d lines, %v", f.After, len(rows), err)
+		}
+		for _, r := range rows {
+			if r.ID <= f.After {
+				t.Fatalf("out-of-order ID %d after %d", r.ID, f.After)
+			}
+			f.After = r.ID
+		}
+	}
+}

@@ -144,6 +144,10 @@ func serve(args []string) int {
 	if *address == "" {
 		*address = *domain
 	}
+	if err := st.AlignAliases(setup, *domain); err != nil {
+		log.Error("restore project addresses", "err", err)
+		return 1
+	}
 	owners, err := st.UserCount(setup)
 	if err != nil {
 		log.Error("read accounts", "err", err)
@@ -205,8 +209,12 @@ func serve(args []string) int {
 		}
 	}()
 
-	a := &api.API{Store: st, Deployer: dep, Token: tok, Log: log, Web: web.Handler(), Requests: reqs, SiteListener: dialable(*httpAddr)}
+	a := &api.API{StartedAt: time.Now(), Store: st, Deployer: dep, Token: tok, Log: log, Web: web.Handler(), Requests: reqs, SiteListener: dialable(*httpAddr)}
+	if err := a.ResumeCleanup(ctx); err != nil {
+		log.Warn("resume preview cleanup", "err", err)
+	}
 	go a.RunGitHub(ctx)
+	go a.SampleServer(ctx)
 	domainsDone := make(chan struct{})
 	go func() { defer close(domainsDone); a.RunDomainChecks(ctx) }()
 	defer func() { stop(); <-domainsDone }()

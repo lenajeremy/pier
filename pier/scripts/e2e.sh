@@ -194,7 +194,9 @@ step "variables reach the build, per scope, and redeploy picks up a change"
 curl -fsS -b "$JAR" -H 'X-Pier: 1' -d '{"name":"greet"}' "$API/api/projects" > /dev/null || fail "couldn't create greet"
 setvar() { curl -fsS -b "$JAR" -H 'X-Pier: 1' -X PUT -d "{\"name\":\"GREETING\",\"value\":\"$1\",\"scopes\":[\"$2\"]}" "$API/api/projects/greet/variables" > /dev/null || fail "couldn't set GREETING for $2"; }
 setvar "hello from production" production
-setvar "hello from a preview" preview
+curl -fsS -b "$JAR" -H 'X-Pier: 1' -d '{"name":"GREETING","value":"hello from a preview","scopes":["production","preview"],"projects":["greet","blog"]}' "$API/api/shared-variables" > /dev/null
+shared=$(curl -fsS -b "$JAR" "$API/api/shared-variables")
+[[ $shared == *'"projects":["blog","greet"]'* && $shared != *'hello from a preview'* ]] || fail "shared variable links or masking"
 mkdir -p "$WORK/greet" && cd "$WORK/greet"
 printf '{"name":"greet","private":true,"scripts":{"build":"mkdir -p dist && printf \\"<h1>%%s</h1>\\" \\"$GREETING\\" > dist/index.html"}}\n' > package.json
 "$PIER" deploy --project greet --prod > "$WORK/greet-prod.log" || { cat "$WORK/greet-prod.log"; fail "greet didn't deploy"; }
@@ -223,6 +225,21 @@ curl -fsS -b "$JAR" "$API/api/projects/greet/requests?status=errors" | grep -q '
 curl -fsS -b "$JAR" "$API/api/projects/greet/requests/chart" | grep -Eq '"errors":[1-9]' || fail "the chart didn't count the error"
 curl -fsS -b "$JAR" "$API/api/projects/docs/requests" | grep -q '/missing-page' && fail "one project's requests showed in another's Logs"
 echo "requests are kept per project, filtered and charted"
+
+step "request logs CLI, activity, server maintenance and owner settings"
+"$PIER" logs greet --since 1h --path /missing-page --status 404 | grep -q '404  GET "/missing-page"' || fail "CLI log filters"
+"$PIER" logs greet --path /missing-page --status 200 | grep -q . && fail "CLI status filter"
+curl -fsS -b "$JAR" "$API/api/activity?project=site" | grep -q 'Promoted to production' || fail "production activity"
+curl -fsS -b "$JAR" "$API/api/server" | grep -q '"disk_total":' || fail "server disk metrics"
+curl -fsS -b "$JAR" -H 'X-Pier: 1' -X POST "$API/api/server/cleanup/previews" | grep -q '"done":true' || fail "preview cleanup"
+fetch site.$DOMAIN / | grep -q "Version two" || fail "cleanup changed production"
+curl -fsS -b "$JAR" -H 'X-Pier: 1' -X PUT -d '{"address":"owner.pier.localhost","base":"pier.localhost"}' "$API/api/settings" | grep -q '"pending":true' || fail "pending server addresses"
+curl -fsS -b "$JAR" -H 'X-Pier: 1' -X POST "$API/api/settings/dns" | grep -q 'Local development address' || fail "DNS check"
+curl -fsS -b "$JAR" -H 'X-Pier: 1' -d '{"current":"correct horse battery","new":"my replacement password"}' "$API/api/settings/password" | grep -q '"changed":true' || fail "change password"
+code=$(curl -s -o /dev/null -w '%{http_code}' -b "$JAR" "$API/api/projects")
+[[ $code == 401 ]] || fail "old browser session survived password change"
+"$PIER" logs greet >/dev/null 2>&1 && fail "old CLI token survived password change"
+curl -fsS -c "$JAR" -H 'X-Pier: 1' -d '{"email":"owner@example.com","password":"my replacement password"}' "$API/api/session" >/dev/null
 
 step "pierd reset-password signs everyone out"
 echo "another long password" | "$PIERD" reset-password -data "$DATA" -password-stdin > /dev/null

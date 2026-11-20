@@ -3,6 +3,8 @@ import type { ProjectSummary, Session } from '../lib/api'
 import { signOut } from '../lib/api'
 import { Link, navigate } from '../lib/router'
 import * as I from './Icons'
+import { useData } from '../lib/data'
+import type { Sample } from './ServerCharts'
 import { ProjectMark } from './ProjectMark'
 
 const globals = [
@@ -26,6 +28,9 @@ type Props = {
 // Shell is the sidebar and the content beside it: the sidebar answers
 // "which project", the project's tabs answer "which part of it".
 export function Shell({ session, projects, path, project, children }: Props) {
+  const recent = useData<{samples: Sample[]}>('/api/server/history?range=latest', () => true, 60000)
+  const sample = recent.data?.samples.at(-1)
+  const pressure = sample && (sample.disk >= 85 ? 'Disk usage above 85%' : sample.memory >= 90 ? 'Memory usage above 90%' : '')
   const [menuOpen, setMenuOpen] = useState(false)
   const [query, setQuery] = useState('')
   useEffect(() => setMenuOpen(false), [path])
@@ -85,6 +90,7 @@ export function Shell({ session, projects, path, project, children }: Props) {
             <Link key={to} to={to} className={'nav-item' + (active(to) ? ' active' : '')}>
               <Icon />
               <span className="grow">{label}</span>
+              {to === '/server' && pressure && <span className="server-warning" title={pressure} aria-label={pressure}>●</span>}
             </Link>
           ))}
         </nav>

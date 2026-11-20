@@ -1,0 +1,23 @@
+[Unit]
+Description=Pier deployment server
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+User=pier
+Group=pier
+StateDirectory=pier
+StateDirectoryMode=0700
+WorkingDirectory=/var/lib/pier
+Environment=HOME=/var/lib/pier
+ExecStart=/usr/local/bin/pierd serve -data /var/lib/pier -https -http :443
+Restart=on-failure
+RestartSec=5
+UMask=0077
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -183,6 +183,33 @@ var migrations = []string{
 		address_result TEXT NOT NULL DEFAULT '',
 		redirect_result TEXT NOT NULL DEFAULT ''
 	);`,
+	`CREATE TABLE shared_variables (
+		name TEXT PRIMARY KEY, value TEXT NOT NULL, production INTEGER NOT NULL, preview INTEGER NOT NULL,
+		updated_at INTEGER NOT NULL
+	);
+	CREATE TABLE shared_links (
+		name TEXT NOT NULL REFERENCES shared_variables(name) ON DELETE CASCADE,
+		project TEXT NOT NULL REFERENCES projects(name), PRIMARY KEY(name,project)
+	);
+	CREATE INDEX shared_project ON shared_links(project);
+	CREATE TABLE activity(id INTEGER PRIMARY KEY, at INTEGER NOT NULL, project TEXT NOT NULL DEFAULT '', title TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '', deployment TEXT NOT NULL DEFAULT '');
+	CREATE INDEX activity_time ON activity(at DESC,id DESC);
+	INSERT INTO activity(at,project,title) SELECT created_at,name,'Created project' FROM projects;
+	INSERT INTO activity(at,project,title,detail,deployment) SELECT created_at+build_ms,project,
+		CASE WHEN status='failed' THEN 'Build failed' ELSE 'Build ready' END,message,id FROM deployments WHERE status IN ('ready','failed');
+	CREATE TRIGGER activity_project AFTER INSERT ON projects BEGIN
+		INSERT INTO activity(at,project,title) VALUES(NEW.created_at,NEW.name,'Created project'); END;
+	CREATE TRIGGER activity_deploy AFTER UPDATE OF status ON deployments WHEN NEW.status IN ('ready','failed') AND OLD.status!=NEW.status BEGIN
+		INSERT INTO activity(at,project,title,detail,deployment) VALUES(CAST(unixepoch('subsec')*1000 AS INTEGER),NEW.project,CASE NEW.status WHEN 'failed' THEN 'Build failed' ELSE 'Build ready' END,NEW.message,NEW.id); END;
+	CREATE TRIGGER activity_session AFTER INSERT ON sessions BEGIN
+		INSERT INTO activity(at,title,detail) VALUES(NEW.created_at,CASE NEW.kind WHEN 'cli' THEN 'Approved a computer' ELSE 'Signed in' END,NEW.name); END;
+	CREATE TABLE cleanup_files(id TEXT PRIMARY KEY);
+ CREATE TRIGGER pending_cleanup BEFORE INSERT ON deployments WHEN EXISTS(SELECT 1 FROM cleanup_files WHERE id=NEW.id) BEGIN SELECT RAISE(ABORT,'deployment cleanup pending'); END;
+ ALTER TABLE deployments ADD COLUMN keep_history INTEGER NOT NULL DEFAULT 0;
+	UPDATE deployments SET keep_history=1;
+	CREATE TRIGGER keep_production_insert AFTER INSERT ON aliases WHEN NEW.kind='production' BEGIN UPDATE deployments SET keep_history=1 WHERE id=NEW.deployment_id; END;
+	CREATE TRIGGER keep_production_update AFTER UPDATE ON aliases WHEN NEW.kind='production' BEGIN UPDATE deployments SET keep_history=1 WHERE id=NEW.deployment_id; END;`,
+	`CREATE TABLE server_samples(at INTEGER PRIMARY KEY, cpu REAL NOT NULL, memory REAL NOT NULL, disk REAL NOT NULL);`,
 }
 
 // Open opens (and if needed creates) the database at path.

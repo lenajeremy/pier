@@ -2,13 +2,13 @@ import { useMemo, useState, type FormEvent } from 'react'
 import { api, ApiError } from '../lib/api'
 import { useData } from '../lib/data'
 import { ago } from '../lib/format'
-import { navigate } from '../lib/router'
+import { navigate, Link } from '../lib/router'
 import { Info, More, Search } from '../components/Icons'
 import { Badge } from '../components/ui'
 
 type Scope = 'production' | 'preview'
 type Entry = { name: string; scopes: Scope[]; updated_at: string }
-type Data = { variables: Entry[]; stale: { production: boolean; names: string[]; deployment?: string } }
+type Data = { inherited: Pick<Entry, "name" | "scopes">[]; variables: Entry[]; stale: { production: boolean; names: string[]; deployment?: string } }
 
 const where: { label: string; scopes: Scope[] }[] = [
   { label: 'Production', scopes: ['production'] },
@@ -89,7 +89,7 @@ export function Variables({ project, now }: { project: string; now: number }) {
                   ))}
                 </>
               ) : (
-                'Production was built before a variable was removed'
+                'Production was built before its variables changed'
               )}
             </span>
             <span className="t-caption t-muted">Variables are read when the site builds. Redeploy production to use the new values.</span>
@@ -182,13 +182,17 @@ export function Variables({ project, now }: { project: string; now: number }) {
         <div className="panel">
           {data.variables.length === 0 && (
             <div className="var-row" style={{ gridTemplateColumns: '1fr' }}>
-              <span className="t-caption t-muted">No variables yet. Add one above; the next build gets it.</span>
+              <span className="t-caption t-muted">No project-specific variables yet.</span>
             </div>
           )}
           {shown.map((v) => (
             <Row key={v.name + v.scopes.join()} v={v} base={base} now={now} send={send} />
           ))}
         </div>
+        {data.inherited.length > 0 && <div className="panel form-panel">
+          <Link className="t-small t-strong" to="/shared-variables">Inherited shared variables ↗</Link>
+          {data.inherited.map(v => <div key={v.name}><span className="mono">{v.name}</span> <span className="t-note">{v.scopes.map(s => s === 'production' ? 'Production' : 'Preview').join(', ')}</span></div>)}
+        </div>}
         {problem && stale.production && <span className="field-message">{problem.text}</span>}
       </div>
     </main>

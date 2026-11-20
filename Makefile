@@ -11,6 +11,7 @@ help:
 	@echo "    make pier-web-dev  the dashboard with live reload on :5175 (pierd on :7777)"
 	@echo "    make pier-test     go vet and unit tests"
 	@echo "    make pier-e2e      push real projects through Caddy, pierd and Docker"
+	@echo "    make pier-release  package a Linux installer (ARCH=amd64 or arm64)"
 	@echo "    make pier-caddy    run a standalone Caddy for compatibility testing"
 	@echo "    make pier-dev      run pierd with embedded Caddy for development"
 	@echo ""
@@ -84,3 +85,8 @@ site-test:
 	cd site/server && go vet ./... && go test ./...
 	cd site/v2 && npm run typecheck
 	cd site/v3 && npm run typecheck
+
+.PHONY: pier-release
+ARCH ?= amd64
+pier-release: pier-web
+	pier/scripts/release.sh $(ARCH)

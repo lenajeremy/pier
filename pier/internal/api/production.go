@@ -48,6 +48,7 @@ func (a *API) promote(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, err)
 		return
 	}
+	a.event(r.Context(), name, "Promoted to production", "", id)
 	a.Log.Info("promoted", "project", name, "deployment", id)
 	a.project(w, r)
 }
@@ -88,6 +89,7 @@ func (a *API) rollback(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	a.event(r.Context(), name, "Rolled back production", "", id)
 	a.Log.Info("rolled back", "project", name, "from", current, "to", id)
 	a.project(w, r)
 }
@@ -114,6 +116,7 @@ func (a *API) undoRollback(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, err)
 		return
 	}
+	a.event(r.Context(), name, "Undid rollback", "", p.RolledBackFrom)
 	a.Log.Info("rollback undone", "project", name, "deployment", p.RolledBackFrom)
 	a.project(w, r)
 }

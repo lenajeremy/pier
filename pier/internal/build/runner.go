@@ -28,18 +28,30 @@ type Docker struct {
 func (d Docker) Name() string { return "a throwaway " + d.Image + " container" }
 
 func (d Docker) Run(ctx context.Context, dir, command string, env []string, log io.Writer) error {
+	cache := "/cache"
+	// Docker creates empty volumes as root. Give the service account a writable
+	// subdirectory, including on the first build following a cache cleanup.
+	if runtime.GOOS == "linux" && os.Getuid() != 0 {
+		cache = fmt.Sprintf("/cache/user-%d", os.Getuid())
+		owner := fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid())
+		prepare := exec.CommandContext(ctx, "docker", "run", "--rm", "--network", "none", "--user", "0:0", "-v", d.CacheVolume+":/cache", "--entrypoint", "sh", d.Image, "-c", `mkdir -p "$1" && chown "$2" "$1"`, "sh", cache, owner)
+		prepare.Stdout, prepare.Stderr = log, log
+		if err := prepare.Run(); err != nil {
+			return fmt.Errorf("prepare package cache: %w", err)
+		}
+	}
 	args := []string{"run", "--rm", "--network", "bridge",
 		"-v", dir + ":/app", "-w", "/app",
 		"-v", d.CacheVolume + ":/cache",
 		"-e", "CI=1",
 		"-e", "NO_COLOR=1",
 		"-e", "FORCE_COLOR=0",
-		"-e", "npm_config_cache=/cache/npm",
+		"-e", "npm_config_cache=" + cache + "/npm",
 		"-e", "npm_config_update_notifier=false",
-		"-e", "YARN_CACHE_FOLDER=/cache/yarn",
-		"-e", "COREPACK_HOME=/cache/corepack",
+		"-e", "YARN_CACHE_FOLDER=" + cache + "/yarn",
+		"-e", "COREPACK_HOME=" + cache + "/corepack",
 		"-e", "COREPACK_ENABLE_DOWNLOAD_PROMPT=0",
-		"-e", "PNPM_HOME=/cache/pnpm",
+		"-e", "PNPM_HOME=" + cache + "/pnpm",
 	}
 	if runtime.GOOS == "linux" {
 		// Keep the build's files owned by pierd's user, so it can move them.

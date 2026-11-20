@@ -162,6 +162,7 @@ func (a *API) ghCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.SetCookie(w, &http.Cookie{Name: c.Name, Value: "", Path: "/github/callback", MaxAge: -1, HttpOnly: true})
+	a.event(ctx, "", "Connected GitHub App", app.Slug, "")
 	http.Redirect(w, r, "https://github.com/apps/"+url.PathEscape(app.Slug)+"/installations/new", http.StatusSeeOther)
 }
 func (a *API) ghList(w http.ResponseWriter, r *http.Request) {

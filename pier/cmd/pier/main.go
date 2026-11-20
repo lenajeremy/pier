@@ -81,6 +81,8 @@ func main() {
 		err = logout()
 	case "deploy":
 		err = deploy(os.Args[2:])
+	case "logs":
+		err = logs(os.Args[2:])
 	case "rollback":
 		err = rollback(os.Args[2:])
 	case "promote":
@@ -106,6 +108,7 @@ func usage() {
 
   pier login ADDRESS              sign this computer in; you approve it in the dashboard
   pier deploy [FOLDER] [--prod]   upload a folder and build it: a preview, or production
+  pier logs [PROJECT] [--follow]  request logs; filter with --status, --path, or --since
   pier rollback [DEPLOYMENT]      production goes back to the deployment before it (--undo to undo)
   pier promote DEPLOYMENT         production serves a deployment that already built
   pier board                      every address on the server, and what it serves

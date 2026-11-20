@@ -1,3 +1,7 @@
+import { SharedVariables } from './pages/SharedVariables'
+import { Activity } from './pages/Activity'
+import { Server } from './pages/Server'
+import { Settings } from './pages/Settings'
 import { GitHubImport } from './pages/GitHub'
 import { Integrations } from './pages/Integrations'
 import { useCallback, useEffect, useState } from 'react'
@@ -5,7 +9,7 @@ import { api, ApiError, type Project, type ProjectSummary, type Session } from '
 import { useData, useNow } from './lib/data'
 import { match, usePath } from './lib/router'
 import { Shell } from './components/Shell'
-import { Later, ProjectHeader } from './components/ui'
+import { ProjectHeader } from './components/ui'
 import { SignIn } from './pages/SignIn'
 import { Projects } from './pages/Projects'
 import { ProjectDeployments } from './pages/ProjectDeployments'
@@ -41,13 +45,6 @@ export function App() {
   if (auth.state === 'loading') return null
   if (auth.state === 'out') return <SignIn address={auth.address} onSignedIn={(session) => setAuth({ state: 'in', session })} />
   return <Dashboard session={auth.session} />
-}
-
-const globals: Record<string, [string, string]> = {
-  '/activity': ['Activity', 'Deploys, rollbacks, sign-ins and computers approved, across every project, newest first.'],
-  '/shared-variables': ['Shared variables', 'Values set once and linked into several projects.'],
-  '/server': ['Server', 'Disk, memory and CPU, the services Pier runs, and safe clean-up.'],
-  '/settings': ["Settings", "Pier's address, the base domain, and your password."],
 }
 
 function Dashboard({ session }: { session: Session }) {
@@ -102,20 +99,14 @@ function Signed({ session, path, now }: { session: Session; path: string; now: n
     page = <NewProject session={session} onCreated={list.reload} />
   } else if (path === '/members') {
     page = <Members now={now} />
-  } else if (globals[path]) {
-    const [title, what] = globals[path]
-    page = (
-      <main className="main global">
-        <div className="page-heading">
-          <div>
-            <h1 className="t-title" style={{ margin: 0 }}>
-              {title}
-            </h1>
-          </div>
-        </div>
-        <Later title={title} what={what} />
-      </main>
-    )
+  } else if (path === '/activity') {
+    page = <Activity projects={projects} now={now}/>
+  } else if (path === '/shared-variables') {
+    page = <SharedVariables projects={projects}/>
+  } else if (path === '/server') {
+    page = <Server/>
+  } else if (path === '/settings') {
+    page = <Settings/>
   } else {
     page = (
       <main className="main global">

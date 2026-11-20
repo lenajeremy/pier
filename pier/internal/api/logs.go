@@ -33,6 +33,9 @@ func statusFilter(s string) string {
 	case "2xx", "3xx", "4xx", "5xx", "errors":
 		return s
 	}
+	if n, err := strconv.Atoi(s); err == nil && n >= 100 && n <= 599 {
+		return s
+	}
 	return ""
 }
 
@@ -50,8 +53,12 @@ func (a *API) requestLines(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	from, to := span(r)
 	after, _ := strconv.ParseInt(q.Get("after"), 10, 64)
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	if limit < 1 || limit > 500 {
+		limit = 300
+	}
 	lines, err := a.Requests.Lines(r.Context(), name, requests.Filter{
-		From: from, To: to, Status: statusFilter(q.Get("status")), Query: q.Get("q"), After: after, Limit: 300,
+		From: from, To: to, Status: statusFilter(q.Get("status")), Query: q.Get("q"), After: after, Forward: q.Has("after"), Limit: limit,
 	})
 	if err != nil {
 		a.fail(w, err)

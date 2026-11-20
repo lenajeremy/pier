@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"pier/internal/board"
 	"pier/internal/deploy"
@@ -23,6 +24,10 @@ import (
 )
 
 type API struct {
+	StartedAt      time.Time
+	healthMu       sync.Mutex
+	healthAt       time.Time
+	healthSnapshot map[string]any
 	SiteListener   string // local site listener for TLS handshakes with the requested SNI
 	githubSetup    sync.Mutex
 	githubEndpoint string // GitHub API base for integration tests
@@ -46,6 +51,18 @@ func (a *API) Public() http.Handler {
 	mux := http.NewServeMux()
 	a.githubRoutes(mux)
 	a.domainRoutes(mux)
+	for _, route := range []string{"GET /api/settings", "PUT /api/settings"} {
+		mux.Handle(route, a.auth(http.HandlerFunc(a.serverSettings)))
+	}
+	mux.Handle("POST /api/settings/dns", a.auth(http.HandlerFunc(a.checkAddresses)))
+	mux.Handle("POST /api/settings/password", a.auth(http.HandlerFunc(a.password)))
+	mux.Handle("GET /api/server/history", a.auth(http.HandlerFunc(a.history)))
+	mux.Handle("GET /api/server", a.auth(http.HandlerFunc(a.health)))
+	mux.Handle("POST /api/server/cleanup/{kind}", a.auth(http.HandlerFunc(a.cleanup)))
+	mux.Handle("GET /api/activity", a.auth(http.HandlerFunc(a.activity)))
+	for _, route := range []string{"GET /api/shared-variables", "POST /api/shared-variables", "PUT /api/shared-variables/{name}", "DELETE /api/shared-variables/{name}"} {
+		mux.Handle(route, a.auth(http.HandlerFunc(a.shared)))
+	}
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "ok\n") })
 
 	mux.HandleFunc("POST /api/session", a.signIn)

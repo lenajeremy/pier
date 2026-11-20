@@ -182,16 +182,17 @@ func (d *Deployer) variables(ctx context.Context, project, scope string) ([]stri
 	if d.Secrets == nil {
 		return nil, nil, nil
 	}
-	all, err := d.Store.Variables(ctx, project)
+	all, err := d.Store.BuildVariables(ctx, project, scope)
 	if err != nil {
 		return nil, nil, err
 	}
 	var env, names_ []string
 	for _, v := range all {
-		if v.Scope != scope {
-			continue
+		binding := SealedFor(project, scope, v.Name)
+		if v.Project == "" {
+			binding = SharedBinding(v.Name)
 		}
-		value, err := d.Secrets.Open(v.Value, SealedFor(project, scope, v.Name))
+		value, err := d.Secrets.Open(v.Value, binding)
 		if err != nil {
 			return nil, nil, fmt.Errorf("variable %s: %w", v.Name, err)
 		}
@@ -203,6 +204,8 @@ func (d *Deployer) variables(ctx context.Context, project, scope string) ([]stri
 
 // SealedFor is what a variable's sealed value is bound to.
 func SealedFor(project, scope, name string) string { return project + "\x00" + scope + "\x00" + name }
+
+func SharedBinding(name string) string { return "shared\x00" + name }
 
 // productionBranch is the project's own production branch, or the server's.
 func (d *Deployer) productionBranch(ctx context.Context, project string) string {
