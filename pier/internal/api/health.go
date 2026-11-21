@@ -168,9 +168,18 @@ func (m *meter) forget() {
 // it's measured behind the page.
 const cacheMeasureLimit = 2 * time.Minute
 
-// cacheSize is the size of the build cache volume. pierd has one builder,
-// so there is one of these.
-var cacheSize = &meter{every: 5 * time.Minute, wait: 2 * time.Second}
+// cacheMeter measures the build cache volume. pierd has one builder, so an
+// API holds one of these. It's made on first use, so an API written as a
+// plain struct, as tests write it, still gets a meter of its own.
+type cacheMeter struct {
+	once sync.Once
+	m    *meter
+}
+
+func (c *cacheMeter) get() *meter {
+	c.once.Do(func() { c.m = &meter{every: 5 * time.Minute, wait: 2 * time.Second} })
+	return c.m
+}
 
 // cacheMeasurer names the container that measures a cache volume. The name
 // is how it's stopped, and Docker won't start a second one under it.
@@ -256,7 +265,7 @@ func (a *API) health(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if dockerBuilds {
-		size := cacheSize.size(ctx, func() *int64 { return measureCache(b.CacheVolume, b.Image, cacheMeasureLimit) })
+		size := a.cacheSize.get().size(ctx, func() *int64 { return measureCache(b.CacheVolume, b.Image, cacheMeasureLimit) })
 		items = append(items, diskItem{"Build cache", size})
 		h["cache"] = true
 	}
@@ -349,7 +358,7 @@ func (a *API) cleanup(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, 409, map[string]string{"error": "Docker could not remove Pier’s cache. It may be in use or already empty."})
 			return
 		}
-		cacheSize.forget()
+		a.cacheSize.get().forget()
 	case "docker-cache":
 		if _, err := dockerOutputTimeout(ctx, 60*time.Second, "buildx", "prune", "-af"); err != nil {
 			writeJSON(w, 409, map[string]string{"error": "Docker could not prune the Buildx cache."})

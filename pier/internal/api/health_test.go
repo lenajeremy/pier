@@ -170,6 +170,28 @@ func TestMeterMeasuresOneAtATimeAndKeepsTheLastSize(t *testing.T) {
 	}
 }
 
+// Each API measures its own builder's cache: what one measures or forgets
+// doesn't reach another.
+func TestEachAPIHasItsOwnCacheMeter(t *testing.T) {
+	ctx := context.Background()
+	var a, b API
+	if m := a.cacheSize.get(); m != a.cacheSize.get() || m.every != 5*time.Minute || m.wait != 2*time.Second {
+		t.Fatalf("the meter should be made once, measuring every 5 minutes: %+v", m)
+	}
+	n := int64(42)
+	if got := a.cacheSize.get().size(ctx, func() *int64 { return &n }); got == nil || *got != 42 {
+		t.Fatalf("got %v, want 42", got)
+	}
+	if got := b.cacheSize.get().size(ctx, func() *int64 { return nil }); got != nil {
+		t.Fatalf("another API's size reached this one: %d", *got)
+	}
+	b.cacheSize.get().forget()
+	again := func() *int64 { t.Error("the size was measured again after another API forgot its own"); return nil }
+	if got := a.cacheSize.get().size(ctx, again); got == nil || *got != 42 {
+		t.Fatalf("got %v, want the 42 that still stands", got)
+	}
+}
+
 // fakeDocker puts a docker in PATH that writes down what it was asked and
 // then runs script, and returns where the calls are written.
 func fakeDocker(t *testing.T, script string) string {

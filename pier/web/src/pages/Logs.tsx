@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { localDay, utcOffset } from '../lib/calendar'
+import { localDay, timeZone, utcOffset } from '../lib/calendar'
 import { api } from '../lib/api'
 import { Calendar, Search } from '../components/Icons'
 import { RequestsChart, type ChartData } from '../components/RequestsChart'
@@ -71,11 +71,12 @@ export function Logs({ project, address }: { project: string; address: string })
     const tick = async (first: boolean) => {
       try {
         const p = filters()
-        // A chart of days counts the viewer's days. The offset is the one at
-        // the start of the range, so the first day starts where the range does.
+        // A chart of days counts the viewer's days, cut at the midnights of
+        // their zone. The offset stands in if pierd doesn't know the zone; it's
+        // the one at the start of the range, so the first day starts there.
         const tz = utcOffset(Number(p.get('from')))
         const [c, l] = await Promise.all([
-          api<ChartData>(`${base}/chart?${p}&tz=${tz}`),
+          api<ChartData>(`${base}/chart?${p}&tz=${tz}&zone=${encodeURIComponent(timeZone())}`),
           api<{ lines: Line[] }>(`${base}?${p}${after ? `&after=${after}` : ''}`),
         ])
         if (stopped) return

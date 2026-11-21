@@ -28,6 +28,7 @@ type API struct {
 	healthMu       sync.Mutex
 	healthAt       time.Time
 	healthSnapshot map[string]any
+	cacheSize      cacheMeter
 	SiteListener   string // local site listener for TLS handshakes with the requested SNI
 	githubSetup    sync.Mutex
 	githubEndpoint string // GitHub API base for integration tests

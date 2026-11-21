@@ -71,8 +71,11 @@ func (a *API) requestLines(w http.ResponseWriter, r *http.Request) {
 }
 
 // requestChart is the Logs tab's chart: requests and errors over the range.
-// ?tz= is how many minutes the viewer's clock is ahead of UTC, so a chart
-// of days counts the days the viewer sees named; without it they're UTC's.
+// ?zone= is the viewer's time zone, such as Europe/London, so a chart of
+// days counts the days the viewer sees named, from one of their midnights to
+// the next. ?tz= is how many minutes their clock is ahead of UTC, which
+// older dashboards send and which stands in for a zone pierd doesn't know.
+// Without either the days are UTC's.
 func (a *API) requestChart(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("project")
 	if _, ok := a.findProject(w, r, name); !ok {
@@ -80,7 +83,7 @@ func (a *API) requestChart(w http.ResponseWriter, r *http.Request) {
 	}
 	from, to := span(r)
 	q := r.URL.Query()
-	tz, err := requests.Offset(q.Get("tz"))
+	tz, err := requests.Zone(q.Get("zone"), q.Get("tz"))
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "tz is " + err.Error()})
 		return

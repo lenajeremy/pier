@@ -197,16 +197,13 @@ const DAY = 86_400_000
 const date = (t: number) => new Date(t).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
 const time = (t: number) => new Date(t).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
 
-// day names a daily bucket. pierd starts them at the viewer's midnight, but
-// 24 hours apart, so past a clock change they start an hour to either side
-// of it. The bucket's middle is always in the day it counts.
-const day = (at: number) => date(at + DAY / 2)
-
+// pierd starts a daily bucket at the viewer's own midnight, clock changes
+// included, so the day it counts is the date of its start.
 function when(at: number, step: number, span: number): string {
-  if (step >= DAY) return day(at)
+  if (step >= DAY) return date(at)
   return span > 2 * DAY ? date(at) : time(at)
 }
 
 function range(at: number, step: number): string {
-  return step >= DAY ? day(at) : `${time(at)} to ${time(at + step)}`
+  return step >= DAY ? date(at) : `${time(at)} to ${time(at + step)}`
 }
