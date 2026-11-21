@@ -216,6 +216,11 @@ var migrations = []string{
 	ALTER TABLE projects ADD COLUMN health_path TEXT NOT NULL DEFAULT '';
 	ALTER TABLE projects ADD COLUMN memory_mb   INTEGER NOT NULL DEFAULT 0;
 	ALTER TABLE projects ADD COLUMN cpus        REAL NOT NULL DEFAULT 0;`,
+
+	// 11: one project's activity, newest first, straight from an index.
+	// activity_time orders everything; with a project chosen it could only
+	// be walked until enough of that project's rows turned up.
+	`CREATE INDEX activity_by_project ON activity(project, at DESC, id DESC);`,
 }
 
 // Open opens (and if needed creates) the database at path.

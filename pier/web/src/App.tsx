@@ -153,10 +153,12 @@ function ProjectPage({ name, path, visit, children }: {
   visit: boolean
   children: (p: Project, reload: () => void) => React.ReactNode
 }) {
+  // The answer carries every deployment of the project, so it's asked for
+  // often only while a build or a restart is under way, to show it moving.
   const { data, error, reload } = useData<Project>(
     `/api/projects/${encodeURIComponent(name)}`,
     () => true,
-    3000,
+    (p) => (p.deployments.some((d) => d.status === 'building') || p.container?.state === 'restarting' ? 3000 : 15_000),
   )
   // A project that's gone, or pierd being away before anything has loaded.
   // Once it has loaded, a failed refresh keeps what's on screen.

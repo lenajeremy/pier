@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net"
 	"os"
 	"strconv"
@@ -343,12 +344,41 @@ type Bucket struct {
 	E4xx, E5xx int   `json:"-"`
 }
 
+// MaxOffset is the furthest a viewer's clock can be from UTC.
+const MaxOffset = 14 * time.Hour
+
+// Offset reads a viewer's distance from UTC as the dashboard sends it: a
+// whole number of minutes, east positive, and "" for UTC.
+func Offset(minutes string) (time.Duration, error) {
+	if minutes == "" {
+		return 0, nil
+	}
+	most := int(MaxOffset / time.Minute)
+	m, err := strconv.Atoi(minutes)
+	if err != nil || m < -most || m > most {
+		return 0, fmt.Errorf("not a whole number of minutes within %d of UTC", most)
+	}
+	return time.Duration(m) * time.Minute, nil
+}
+
+// midnightHour is the UTC hour of the day that holds midnight for a viewer
+// off ms east of UTC, in ms after UTC midnight, or false if their midnight
+// falls on the hour, as it does everywhere but in zones like India's (+5:30).
+func midnightHour(off int64) (int64, bool) {
+	hour, day := time.Hour.Milliseconds(), (24 * time.Hour).Milliseconds()
+	midnight := ((-off)%day + day) % day
+	return midnight - midnight%hour, midnight%hour != 0
+}
+
 // Chart counts requests and errors over [from, to) in buckets: minutes for
 // two hours or less (from the lines), hours up to eight days, days beyond
-// (from the hourly counts, which are kept 6 months).
-func (l *Log) Chart(ctx context.Context, project string, from, to int64, status, query string) ([]Bucket, int64, error) {
+// (from the hourly counts, which are kept 6 months). Days are the viewer's,
+// midnight to midnight tz east of UTC, since that's how the chart names
+// them; minutes and hours start at the same moment everywhere that matters.
+func (l *Log) Chart(ctx context.Context, project string, from, to int64, status, query string, tz time.Duration) ([]Bucket, int64, error) {
 	span := time.Duration(to-from) * time.Millisecond
 	var size time.Duration
+	var off int64 // ms east of UTC that buckets start at; only days move
 	switch {
 	case span <= 2*time.Hour:
 		size = time.Minute
@@ -356,9 +386,10 @@ func (l *Log) Chart(ctx context.Context, project string, from, to int64, status,
 		size = time.Hour
 	default:
 		size = 24 * time.Hour
+		off = tz.Milliseconds()
 	}
 	step := size.Milliseconds()
-	start := from - from%step
+	start := from - (from+off)%step
 	n := int((to - start + step - 1) / step)
 	buckets := make([]Bucket, n)
 	for i := range buckets {
@@ -368,9 +399,9 @@ func (l *Log) Chart(ctx context.Context, project string, from, to int64, status,
 	// still have individual timestamps, so count only the part of that hour
 	// inside the range (local midnight need not fall on a UTC hour).
 	where, args := Filter{From: from, To: to, Status: status, Query: query}.where(project)
-	linesSQL := `SELECT ts - ts % ? AS bucket, count(*), sum(status BETWEEN 400 AND 499), sum(status >= 500)
+	linesSQL := `SELECT ts - (ts + ?) % ? AS bucket, count(*), sum(status BETWEEN 400 AND 499), sum(status >= 500)
 		FROM requests WHERE ` + where
-	args = append([]any{step}, args...)
+	args = append([]any{off, step}, args...)
 	if size != time.Minute && status == "" && strings.TrimSpace(query) == "" {
 		hour := time.Hour.Milliseconds()
 		first, last := from-from%hour, to
@@ -381,10 +412,23 @@ func (l *Log) Chart(ctx context.Context, project string, from, to int64, status,
 		if to-to%hour >= cutoff {
 			last = to - to%hour
 		}
-		linesSQL += ` AND (ts < ? OR ts >= ?) GROUP BY bucket
-			UNION ALL SELECT hour - hour % ? AS bucket, sum(requests), sum(e4xx), sum(e5xx)
-			FROM hours WHERE project = ? AND hour >= ? AND hour < ?`
-		args = append(args, first, last, step, project, first, last)
+		// A viewer a half or three quarters of an hour off UTC has midnight
+		// inside one of the stored hours, every day. While the lines are
+		// kept, that hour is counted from them, each request on its own
+		// side of midnight. Older than that, only the hour's total is left,
+		// and all of it goes to the day that holds the hour's middle: up to
+		// half an hour of requests can be counted a day out.
+		midnight, split := midnightHour(off)
+		recent, lean := int64(math.MaxInt64), int64(0) // no hour is split
+		if split {
+			recent, lean = cutoff-cutoff%hour+hour, hour/2
+		}
+		day := (24 * time.Hour).Milliseconds()
+		linesSQL += ` AND (ts < ? OR ts >= ? OR (ts >= ? AND (ts - ts % ?) % ? = ?)) GROUP BY bucket
+			UNION ALL SELECT hour + ? - (hour + ?) % ? AS bucket, sum(requests), sum(e4xx), sum(e5xx)
+			FROM hours WHERE project = ? AND hour >= ? AND hour < ? AND NOT (hour >= ? AND hour % ? = ?)`
+		args = append(args, first, last, recent, hour, day, midnight,
+			lean, lean+off, step, project, first, last, recent, day, midnight)
 	}
 	rows, err := l.db.QueryContext(ctx, linesSQL+" GROUP BY bucket", args...)
 	if err != nil {
