@@ -32,8 +32,11 @@ clean:
 
 # ---- The product -------------------------------------------------------------
 
+# pier version and pierd version report the tag, or the commit between tags.
+PIER_VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null)
+
 pier: pier-web
-	cd pier && go build -trimpath -o bin/ ./cmd/...
+	cd pier && go build -trimpath -ldflags "-X pier/internal/version.Version=$(PIER_VERSION)" -o bin/ ./cmd/...
 
 # The dashboard is built into pier/internal/web/dist and embedded in pierd.
 pier-web:

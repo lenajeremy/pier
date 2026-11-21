@@ -1,6 +1,7 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { ArrowUp, ChevronRight, Folder as FolderIcon } from './Icons'
+import { Spinner } from './Spinner'
 
 export type Folder = { path: string; kind: string; app: boolean }
 export type Folders = { folders: Folder[]; truncated?: boolean; source?: string }
@@ -179,7 +180,10 @@ export function FolderPicker({ value, onChange, data, loading, invalid, placehol
             onMouseDown={(e) => e.preventDefault()}
           >
             {loading && !usable ? (
-              <div className="folder-note t-caption t-muted">Reading the repo’s folders…</div>
+              <div className="folder-note t-caption t-muted">
+                <Spinner />
+                Reading the repo’s folders…
+              </div>
             ) : (
               <>
                 {look.dir && (

@@ -60,11 +60,7 @@ type buildLine struct {
 
 func buildRow(l buildLine) logRow {
 	stamp := fmt.Sprintf("+%.1fs", float64(l.MS)/1000)
-	tone := lavender
-	if l.Tag == "build" {
-		tone = mint
-	}
-	return logRow{stamp, stamp, cleanLog(l.Tag), cleanLog(l.Text), tone}
+	return logRow{stamp, stamp, cleanLog(l.Tag), cleanLog(l.Text), narrationTone(cleanLog(l.Tag))}
 }
 
 func (r logRow) format(styled, color bool) string {
@@ -84,19 +80,20 @@ func (r logRow) format(styled, color bool) string {
 		ink(r.message, fgBright, color))
 }
 
-// Align continuation lines under the message when the terminal has room.
+// wrapped is a row as the log viewer shows it: the time, the tag in its
+// colour, and the message, with continuation lines under the message when
+// the terminal has room.
 func (r logRow) wrapped(width int, color bool) []string {
 	const gutter = 18
 	if width < gutter+18 {
 		return strings.Split(ansi.Hardwrap(r.format(true, color), width, false), "\n")
 	}
 	parts := strings.Split(ansi.Hardwrap(r.message, width-gutter, false), "\n")
-	parts[0] = fmt.Sprintf("%s  %s  %s",
-		ink(fmt.Sprintf("%8s", r.clock), fgDim, color),
-		boldInk(fmt.Sprintf("%-6s", strings.ToUpper(r.label)), r.tone, color),
-		ink(parts[0], fgBright, color))
+	parts[0] = sgr(fmt.Sprintf("%8s", r.clock), fgDim, "", false, color) + "  " +
+		sgr(fmt.Sprintf("%-6s", r.label), r.tone, "", false, color) + "  " +
+		sgr(parts[0], fgSecondary, "", false, color)
 	for i := 1; i < len(parts); i++ {
-		parts[i] = strings.Repeat(" ", gutter) + ink(parts[i], fgBright, color)
+		parts[i] = strings.Repeat(" ", gutter) + sgr(parts[i], fgSecondary, "", false, color)
 	}
 	return parts
 }
@@ -200,7 +197,9 @@ func (m logView) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m logView) bodyHeight() int   { return max(1, m.height-7) }
+// The log fills a box under the header: its edges and the column labels
+// take three of the rows between the header and the key bar.
+func (m logView) bodyHeight() int   { return max(1, bodyRows(m.height)-3) }
 func (m logView) contentWidth() int { return max(1, m.width-4) }
 
 // Collect only the wrapped rows needed for this viewport, starting at the tail.
@@ -226,42 +225,36 @@ func (m logView) body(offset int) ([]string, int) {
 func (m logView) View() string {
 	w := m.contentWidth()
 	c := m.color
-	clip := func(s string) string { return "  " + ansi.Truncate(s, w, "…") }
-	var out []string
-	title := boldInk(m.source.kind+" logs", fgBright, c)
-	context := boldInk(cleanLog(m.source.project), fgBright, c)
-	if m.source.deployment != "" {
-		context += " " + ink("/", fgDim, c) + " " + ink(cleanLog(m.source.deployment), fgMuted, c)
-	}
-	out = append(out, clip(miniMark(c)+"  "+boldInk("PIER", fgBright, c)+"  "+ink("/", fgDim, c)+"  "+context))
-	state, tone := "Connecting", lavender
+	state, tone := "connecting", lavender
 	switch {
 	case m.err != nil:
-		state, tone = "Disconnected", coralTxt
+		state, tone = "disconnected", coralTxt
 	case m.paused:
-		state, tone = "Paused", amber
+		state, tone = "paused", amber
 		if m.unseen > 0 {
-			state += fmt.Sprintf(" · %d new", m.unseen)
+			state += fmt.Sprintf(", %d new", m.unseen)
 		}
 	case m.ended:
-		state, tone = "Ended", lavender
+		state, tone = "ended", lavender
 	case m.connected:
-		state, tone = "Live", mint
+		state, tone = "live", mint
 	}
-	badge := ink("● ", tone, c) + boldInk(state, tone, c)
-	gap := max(2, w-ansi.StringWidth(title)-ansi.StringWidth(badge))
-	out = append(out, clip(title+strings.Repeat(" ", gap)+badge), clip(ink(strings.Repeat("─", w), fgBorder, c)))
-	timeLabel, tagLabel, detailLabel := "TIME", "STATUS", "REQUEST"
+	timeLabel, tagLabel, detailLabel := "Time", "Status", "Request"
 	switch m.source.kind {
 	case "Runtime":
-		tagLabel, detailLabel = "STREAM", "OUTPUT"
+		tagLabel, detailLabel = "Stream", "Output"
 	case "Build":
-		timeLabel, tagLabel, detailLabel = "ELAPSED", "STAGE", "OUTPUT"
+		timeLabel, tagLabel, detailLabel = "Elapsed", "Stage", "Output"
 	}
-	out = append(out, clip(ink(fmt.Sprintf("%8s  %-6s  %s", timeLabel, tagLabel, detailLabel), fgDim, c)))
-	lines, _ := m.body(m.offset)
-	if len(lines) == 0 {
-		msg := "Opening log feed…"
+	labels := sgr(fmt.Sprintf("%8s  %-6s  %s", timeLabel, tagLabel, detailLabel), fgDim, "", false, c)
+	badge := dotted(state, tone, c)
+	if gap := w - ansi.StringWidth(labels) - ansi.StringWidth(badge); gap >= 2 {
+		labels += strings.Repeat(" ", gap) + badge
+	}
+	lines := []string{labels}
+	body, _ := m.body(m.offset)
+	if len(body) == 0 {
+		msg := "Opening the log…"
 		switch {
 		case m.err != nil:
 			msg = cleanLog(m.err.Error())
@@ -270,23 +263,14 @@ func (m logView) View() string {
 		case m.connected:
 			msg = "Waiting for the first line…"
 		}
-		lines = strings.Split(ansi.Hardwrap(msg, w, false), "\n")
-		lines = lines[:min(len(lines), m.bodyHeight())]
-		for i := range lines {
-			lines[i] = ink(lines[i], fgMuted, c)
+		for _, l := range strings.Split(ansi.Hardwrap(msg, w, false), "\n") {
+			body = append(body, sgr(l, fgSecondary, "", false, c))
 		}
+		body = body[:min(len(body), m.bodyHeight())]
 	}
-	for _, line := range lines {
-		out = append(out, clip(line))
-	}
-	for len(lines) < m.bodyHeight() {
-		out = append(out, "")
-		lines = append(lines, "")
-	}
-	note := fmt.Sprintf("%d lines in history", len(m.rows))
-	if len(m.rows) == 1 {
-		note = "1 line in history"
-	}
+	lines = append(lines, body...)
+
+	note := plural(len(m.rows), "line") + " kept"
 	noteTone := fgDim
 	if m.err != nil {
 		noteTone = coralTxt
@@ -297,50 +281,49 @@ func (m logView) View() string {
 	}
 	if m.paused && m.err == nil {
 		noteTone = amber
-		note = "Reading paused · collecting new lines"
+		note = "Paused here; new lines are still collected"
 		if m.ended {
-			note = "Reading paused · stream ended"
+			note = "Paused here; the log has ended"
 		}
 	}
-	sep := ink("  ·  ", fgBorder, c)
-	var hints []string
-	if m.ended {
-		hints = []string{keyHint("r", "reopen", c), keyHint("↑↓", "scroll", c), keyHint("esc", "back", c)}
-	} else if m.paused {
-		if w >= 52 {
-			hints = []string{keyHint("space", "resume", c), keyHint("↑↓", "scroll", c), keyHint("G", "latest", c), keyHint("esc", "back", c)}
-		} else {
-			hints = []string{keyHint("space", "resume", c), keyHint("↑↓", "scroll", c), keyHint("esc", "back", c)}
+	var keys []keyHelp
+	switch {
+	case m.ended:
+		keys = []keyHelp{{"r", "reopen"}, {"↑↓", "scroll"}, {"esc", "back"}}
+	case m.paused:
+		keys = []keyHelp{{"space", "resume"}, {"↑↓", "scroll"}, {"G", "latest"}, {"esc", "back"}}
+	default:
+		keys = []keyHelp{{"space", "pause"}, {"↑↓", "scroll"}, {"esc", "back"}}
+	}
+	bar := keyBar(keys, m.width, c)
+	if n := sgr(note, noteTone, "", false, c); m.width-ansi.StringWidth(bar)-ansi.StringWidth(n)-2 >= 4 {
+		bar += strings.Repeat(" ", m.width-ansi.StringWidth(bar)-ansi.StringWidth(n)-2) + n
+	}
+	head := header(m.width, cleanLog(m.source.project), host(m.source.c.Server), "", "", c)
+	return screen(head, box(m.source.title(), lines, m.width, bodyRows(m.height), true, c), bar, m.width, m.height)
+}
+
+// title names what a log shows.
+func (s logSource) title() string {
+	of := cleanLog(s.deployment)
+	switch s.kind {
+	case "Build":
+		if of == "" {
+			return "The latest build of " + cleanLog(s.project)
 		}
-	} else {
-		hints = []string{keyHint("space", "pause", c), keyHint("↑↓", "scroll", c), keyHint("esc", "back", c)}
+		return "Build log of " + of
+	case "Runtime":
+		if of == "" {
+			return "Server output of " + cleanLog(s.project)
+		}
+		return "Server output of " + of
 	}
-	if w < 44 {
-		sep = "  "
-	}
-	out = append(out, clip(ink(strings.Repeat("─", w), fgBorder, c)), clip(ink(note, noteTone, c)), clip(strings.Join(hints, sep)))
-	return strings.Join(out, "\n")
+	return "Requests to " + cleanLog(s.project)
 }
 
 func openLogView(source logSource) error {
 	for {
-		ctx, cancel := context.WithCancel(context.Background())
-		updates := make(chan logBatch, 16)
-		go func() {
-			defer close(updates)
-			err := source.read(ctx, func(rows []logRow) error {
-				select {
-				case updates <- logBatch{rows: rows}:
-					return nil
-				case <-ctx.Done():
-					return ctx.Err()
-				}
-			})
-			select {
-			case updates <- logBatch{end: true, err: err}:
-			case <-ctx.Done():
-			}
-		}()
+		updates, cancel := streamLogs(source)
 		m := logView{source: source, in: updates, width: 80, height: 24, color: os.Getenv("NO_COLOR") == ""}
 		final, err := tea.NewProgram(m, tea.WithAltScreen()).Run()
 		cancel()
@@ -351,4 +334,27 @@ func openLogView(source logSource) error {
 			return nil
 		}
 	}
+}
+
+// streamLogs reads a log in the background until it ends or is stopped,
+// handing over its lines in batches.
+func streamLogs(source logSource) (<-chan logBatch, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(context.Background())
+	updates := make(chan logBatch, 16)
+	go func() {
+		defer close(updates)
+		err := source.read(ctx, func(rows []logRow) error {
+			select {
+			case updates <- logBatch{rows: rows}:
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		})
+		select {
+		case updates <- logBatch{end: true, err: err}:
+		case <-ctx.Done():
+		}
+	}()
+	return updates, cancel
 }

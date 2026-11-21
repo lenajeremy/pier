@@ -4,6 +4,7 @@ import { useData } from '../lib/data'
 import { ago } from '../lib/format'
 import { Link } from '../lib/router'
 import { Mark } from '../components/Icons'
+import { Spinner } from '../components/Spinner'
 
 // Approve lets a computer that ran pier login in: it shows the computer's
 // name and the code the terminal printed, so the owner can check they match.
@@ -11,10 +12,10 @@ export function Approve({ code, now }: { code: string; now: number }) {
   const { data, error } = useData<LoginRequest>(code ? `/api/cli/login/${encodeURIComponent(code)}` : null)
   const [answer, setAnswer] = useState<'approved' | 'denied' | ''>('')
   const [failed, setFailed] = useState('')
-  const [busy, setBusy] = useState(false)
+  const [busy, setBusy] = useState<'approve' | 'deny' | ''>('')
 
   const send = async (a: 'approve' | 'deny') => {
-    setBusy(true)
+    setBusy(a)
     setFailed('')
     try {
       await api(`/api/cli/login/${encodeURIComponent(code)}/${a}`, { method: 'POST' })
@@ -22,7 +23,7 @@ export function Approve({ code, now }: { code: string; now: number }) {
     } catch (e) {
       setFailed(e instanceof ApiError ? e.message : "Can't reach pierd.")
     } finally {
-      setBusy(false)
+      setBusy('')
     }
   }
 
@@ -32,7 +33,12 @@ export function Approve({ code, now }: { code: string; now: number }) {
   } else if (error) {
     body = <p className="t-caption t-muted">{error.message}</p>
   } else if (!data) {
-    body = <p className="t-note">Loading…</p>
+    body = (
+      <p className="t-note working-line">
+        <Spinner />
+        Loading…
+      </p>
+    )
   } else if (answer === 'approved' || data.status === 'approved') {
     body = (
       <p className="t-caption t-muted">
@@ -67,11 +73,13 @@ export function Approve({ code, now }: { code: string; now: number }) {
           </span>
         )}
         <div style={{ display: 'flex', gap: 10 }}>
-          <button className="btn primary large" style={{ flex: 1 }} disabled={busy} onClick={() => send('approve')}>
-            Approve
+          <button className="btn primary large" style={{ flex: 1 }} disabled={!!busy} onClick={() => send('approve')}>
+            {busy === 'approve' && <Spinner />}
+            {busy === 'approve' ? 'Approving…' : 'Approve'}
           </button>
-          <button className="btn quiet large" disabled={busy} onClick={() => send('deny')}>
-            Deny
+          <button className="btn quiet large" disabled={!!busy} onClick={() => send('deny')}>
+            {busy === 'deny' && <Spinner />}
+            {busy === 'deny' ? 'Denying…' : 'Deny'}
           </button>
         </div>
       </>

@@ -7,6 +7,7 @@ import { Link } from '../lib/router'
 import { Check, Docs, GitHubMark, Trash, Visit, Warning } from '../components/Icons'
 import { confirm } from '../components/Dialog'
 import { Menu } from '../components/Menu'
+import { Spinner, useBusy } from '../components/Spinner'
 import { toast } from '../components/Toast'
 import { PageHeading, Paging, Problem, SearchField, Skeleton, usePaged, When } from '../components/ui'
 
@@ -39,6 +40,7 @@ export function Integrations() {
   const activity = useData<Activity>(data?.slug ? '/api/github/activity' : null, () => true, 60000)
   const now = useNow()
   const [query, setQuery] = useState('')
+  const [working, run] = useBusy<string>() // a job being dismissed or tried again
 
   const installs = catalog.data?.installations ?? []
   const installed = installs.length > 0
@@ -87,15 +89,16 @@ export function Integrations() {
     })
     if (ok) toast('Disconnected GitHub')
   }
-  const dismiss = async (j: Job) => {
-    try {
-      await api('/api/github/jobs/' + j.id + '/dismiss', { method: 'POST' })
-      await reload()
-      toast(`Dismissed ${j.sha.slice(0, 7)}`)
-    } catch (e) {
-      failed(e)
-    }
-  }
+  const dismiss = (j: Job) =>
+    run('dismiss ' + j.id, async () => {
+      try {
+        await api('/api/github/jobs/' + j.id + '/dismiss', { method: 'POST' })
+        await reload()
+        toast(`Dismissed ${j.sha.slice(0, 7)}`)
+      } catch (e) {
+        failed(e)
+      }
+    })
 
   const resume = async (j: Job) => {
     const go = async () => {
@@ -103,13 +106,14 @@ export function Integrations() {
       await reload()
     }
     if (j.state !== 'approval') {
-      try {
-        await go()
-        toast(`Trying ${j.sha.slice(0, 7)} again`)
-      } catch (e) {
-        failed(e)
-      }
-      return
+      return run('retry ' + j.id, async () => {
+        try {
+          await go()
+          toast(`Trying ${j.sha.slice(0, 7)} again`)
+        } catch (e) {
+          failed(e)
+        }
+      })
     }
     const ok = await confirm({
       title: 'Build this commit from a fork?',
@@ -149,7 +153,11 @@ export function Integrations() {
               <p className="t-caption t-muted">Import repos, and deploy every push and pull request.</p>
             </div>
             <span className="integration-state t-caption">
-              <i className={'swatch ' + (installed ? 'ready' : data.slug && catalog.error ? 'failed' : '')} />
+              {data.slug && !catalog.data && !catalog.error ? (
+                <Spinner />
+              ) : (
+                <i className={'swatch ' + (installed ? 'ready' : data.slug && catalog.error ? 'failed' : '')} />
+              )}
               {status}
             </span>
             {data.slug && (
@@ -244,11 +252,18 @@ export function Integrations() {
                       : j.detail}
                   </span>
                 </div>
-                <button className="btn quiet" onClick={() => dismiss(j)} data-tip={j.state === 'approval' ? "Don't build this commit" : 'Leave it failed'}>
-                  Dismiss
+                <button
+                  className="btn quiet"
+                  disabled={working?.endsWith(' ' + j.id)}
+                  onClick={() => dismiss(j)}
+                  data-tip={j.state === 'approval' ? "Don't build this commit" : 'Leave it failed'}
+                >
+                  {working === 'dismiss ' + j.id && <Spinner />}
+                  {working === 'dismiss ' + j.id ? 'Dismissing…' : 'Dismiss'}
                 </button>
-                <button className="btn quiet" onClick={() => resume(j)}>
-                  {j.state === 'approval' ? 'Review and approve' : 'Try again'}
+                <button className="btn quiet" disabled={working?.endsWith(' ' + j.id)} onClick={() => resume(j)}>
+                  {working === 'retry ' + j.id && <Spinner />}
+                  {working === 'retry ' + j.id ? 'Trying again…' : j.state === 'approval' ? 'Review and approve' : 'Try again'}
                 </button>
               </div>
             ))}
@@ -450,6 +465,7 @@ function Connect() {
       <div className="form-foot">
         <span className="t-note">GitHub opens with the App filled in. Name it, pick the repos, and GitHub sends you back here.</span>
         <button className="btn primary" disabled={busy || !hook}>
+          {busy && <Spinner />}
           {busy ? 'Opening GitHub…' : 'Create the GitHub App'}
         </button>
       </div>

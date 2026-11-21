@@ -5,6 +5,7 @@ import { useData } from '../lib/data'
 import { Copy, Redeploy, Trash, Visit } from '../components/Icons'
 import { confirm, Dialog } from '../components/Dialog'
 import { Menu } from '../components/Menu'
+import { Spinner, useBusy } from '../components/Spinner'
 import { copy, toast } from '../components/Toast'
 import { Problem, Skeleton, When } from '../components/ui'
 
@@ -77,6 +78,7 @@ export function Domains({ project, now }: { project: string; now: number }) {
   const [busy, setBusy] = useState(false)
   const [problem, setProblem] = useState('')
   const [renaming, setRenaming] = useState(false)
+  const [checking, check] = useBusy<string>()
 
   const add = async (e: FormEvent) => {
     e.preventDefault()
@@ -95,14 +97,15 @@ export function Domains({ project, now }: { project: string; now: number }) {
       setBusy(false)
     }
   }
-  const check = async (d: Domain) => {
-    try {
-      await api(path + '/' + encodeURIComponent(d.host) + '/check', { method: 'POST' })
-      await reload()
-    } catch (err) {
-      failed(err)
-    }
-  }
+  const checkNow = (d: Domain) =>
+    check(d.host, async () => {
+      try {
+        await api(path + '/' + encodeURIComponent(d.host) + '/check', { method: 'POST' })
+        await reload()
+      } catch (err) {
+        failed(err)
+      }
+    })
   const remove = (d: Domain) =>
     confirm({
       title: (
@@ -150,6 +153,7 @@ export function Domains({ project, now }: { project: string; now: number }) {
           />
         </label>
         <button className="btn primary large" disabled={busy || !host.trim()}>
+          {busy && <Spinner />}
           {busy ? 'Adding…' : 'Add domain'}
         </button>
       </form>
@@ -175,7 +179,14 @@ export function Domains({ project, now }: { project: string; now: number }) {
                   url={live ? scheme + d.host : undefined}
                   status={d.verified ? serving(data, d.tls) : 'Waiting for DNS'}
                   note={
-                    d.verified && data.deployed && data.https && !d.tls ? (
+                    // A live domain has no Check now button: its check, from
+                    // the menu, shows here instead.
+                    live && checking === d.host ? (
+                      <span className="working-line">
+                        <Spinner />
+                        Checking the DNS…
+                      </span>
+                    ) : d.verified && data.deployed && data.https && !d.tls ? (
                       'DNS matches. Pier is getting the certificate.'
                     ) : d.checked ? (
                       <>
@@ -189,9 +200,9 @@ export function Domains({ project, now }: { project: string; now: number }) {
                   actions={
                     <>
                       {!live && (
-                        <button className="btn quiet icon" onClick={() => check(d)}>
-                          <Redeploy size={14} />
-                          Check now
+                        <button className="btn quiet icon" disabled={checking === d.host} onClick={() => checkNow(d)}>
+                          {checking === d.host ? <Spinner /> : <Redeploy size={14} />}
+                          {checking === d.host ? 'Checking…' : 'Check now'}
                         </button>
                       )}
                       <Menu
@@ -199,7 +210,7 @@ export function Domains({ project, now }: { project: string; now: number }) {
                         items={[
                           ...(live ? [{ label: 'Visit', icon: <Visit color="#A3ABBE" />, href: scheme + d.host }] : []),
                           { label: 'Copy address', icon: <Copy />, onSelect: () => copy(scheme + d.host) },
-                          ...(live ? [{ label: 'Check the DNS again', icon: <Redeploy color="#A3ABBE" />, onSelect: () => check(d) }] : []),
+                          ...(live ? [{ label: 'Check the DNS again', icon: <Redeploy color="#A3ABBE" />, onSelect: () => checkNow(d) }] : []),
                           'separator' as const,
                           { label: 'Remove', icon: <Trash />, danger: true, onSelect: () => remove(d) },
                         ]}
@@ -356,6 +367,7 @@ function AddressDialog({ project, host, onClose, onDone }: { project: string; ho
             Cancel
           </button>
           <button className="btn primary medium" type="submit" disabled={busy || same}>
+            {busy && <Spinner />}
             {busy ? 'Changing…' : 'Change address'}
           </button>
         </>

@@ -85,8 +85,7 @@ func deploy(args []string) error {
 		target = "production"
 	}
 	if useTUI {
-		_, err := openDeployView(c, project, dir, target, g, notes)
-		return err
+		return openCockpit(c, deployView, project, projectsPane, &pendingDeploy{project: project, dir: dir, target: target, g: g, notes: notes})
 	}
 	for _, n := range notes {
 		fmt.Println(n)
@@ -121,7 +120,7 @@ func deploy(args []string) error {
 		"tools": {localTools(dir)},
 	}
 	if term() {
-		heading("Deploy "+target, project+"  ·  "+dir)
+		heading("Deploy "+target, project+" from "+dir)
 	}
 	fmt.Printf("Uploading %s (%s, %s packed) to %s, for %s\n",
 		plural(len(files), "file"), human(size), human(packed), project, target)
@@ -133,7 +132,11 @@ func deploy(args []string) error {
 	req.ContentLength = packed
 	req.Header.Set("Content-Type", "application/gzip")
 	req.Header.Set("Authorization", "Bearer "+c.Token)
+	// pierd answers once the upload is in and the build starts, so the
+	// spinner covers the upload.
+	stop := spin("Uploading " + human(packed))
 	resp, err := client.Do(req)
+	stop()
 	if err != nil {
 		return fmt.Errorf("can't reach Pier at %s: %w", c.Server, err)
 	}

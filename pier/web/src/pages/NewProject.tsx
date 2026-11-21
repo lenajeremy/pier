@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react'
 import { api, ApiError, type Session } from '../lib/api'
 import { Link, navigate } from '../lib/router'
 import { ChevronRight, Terminal } from '../components/Icons'
+import { Spinner } from '../components/Spinner'
 import { GitHubRepos } from './GitHub'
 
 const nameRule = /^[a-z0-9]([a-z0-9-]{0,37}[a-z0-9])?$/
@@ -81,6 +82,7 @@ export function NewProject({ session, onCreated }: { session: Session; onCreated
               />
             </label>
             <button className="btn quiet large" type="submit" disabled={busy || !name}>
+              {busy && <Spinner />}
               {busy ? 'Creating…' : 'Create empty project'}
             </button>
           </div>

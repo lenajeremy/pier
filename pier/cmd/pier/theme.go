@@ -8,25 +8,31 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 	terminal "golang.org/x/term"
+
+	"pier/internal/version"
 )
 
-// Pier's terminal palette, taken directly from pier/web/src/styles/tokens.css.
+// Pier's terminal palette: the dashboard's dark tokens, from
+// pier/web/src/styles/tokens.css.
 const (
-	fgBright    = "236;238;244" // #ECEEF4 primary ink
-	fgSecondary = "163;171;190" // #A3ABBE secondary text
-	fgMuted     = "138;146;168" // #8A92A8 hints, metadata
-	fgDim       = "94;102;123"  // #5E667B reflection, timestamps, dim labels
-	fgBorder    = "54;62;82"    // #363E52 hairline card borders & rules
+	fgBright    = "236;238;244" // #ECEEF4 text
+	fgSecondary = "163;171;190" // #A3ABBE muted: secondary text, keys
+	fgMuted     = "138;146;168" // #8A92A8 note: section labels, hints
+	fgDim       = "94;102;123"  // #5E667B faint: ages, waiting steps, key labels
+	fgBorder    = "38;45;62"    // #262D3E hairlines drawn with box characters
 
-	bgActive = "22;28;44" // #161C2C selected row fill
+	bgActive = "20;26;40" // #141A28 the selected row
+	bgTile   = "22;28;43" // #161C2B a tile: one letter per cell
 
-	pink     = "244;156;203" // #F49CCB production / live / dome crown
-	rose     = "218;164;225" // #DAA4E1 sunset dome mid-tone
-	lavender = "188;174;248" // #BCAEF8 preview / building / dome base
-	mint     = "98;216;198"  // #62D8C6 ready / healthy / done
-	amber    = "240;184;92"  // #F0B85C warnings / paused
-	coral    = "255;128;128" // #FF8080 failed / stderr
+	pink     = "244;156;203" // #F49CCB production, live
+	rose     = "218;164;225" // #DAA4E1 the mark's middle
+	lavender = "188;174;248" // #BCAEF8 preview, building
+	mint     = "98;216;198"  // #62D8C6 healthy, ready, done
+	amber    = "240;184;92"  // #F0B85C warnings, paused
+	coral    = "255;128;128" // #FF8080 failed, stderr
 	coralTxt = "255;180;180" // #FFB4B4 failed text
+	blue     = "141;178;248" // #8DB2F8 pierd, and the focused pane
+	asleep   = "142;150;170" // #8E96AA nothing deployed
 )
 
 // The rising half-dome, horizon line, and shorter water reflection match
@@ -58,6 +64,7 @@ func brand(width int, color bool) string {
 	if width < 24 {
 		return "  " + ink("▄█▄", pink, color) + " " + boldInk("PIER", fgBright, color)
 	}
+	release := version.String()
 	var lines []string
 	for i, row := range markLines {
 		left := ink(row, markTones[i], color)
@@ -65,10 +72,18 @@ func brand(width int, color bool) string {
 			right := wordmarkLines[i]
 			if i < 4 {
 				right = boldInk(right, fgBright, color)
-			} else {
-				right = ink(strings.TrimSpace(right), fgMuted, color)
+				lines = append(lines, "  "+left+"   "+right)
+				continue
 			}
-			lines = append(lines, "  "+left+"   "+right)
+			// The release sits on the tagline's row, ending where the
+			// commands in the card below end.
+			tag := strings.TrimSpace(right)
+			line := "  " + left + "   " + ink(tag, fgMuted, color)
+			edge := min(width, 80)
+			if gap := edge - ansi.StringWidth(line) - len(release); gap >= 3 {
+				line += strings.Repeat(" ", gap) + ink(release, fgDim, color)
+			}
+			lines = append(lines, line)
 		} else {
 			if i == 2 {
 				lines = append(lines, "  "+left+"  "+boldInk("PIER", fgBright, color))
@@ -101,18 +116,6 @@ func boldInk(s, rgb string, enabled bool) string {
 	return "\x1b[1;38;2;" + rgb + "m" + s + "\x1b[0m"
 }
 
-func bgLine(s, bg string, width int, enabled bool) string {
-	pad := max(0, width-ansi.StringWidth(s))
-	full := s + strings.Repeat(" ", pad)
-	if !enabled || bg == "" {
-		return full
-	}
-	// Re-apply the row background after any inner ANSI reset so the highlight bar stays unbroken.
-	prefix := "\x1b[48;2;" + bg + "m"
-	body := strings.ReplaceAll(full, "\x1b[0m", "\x1b[0m"+prefix)
-	return prefix + body + "\x1b[0m"
-}
-
 func colorEnabled() bool {
 	return os.Getenv("NO_COLOR") == "" && term()
 }
@@ -142,10 +145,6 @@ func statusPill(status string, color bool) string {
 	tone := statusTone(clean)
 	word := strings.ToUpper(clean)
 	return ink("● ", tone, color) + boldInk(word, tone, color)
-}
-
-func keyHint(key, label string, color bool) string {
-	return boldInk(key, fgSecondary, color) + " " + ink(label, fgDim, color)
 }
 
 func terminalWidth() int {
@@ -208,24 +207,4 @@ func resultRow(label, status, detail string) {
 		fmt.Println("  " + ansi.Truncate(ink(singleLine(detail), fgMuted, c), width, "…"))
 	}
 	fmt.Println()
-}
-
-// cardRow formats one line inside a rounded border box of total inner width `inner`.
-func cardRow(content string, inner int, color bool) string {
-	clipped := ansi.Truncate(content, inner, "…")
-	pad := max(0, inner-ansi.StringWidth(clipped))
-	border := ink("│", fgBorder, color)
-	return "  " + border + " " + clipped + strings.Repeat(" ", pad) + " " + border
-}
-
-func cardTop(inner int, color bool) string {
-	return "  " + ink("╭"+strings.Repeat("─", inner+2)+"╮", fgBorder, color)
-}
-
-func cardDivider(inner int, color bool) string {
-	return "  " + ink("├"+strings.Repeat("─", inner+2)+"┤", fgBorder, color)
-}
-
-func cardBottom(inner int, color bool) string {
-	return "  " + ink("╰"+strings.Repeat("─", inner+2)+"╯", fgBorder, color)
 }

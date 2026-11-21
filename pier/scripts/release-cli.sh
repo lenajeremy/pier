@@ -22,7 +22,7 @@ build_one() {
   stage="$work/$name"
   mkdir "$stage"
 
-  CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -trimpath -o "$stage/pier" ./cmd/pier
+  CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -trimpath -ldflags "-X pier/internal/version.Version=$ver" -o "$stage/pier" ./cmd/pier
   printf '%s\n' "$os" >"$stage/OS"
   printf '%s\n' "$arch" >"$stage/ARCH"
   printf '%s\n' "$ver" >"$stage/VERSION"

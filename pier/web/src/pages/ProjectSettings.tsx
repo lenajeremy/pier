@@ -5,6 +5,7 @@ import { Link, navigate } from '../lib/router'
 import { BuildFields } from '../components/BuildFields'
 import type { Folders } from '../components/FolderPicker'
 import { Dialog } from '../components/Dialog'
+import { Spinner } from '../components/Spinner'
 import { toast } from '../components/Toast'
 import { Problem, Skeleton } from '../components/ui'
 
@@ -206,6 +207,7 @@ export function ProjectSettings({ project, address, onDeleted }: { project: stri
               Discard
             </button>
             <button className="btn primary medium" type="submit" disabled={state.saving || !dirty}>
+              {state.saving && <Spinner />}
               {state.saving ? 'Saving…' : 'Save changes'}
             </button>
           </div>
@@ -271,6 +273,7 @@ function DeleteDialog({ project, address, onClose, onDone }: { project: string; 
             Cancel
           </button>
           <button className="btn danger medium" type="submit" disabled={busy || typed.trim() !== project}>
+            {busy && <Spinner />}
             {busy ? 'Deleting…' : 'Delete project'}
           </button>
         </>

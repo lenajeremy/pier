@@ -34,7 +34,11 @@ And the start of the second slice:
 
 ## Interactive CLI
 
-Run `pier` in a terminal to open the command menu. Use ↑ and ↓ to move, Enter to select, and / to filter commands or projects. Esc clears a filter or closes the picker. A linked folder opens its own deployment history and logs. Direct commands such as `pier board` still work in scripts. Set `NO_COLOR=1` for a monochrome display.
+Run `pier` in a terminal to open the cockpit: every project on the left, and the chosen one on the right with its addresses and deployments. It opens on the project the folder is linked to, and refreshes on its own, every few seconds while something builds. Tab moves between the panes, ↑ and ↓ move within one, and Enter opens a deployment. Single keys do the rest: `d` deploys the folder as a preview and `D` to production, `p` promotes the selected deployment, `r` rolls production back, `l` opens logs, `b` shows the board, `/` finds a project or deployment, and `?` lists every key. `pier deploy`, `pier board` and `pier deployments` open the same screens. Below 90 columns the projects pane hides and Tab picks a project instead. Piped output and `--plain` stay plain text for scripts, and `NO_COLOR=1` shows the screens without colour.
+
+## Versions
+
+`pier version` shows the CLI's release and, when you're signed in, the release of the `pierd` it talks to. When one is behind, it prints the command that updates it. `pier --version` prints only the CLI's, without asking the server. On the server, `pierd version` prints its release, and the dashboard shows it in the account menu and on the Server page. A build from source reports the commit it came from, like `dev-3f9a2c1`.
 
 ## Preview builds
 

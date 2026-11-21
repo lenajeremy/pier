@@ -10,10 +10,13 @@ trap 'rm -rf "$work"' EXIT
 name=pier-linux-$arch
 stage=$work/$name
 mkdir "$stage"
-CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -o "$stage/" ./cmd/...
+# The release name is the tag when there is one (v0.6.0), so pier version
+# and pierd version say it. VERSION overrides it.
+ver=${VERSION:-$(git describe --tags --always --dirty)}
+CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags "-X pier/internal/version.Version=$ver" -o "$stage/" ./cmd/...
 cp install/install.sh install/pierd.service "$stage/"
 printf '%s\n' "$arch" >"$stage/ARCH"
-git describe --always --dirty >"$stage/VERSION"
+printf '%s\n' "$ver" >"$stage/VERSION"
 (
  cd "$stage"
  if command -v sha256sum >/dev/null; then

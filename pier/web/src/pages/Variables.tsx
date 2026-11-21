@@ -7,6 +7,7 @@ import { Link, navigate } from '../lib/router'
 import { Copy, Eye, Info, Pencil, Trash, Visit } from '../components/Icons'
 import { confirm, Dialog } from '../components/Dialog'
 import { Menu } from '../components/Menu'
+import { Spinner } from '../components/Spinner'
 import { copy, toast } from '../components/Toast'
 import { Badge, Paging, Problem, SearchField, Skeleton, usePaged, When } from '../components/ui'
 
@@ -322,6 +323,7 @@ function Row({ v, base, now, onChange, onDelete }: {
   onDelete: () => void
 }) {
   const [revealed, setRevealed] = useState<string | null>(null)
+  const [revealing, setRevealing] = useState(false)
   const read = () =>
     api<{ value: string }>(`${base}/variables/reveal`, {
       method: 'POST',
@@ -329,10 +331,13 @@ function Row({ v, base, now, onChange, onDelete }: {
     }).then((r) => r.value)
   const reveal = async () => {
     if (revealed !== null) return setRevealed(null)
+    setRevealing(true)
     try {
       setRevealed(await read())
     } catch (e) {
       failed(e)
+    } finally {
+      setRevealing(false)
     }
   }
   return (
@@ -348,12 +353,13 @@ function Row({ v, base, now, onChange, onDelete }: {
         )}
         <button
           className="reveal"
+          disabled={revealing}
           onClick={reveal}
           aria-label={revealed === null ? `Show ${v.name}` : `Hide ${v.name}`}
           aria-pressed={revealed !== null}
           data-tip={revealed === null ? 'Show the value' : 'Hide the value'}
         >
-          <Eye color={revealed === null ? '#8A92A8' : '#ECEEF4'} />
+          {revealing ? <Spinner className="t-muted" /> : <Eye color={revealed === null ? '#8A92A8' : '#ECEEF4'} />}
         </button>
       </span>
       <span className="scopes">
@@ -480,6 +486,7 @@ function AddDialog({ base, onClose, onDone, onImport }: {
             Cancel
           </button>
           <button className="btn primary medium" type="submit" disabled={busy || !name.trim()}>
+            {busy && <Spinner />}
             {busy ? 'Adding…' : 'Add variable'}
           </button>
         </>
@@ -590,6 +597,7 @@ function ImportDialog({ base, raw: first, onClose, onDone }: {
             Cancel
           </button>
           <button className="btn primary medium" type="submit" disabled={busy || count === 0}>
+            {busy && <Spinner />}
             {busy ? 'Importing…' : count > 0 ? `Import ${count}` : 'Import'}
           </button>
         </>
@@ -638,7 +646,9 @@ function ChangeDialog({ base, entry, onClose, onDone }: { base: string; entry: E
   const [problem, setProblem] = useState<Fault>(null)
   const [busy, setBusy] = useState(false)
   const [shown, setShown] = useState(false)
+  const [reading, setReading] = useState(false)
   const show = async () => {
+    setReading(true)
     try {
       const r = await api<{ value: string }>(`${base}/variables/reveal`, {
         method: 'POST',
@@ -648,6 +658,8 @@ function ChangeDialog({ base, entry, onClose, onDone }: { base: string; entry: E
       setShown(true)
     } catch (e) {
       setProblem(fault(e))
+    } finally {
+      setReading(false)
     }
   }
   const submit = async (e: FormEvent) => {
@@ -679,6 +691,7 @@ function ChangeDialog({ base, entry, onClose, onDone }: { base: string; entry: E
             Cancel
           </button>
           <button className="btn primary medium" type="submit" disabled={busy}>
+            {busy && <Spinner />}
             {busy ? 'Saving…' : 'Save value'}
           </button>
         </>
@@ -688,8 +701,9 @@ function ChangeDialog({ base, entry, onClose, onDone }: { base: string; entry: E
         <div className="field-top">
           <span className="field-label">New value</span>
           {!shown && (
-            <button className="btn quiet small" type="button" onClick={show}>
-              Start from the current value
+            <button className="btn quiet small" type="button" disabled={reading || busy} onClick={show}>
+              {reading && <Spinner />}
+              {reading ? 'Reading the value…' : 'Start from the current value'}
             </button>
           )}
         </div>

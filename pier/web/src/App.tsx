@@ -123,7 +123,7 @@ function Signed({ session, path, now }: { session: Session; path: string; now: n
   } else if (path === '/shared-variables') {
     page = <SharedVariables projects={projects}/>
   } else if (path === '/server') {
-    page = <Server/>
+    page = <Server version={session.server.version} />
   } else if (path === '/settings') {
     page = <Settings/>
   } else {

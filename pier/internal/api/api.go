@@ -74,6 +74,7 @@ func (a *API) Public() http.Handler {
 
 	mux.Handle("GET /api/board", a.auth(http.HandlerFunc(a.board)))
 	mux.Handle("GET /api/projects", a.auth(http.HandlerFunc(a.projects)))
+	mux.Handle("GET /api/version", a.auth(http.HandlerFunc(a.versionInfo)))
 	mux.Handle("POST /api/projects", a.auth(http.HandlerFunc(a.createProject)))
 	mux.Handle("DELETE /api/projects/{project}", a.auth(http.HandlerFunc(a.deleteProject)))
 	mux.Handle("GET /api/projects/{project}/settings", a.auth(http.HandlerFunc(a.settings)))

@@ -55,8 +55,9 @@ systemctl daemon-reload
 systemctl enable pierd
 if systemctl is-active --quiet pierd; then
  systemctl restart pierd
- echo 'Pier has been upgraded.'
+ echo "Pier has been upgraded to $(/usr/local/bin/pierd version 2>/dev/null || echo 'the new release')."
 else
+ echo "Installed $(/usr/local/bin/pierd version 2>/dev/null || echo pierd)."
  echo 'Create the owner account and choose the server address:'
  echo '  sudo /usr/local/bin/pierd init'
 fi

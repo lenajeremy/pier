@@ -89,7 +89,7 @@ export interface LogLine {
 
 export interface Session {
   user: { name: string; email: string } | null
-  server: { address: string; base_domain: string; domain: string; production_branch: string }
+  server: { address: string; base_domain: string; domain: string; production_branch: string; version?: string }
 }
 
 export class ApiError extends Error {

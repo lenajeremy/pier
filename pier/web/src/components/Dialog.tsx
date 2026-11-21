@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { ApiError } from '../lib/api'
+import { Spinner } from './Spinner'
 
 // Dialog is the Confirmation and the Form dialog (Components 4): the page
 // behind dims, focus stays inside until it closes, and Escape or a click on
@@ -151,6 +152,7 @@ function Confirm({ q }: { q: Asked }) {
             Cancel
           </button>
           <button className={'btn medium ' + (q.danger ? 'danger' : 'primary')} disabled={busy} onClick={go}>
+            {busy && <Spinner />}
             {busy ? (q.working ?? q.action) : q.action}
           </button>
         </>

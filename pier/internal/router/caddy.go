@@ -116,13 +116,23 @@ func (c Caddy) Config(routes []Route) ([]byte, error) {
 			"terminal": true,
 		})
 	}
-	// Anything else on the server: say so plainly instead of Caddy's empty 200.
+	// Anything else on the server: say so, instead of Caddy's empty 200. A
+	// browser gets the page; curl and scripts get one plain line.
 	handlers = append(handlers, map[string]any{
+		"match": []any{map[string]any{"header": map[string][]string{"Accept": {"*text/html*"}}}},
+		"handle": []any{map[string]any{
+			"handler":     "static_response",
+			"status_code": 404,
+			"headers":     map[string][]string{"Content-Type": {"text/html; charset=utf-8"}, "Cache-Control": {"no-store"}},
+			"body":        notFoundPage,
+		}},
+		"terminal": true,
+	}, map[string]any{
 		"handle": []any{map[string]any{
 			"handler":     "static_response",
 			"status_code": 404,
 			"headers":     map[string][]string{"Content-Type": {"text/plain; charset=utf-8"}},
-			"body":        "Nothing is deployed at this address.\n",
+			"body":        notFoundText,
 		}},
 	})
 
