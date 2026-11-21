@@ -158,7 +158,14 @@ function ProjectPage({ name, path, visit, children }: {
   const { data, error, reload } = useData<Project>(
     `/api/projects/${encodeURIComponent(name)}`,
     () => true,
-    (p) => (p.deployments.some((d) => d.status === 'building') || p.container?.state === 'restarting' ? 3000 : 15_000),
+    // A build GitHub has queued but not started has no record yet, so the
+    // page asks often until it appears, instead of waiting 15 seconds.
+    (p) =>
+      p.github?.queued
+        ? 2000
+        : p.deployments.some((d) => d.status === 'building') || p.container?.state === 'restarting'
+          ? 3000
+          : 15_000,
   )
   // A project that's gone, or pierd being away before anything has loaded.
   // Once it has loaded, a failed refresh keeps what's on screen.

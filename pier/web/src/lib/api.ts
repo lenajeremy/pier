@@ -79,6 +79,10 @@ export interface Project {
   branches: Address[]
   deployments: Deployment[]
   stats: BuildStats
+  // For a project GitHub deploys: its repo, the deliveries that haven't
+  // started building yet (an import's first build among them), and the ones
+  // waiting for the owner's approval.
+  github?: { repo: string; queued: number; approval: number } | null
 }
 
 export interface LogLine {

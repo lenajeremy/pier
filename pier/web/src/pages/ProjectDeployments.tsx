@@ -48,6 +48,43 @@ export function ProjectDeployments({ project, session, now, reload }: {
   }, [all, filter, query, oldest])
   const paged = usePaged(rows, PAGE, filter + '\u0000' + query + oldest)
 
+  // A project GitHub deploys builds on its own: say what it's waiting for,
+  // not how to deploy from a folder.
+  const gh = project.github
+  if (all.length === 0 && gh) {
+    const branch = project.production_branch || 'main'
+    return (
+      <main className="main">
+        {gh.queued > 0 ? (
+          <Empty title="Starting the first build">
+            <Spinner large label="Starting the first build" />
+            <span className="t-caption t-muted" style={{ maxWidth: 480 }}>
+              Pier is fetching <span className="mono nowrap">{gh.repo || 'the repo'}</span> at{' '}
+              <span className="mono nowrap">{branch}</span> and building it. It shows here the moment it starts.
+            </span>
+          </Empty>
+        ) : gh.approval > 0 ? (
+          <Empty title="Waiting for your approval">
+            <span className="t-caption t-muted" style={{ maxWidth: 480 }}>
+              A pull request from a fork can't build until you approve it, because building runs its code on this server.
+            </span>
+            <Link className="btn primary" to="/integrations">
+              Review it in Integrations
+            </Link>
+          </Empty>
+        ) : (
+          <Empty title="Waiting for a push">
+            <span className="t-caption t-muted" style={{ maxWidth: 480 }}>
+              Pier builds <span className="mono nowrap">{branch}</span> of{' '}
+              <span className="mono nowrap">{gh.repo || 'the repo'}</span> on every push and puts it at {project.address}.
+              Every other branch and pull request gets a preview.
+            </span>
+          </Empty>
+        )}
+      </main>
+    )
+  }
+
   if (all.length === 0) {
     return (
       <main className="main">

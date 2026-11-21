@@ -233,8 +233,19 @@ func (a *API) project(w http.ResponseWriter, r *http.Request) {
 		}
 		cancel()
 	}
+	// A project GitHub deploys says what's waiting to build, so the page can
+	// show an import's first build coming before it has a record.
+	var github any
+	if linked, queued, approval, err := a.Store.GitHubWaiting(r.Context(), name); err == nil && linked {
+		repo := ""
+		if p, err := a.Store.Project(r.Context(), name); err == nil {
+			repo = p.Repo
+		}
+		github = map[string]any{"repo": repo, "queued": queued, "approval": approval}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"name": name, "address": host, "url": a.Deployer.URL(host),
+		"github":            github,
 		"production_branch": ps.productionBranch,
 		"rolled_back_from":  ps.rolledBackFrom,
 		"rollback_to":       ps.rollbackTarget(),

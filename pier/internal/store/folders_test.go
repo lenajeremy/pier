@@ -65,3 +65,39 @@ func TestGitHubLinkAndImportJob(t *testing.T) {
 		t.Fatalf("a missing job reads with %v", err)
 	}
 }
+
+// An import's first build is queued before it has a record, and the
+// project page needs to know, or it shows an empty project until the next
+// slow refresh.
+func TestGitHubWaiting(t *testing.T) {
+	ctx := context.Background()
+	s := githubStore(t)
+	if linked, queued, approval, err := s.GitHubWaiting(ctx, "site"); err != nil || !linked || queued != 1 || approval != 0 {
+		t.Fatalf("after the import: linked %v, queued %d, approval %d, %v", linked, queued, approval, err)
+	}
+	// Once the build has its record, it's a deployment, not a wait.
+	j, err := s.NextGitHub(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep := Deployment{ID: "a1b2c3", Project: "site", Branch: "main", Commit: j.SHA, Status: Building, Target: TargetProduction, Source: SourceGitHub}
+	if err := s.StartGitHubDeployment(ctx, j.ID, dep); err != nil {
+		t.Fatal(err)
+	}
+	if _, queued, _, err := s.GitHubWaiting(ctx, "site"); err != nil || queued != 0 {
+		t.Fatalf("a building job still counted as waiting: %d, %v", queued, err)
+	}
+	// A fork's pull request waits for approval.
+	if _, err := s.QueueGitHub(ctx, 7, 42, "pr-1", "pr-1", strings.Repeat("b", 40), 1, true, time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, approval, err := s.GitHubWaiting(ctx, "site"); err != nil || approval != 1 {
+		t.Fatalf("approval %d, %v", approval, err)
+	}
+	if err := s.EnsureProject(ctx, "cli"); err != nil {
+		t.Fatal(err)
+	}
+	if linked, _, _, err := s.GitHubWaiting(ctx, "cli"); err != nil || linked {
+		t.Fatalf("a project GitHub doesn't deploy reads as linked: %v", err)
+	}
+}
