@@ -1,15 +1,18 @@
 import type { ReactNode } from 'react'
 import { changePreset, type Build } from '../lib/api'
+import { FolderPicker, type Folders } from './FolderPicker'
 import { Info } from './Icons'
 
 // BuildFields is the Build panel's inside (D2): what Pier found or will look
 // for, then the five things that can override it. A new project and a
 // project's settings both show it.
-export function BuildFields({ build: b, onChange, plan, problem }: {
+export function BuildFields({ build: b, onChange, plan, problem, folders, github }: {
   build: Build
   onChange: (b: Build) => void
   plan?: Record<string, string> | null // what the last build ran, once there's been one
   problem?: { field?: string; error?: string }
+  folders?: { data?: Folders | null; loading?: boolean } // the repo's folders, for the root directory
+  github?: boolean // GitHub pushes build it, so a monorepo's can skip what they don't change
 }) {
   const server = b.preset === 'dockerfile' || b.preset === 'server'
   const set = (k: keyof Build) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
@@ -58,8 +61,12 @@ export function BuildFields({ build: b, onChange, plan, problem }: {
         </label>
         <label className={field('root')}>
           <span className="field-label">Root directory</span>
-          <input className="input mono" placeholder="./" value={b.root} onChange={set('root')} spellCheck={false} autoCapitalize="off" />
-          {help('root', 'Where the app or its Dockerfile is. Change it for a monorepo.')}
+          {folders ? (
+            <FolderPicker value={b.root} onChange={(root) => onChange({ ...b, root })} data={folders.data} loading={folders.loading} />
+          ) : (
+            <input className="input mono" placeholder="./" value={b.root} onChange={set('root')} spellCheck={false} autoCapitalize="off" />
+          )}
+          {help('root', folders?.data?.folders.length ? 'Where the app or its Dockerfile is. Pick a folder, or type to find one.' : 'Where the app or its Dockerfile is. Change it for a monorepo.')}
         </label>
         <label className={field('output')}>
           <span className="field-label">Output folder</span>
@@ -101,6 +108,19 @@ export function BuildFields({ build: b, onChange, plan, problem }: {
           {help('command', b.preset === 'dockerfile' ? 'The Dockerfile says how to build.' : 'The build script in package.json.')}
         </label>
       </div>
+      {github && b.root.trim() && (
+        <div className="field">
+          <label className="check">
+            <input type="checkbox" checked={!!b.always_build} onChange={(e) => onChange({ ...b, always_build: e.target.checked })} />
+            <span>Build on every push</span>
+          </label>
+          <span className="t-note">
+            {b.always_build
+              ? 'Every push to the repo builds this project, whatever it changes.'
+              : `A push that changes nothing in ${b.root.trim().replace(/\/+$/, '')}/, or in a workspace package it uses, is skipped.`}
+          </span>
+        </div>
+      )}
     </>
   )
 }

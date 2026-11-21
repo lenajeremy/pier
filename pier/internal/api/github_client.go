@@ -53,7 +53,9 @@ type githubRepo struct {
 	Branch       string `json:"default_branch"`
 	Private      bool   `json:"private"`
 	Installation int64  `json:"installation"`
-	Project      string `json:"project,omitempty"`
+	// Projects are the projects that deploy the repository, by name. A
+	// repository can hold several, each built from its own folder.
+	Projects []string `json:"projects"`
 }
 
 var repoName = regexp.MustCompile("^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$")
@@ -220,7 +222,7 @@ func (a *API) ghRepos(ctx context.Context, app githubApp) (githubCatalog, error)
 				}
 				for _, r := range list.Repositories {
 					r.Installation = inst.ID
-					r.Project, err = a.Store.GitHubProject(ctx, r.ID)
+					r.Projects, err = a.Store.GitHubProjects(ctx, r.ID)
 					if err != nil {
 						return catalog, err
 					}

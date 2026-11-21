@@ -228,6 +228,43 @@ var migrations = []string{
 	// can deliver an older push after a newer one.
 	`ALTER TABLE github_jobs ADD COLUMN interrupted INTEGER NOT NULL DEFAULT 0;
 	ALTER TABLE github_jobs ADD COLUMN pr_updated  INTEGER NOT NULL DEFAULT 0;`,
+
+	// 13: a repository can hold several projects, each built from its own
+	// folder, so a repository no longer belongs to one project. SQLite can't
+	// drop a constraint, so github_repos is built again without it. Its jobs
+	// are moved to a new table first: with foreign keys on, a table that rows
+	// still refer to can't be dropped, even for a moment.
+	`CREATE TABLE github_repos_new (
+		project TEXT PRIMARY KEY REFERENCES projects(name),
+		repo_id INTEGER NOT NULL,
+		installation INTEGER NOT NULL
+	);
+	INSERT INTO github_repos_new(project,repo_id,installation) SELECT project,repo_id,installation FROM github_repos;
+	CREATE TABLE github_jobs_new (
+		id INTEGER PRIMARY KEY,
+		project TEXT NOT NULL REFERENCES github_repos_new(project),
+		delivery TEXT NOT NULL, branch TEXT NOT NULL, sha TEXT NOT NULL,
+		pr INTEGER NOT NULL, state TEXT NOT NULL, deployment TEXT NOT NULL DEFAULT '',
+		detail TEXT NOT NULL DEFAULT '', interrupted INTEGER NOT NULL DEFAULT 0,
+		pr_updated INTEGER NOT NULL DEFAULT 0, UNIQUE(project,delivery)
+	);
+	INSERT INTO github_jobs_new(id,project,delivery,branch,sha,pr,state,deployment,detail,interrupted,pr_updated)
+		SELECT id,project,delivery,branch,sha,pr,state,deployment,detail,interrupted,pr_updated FROM github_jobs;
+	DROP TABLE github_jobs;
+	DROP TABLE github_repos;
+	ALTER TABLE github_repos_new RENAME TO github_repos;
+	ALTER TABLE github_jobs_new RENAME TO github_jobs;
+	CREATE INDEX github_repos_by_repo ON github_repos(repo_id);
+	CREATE INDEX github_jobs_state ON github_jobs(state,id);`,
+
+	// 14: a project built from one folder of its repository skips the pushes
+	// that change nothing it builds from, unless its owner has it build every
+	// push.
+	`ALTER TABLE projects ADD COLUMN always_build INTEGER NOT NULL DEFAULT 0;`,
+
+	// 15: the name a project's production address has under the base domain,
+	// when the owner changed it from the project's name.
+	`ALTER TABLE projects ADD COLUMN subdomain TEXT NOT NULL DEFAULT '';`,
 }
 
 // Open opens (and if needed creates) the database at path.

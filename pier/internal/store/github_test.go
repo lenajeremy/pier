@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -72,8 +73,8 @@ func TestGitHubApprovalsFollowGitHubsTime(t *testing.T) {
 				if d.sha != "" {
 					sha = strings.Repeat(d.sha, 40)
 				}
-				if project, err := s.QueueGitHub(ctx, 7, 42, d.id, "pr-9", sha, 9, sha != "", at); err != nil || project != "site" {
-					t.Fatalf("queue %s: %q, %v", d.id, project, err)
+				if projects, err := s.QueueGitHub(ctx, 7, 42, d.id, "pr-9", sha, 9, sha != "", at); err != nil || !slices.Equal(projects, []string{"site"}) {
+					t.Fatalf("queue %s: %q, %v", d.id, projects, err)
 				}
 			}
 			for id, want := range c.want {

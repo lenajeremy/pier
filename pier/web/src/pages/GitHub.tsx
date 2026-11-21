@@ -1,8 +1,9 @@
-import { useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { api, ApiError, type Build, type Session } from '../lib/api'
 import { useData, useNow } from '../lib/data'
 import { Link, navigate } from '../lib/router'
 import { BuildFields } from '../components/BuildFields'
+import type { Folder, Folders } from '../components/FolderPicker'
 import { ChevronRight, GitHubMark, Visit } from '../components/Icons'
 import { Paging, Problem, SearchField, Skeleton, usePaged } from '../components/ui'
 import { RepoTable, type Repo as Listed } from './Integrations'
@@ -124,13 +125,68 @@ const slug = (s: string) =>
     .slice(0, 39)
     .replace(/^-|-$/g, '')
 
+// useSettled is a value once it has stopped changing for a moment, so the
+// folders are asked for the branch typed, not for every letter of it.
+function useSettled<T>(value: T, ms = 400): T {
+  const [settled, setSettled] = useState(value)
+  useEffect(() => {
+    const t = setTimeout(() => setSettled(value), ms)
+    return () => clearTimeout(t)
+  }, [value, ms])
+  return settled
+}
+
+// useRoots finds the root directory of each project the repo already deploys,
+// so the apps they build can say so.
+function useRoots(projects: string[]): Record<string, string> {
+  const [roots, setRoots] = useState<Record<string, string>>({})
+  const key = projects.join(',')
+  useEffect(() => {
+    let live = true
+    Promise.all(
+      projects.map((p) =>
+        api<{ project: { build: Build } }>(`/api/projects/${encodeURIComponent(p)}/settings`)
+          .then((s) => [s.project.build.root.replace(/^\.?\/+|\/+$/g, ''), p] as const)
+          .catch(() => null),
+      ),
+    ).then((found) => {
+      if (live) setRoots(Object.fromEntries(found.filter((f) => f !== null)))
+    })
+    return () => {
+      live = false
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key])
+  return roots
+}
+
 function Configure({ repo, session, onCreated }: { repo: Repo; session: Session; onCreated: () => void }) {
-  const [name, setName] = useState(slug(repo.full_name.split('/')[1]))
+  const repoName = repo.full_name.split('/')[1]
+  const [name, setName] = useState(slug(repoName))
+  const [named, setNamed] = useState(false) // the owner typed a name, so choosing an app leaves it
   const [branch, setBranch] = useState(repo.default_branch)
   const [build, setBuild] = useState<Build>(defaults)
   const [problem, setProblem] = useState<{ error?: string; field?: string }>({})
   const [busy, setBusy] = useState(false)
   const domain = session.server.domain
+  const settledBranch = useSettled(branch.trim() || repo.default_branch)
+  const tree = useData<Folders>(
+    `/api/github/repositories/${repo.id}/folders?installation=${repo.installation}&branch=${encodeURIComponent(settledBranch)}`,
+  )
+  const roots = useRoots(repo.projects ?? [])
+  const apps = (tree.data?.folders ?? []).filter((f) => f.app)
+  const root = build.root.trim().replace(/^\.?\/+|\/+$/g, '')
+
+  // Choosing an app makes it the root, and names the project after it while
+  // the owner hasn't named it themselves.
+  const pick = (f: Folder | null) => {
+    setBuild({ ...build, root: f?.path ?? '' })
+    if (!named) {
+      const leaf = f?.path.split('/').pop() ?? ''
+      setName(slug(!leaf || leaf === repoName ? repoName : `${repoName}-${leaf}`))
+    }
+    setProblem({})
+  }
 
   async function submit(e: FormEvent) {
     e.preventDefault()
@@ -172,6 +228,28 @@ function Configure({ repo, session, onCreated }: { repo: Repo; session: Session;
       <form className="settings" onSubmit={submit} noValidate>
         <section className="panel form-panel">
           <h2 className="t-small t-strong">Project</h2>
+          {apps.length >= 2 && (
+            <div className="field">
+              <span className="field-label">App</span>
+              <div className="app-choices" role="radiogroup" aria-label="The app this project builds">
+                {[null, ...apps.slice(0, 11)].map((f) => {
+                  const path = f?.path ?? ''
+                  const used = roots[path]
+                  return (
+                    <label key={path || '.'} className="check app-choice">
+                      <input type="radio" name="app" checked={root === path} onChange={() => pick(f)} />
+                      <span className="mono app-path">{path || './'}</span>
+                      <span className="t-note">{used ? `${used} deploys it` : f ? f.kind : 'The whole repo'}</span>
+                    </label>
+                  )
+                })}
+              </div>
+              <span className="t-note">
+                This repo holds {apps.length} apps. Each can be its own project with its own address: pick the one this project
+                builds{apps.length > 11 ? ', or find another under Root directory' : ''}.
+              </span>
+            </div>
+          )}
           <div className="form-grid two">
             <label className={'field' + (bad('name') ? ' error' : '')}>
               <span className="field-label">Project name</span>
@@ -182,6 +260,7 @@ function Configure({ repo, session, onCreated }: { repo: Repo; session: Session;
                 autoCapitalize="off"
                 onChange={(e) => {
                   setName(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '-'))
+                  setNamed(true)
                   setProblem({})
                 }}
               />
@@ -221,7 +300,13 @@ function Configure({ repo, session, onCreated }: { repo: Repo; session: Session;
         </section>
         <section className="panel form-panel">
           <h2 className="t-small t-strong">Build</h2>
-          <BuildFields build={build} onChange={setBuild} problem={problem} />
+          <BuildFields
+            build={build}
+            onChange={setBuild}
+            problem={problem}
+            folders={tree.error ? undefined : { data: tree.data, loading: !tree.data }}
+            github
+          />
         </section>
         {problem.error && !problem.field && <Problem>{problem.error}</Problem>}
         <div className="form-foot">

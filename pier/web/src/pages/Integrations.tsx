@@ -10,10 +10,14 @@ import { Menu } from '../components/Menu'
 import { toast } from '../components/Toast'
 import { PageHeading, Paging, Problem, SearchField, Skeleton, usePaged, When } from '../components/ui'
 
-type Job = { id: number; project: string; pr: number; sha: string; state: string; detail: string }
+// A job waits for the owner once per commit: a monorepo's projects that the
+// same push would build come as one, named in projects.
+type Job = { id: number; project: string; projects?: string[]; pr: number; sha: string; state: string; detail: string }
+const who = (j: Job) => names(j.projects?.length ? j.projects : [j.project])
+const names = (list: string[]) => (list.length < 2 ? list[0] : `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`)
 type Info = { slug: string; hook: string; jobs: Job[] }
 type Installation = { id: number; account: { login: string; type: string }; html_url: string }
-export type Repo = { id: number; full_name: string; private: boolean; language: string; pushed_at: string; project?: string }
+export type Repo = { id: number; full_name: string; private: boolean; language: string; pushed_at: string; projects?: string[] }
 type Catalog = { repositories: Repo[]; installations: Installation[] }
 type Delivery = { delivered_at: string; event: string; status_code: number; duration: number }
 type Activity = { created_at: string; deliveries: Delivery[] }
@@ -113,7 +117,7 @@ export function Integrations() {
         <>
           <p>
             <span className="mono">{j.sha.slice(0, 7)}</span> comes from someone else's copy of the repo. Building it runs their
-            code on this server, with {j.project}'s preview variables.
+            code on this server, with {(j.projects?.length ?? 1) > 1 ? `the preview variables of ${who(j)}` : `${j.project}'s preview variables`}.
           </p>
           <p>Read the changes on GitHub first. Approving covers this commit only; a later push asks again.</p>
         </>
@@ -122,7 +126,7 @@ export function Integrations() {
       working: 'Starting the build…',
       run: go,
     })
-    if (ok) toast(`Building ${j.sha.slice(0, 7)} for ${j.project}`)
+    if (ok) toast(`Building ${j.sha.slice(0, 7)} for ${who(j)}`)
   }
 
   return (
@@ -224,14 +228,19 @@ export function Integrations() {
                 <Warning size={20} color={j.state === 'approval' ? '#F0B85C' : '#FFB4B4'} />
                 <div>
                   <span className="t-small">
-                    <Link className="t-strong" to={'/projects/' + j.project}>
-                      {j.project}
-                    </Link>
+                    {(j.projects?.length ? j.projects : [j.project]).map((p, i, all) => (
+                      <span key={p}>
+                        {i > 0 && (i === all.length - 1 ? ' and ' : ', ')}
+                        <Link className="t-strong" to={'/projects/' + p}>
+                          {p}
+                        </Link>
+                      </span>
+                    ))}
                     {j.pr > 0 && `, pull request #${j.pr}`} <span className="mono id">{j.sha.slice(0, 7)}</span>
                   </span>
                   <span className="t-note">
                     {j.state === 'approval'
-                      ? "This commit comes from a fork. It isn't built until you approve it, because building runs its code with this project's preview variables."
+                      ? `This commit comes from a fork. It isn't built until you approve it, because building runs its code with ${(j.projects?.length ?? 1) > 1 ? "these projects'" : "this project's"} preview variables.`
                       : j.detail}
                   </span>
                 </div>
@@ -315,12 +324,28 @@ export function RepoTable({ repos, owners, now, query, onClear }: {
               {owners ? r.full_name : r.full_name.split('/').pop()}
             </span>
             <span className="t-note">{r.private ? 'Private' : 'Public'}</span>
+            {r.projects?.length ? (
+              <span className="t-note repo-projects">
+                Deploys{' '}
+                {r.projects.length > 3 ? (
+                  <span data-tip={r.projects.join(', ')}>{r.projects.length} projects</span>
+                ) : (
+                  r.projects.map((p, i) => (
+                    <span key={p}>
+                      {i > 0 && (i === r.projects!.length - 1 ? ' and ' : ', ')}
+                      <Link to={'/projects/' + p}>{p}</Link>
+                    </span>
+                  ))
+                )}
+              </span>
+            ) : null}
           </span>
           <span className="t-muted">{r.language || ''}</span>
           {r.pushed_at ? <When at={r.pushed_at} now={now} className="t-muted" /> : <span />}
           <span className="row-end">
-            <Link className={'btn ' + (r.project ? 'quiet' : 'primary')} to={r.project ? '/projects/' + r.project : '/new/github/' + r.id}>
-              {r.project ? 'Open project' : 'Import'}
+            {/* One repo can deploy several projects, a monorepo's apps each as its own. */}
+            <Link className={'btn ' + (r.projects?.length ? 'quiet' : 'primary')} to={'/new/github/' + r.id}>
+              {r.projects?.length ? 'Add project' : 'Import'}
             </Link>
           </span>
         </div>

@@ -137,8 +137,8 @@ func TestGitHubDisconnect(t *testing.T) {
 	if sealed, err := env.st.Setting(bg, appSetting); err != nil || sealed != "" {
 		t.Fatalf("the App is still stored: %v", err)
 	}
-	if project, err := env.st.GitHubProject(bg, 7); err != nil || project != "site" {
-		t.Fatalf("the project lost its repository: %q, %v", project, err)
+	if projects, err := env.st.GitHubProjects(bg, 7); err != nil || !slices.Equal(projects, []string{"site"}) {
+		t.Fatalf("the project lost its repository: %q, %v", projects, err)
 	}
 	if env.aliases()["site.pier.test"] == "" {
 		t.Fatal("production stopped serving")
@@ -330,7 +330,7 @@ func TestGitHubKeepsOnePreviewComment(t *testing.T) {
 		t.Fatalf("%d comments posted, %d rewritten: %+v", env.hub.posted, env.hub.patched, env.hub.comments)
 	}
 	body := env.hub.comments[1].Body
-	if !strings.Contains(body, "`ccccccc`") || !strings.Contains(body, "site-"+latest.Deployment+".pier.test") || env.hub.comments[0].Body != quote {
+	if !strings.Contains(body, "- site: https://pr-9--site.pier.test (`ccccccc`)") || env.aliases()["pr-9--site.pier.test"] != latest.Deployment || env.hub.comments[0].Body != quote {
 		t.Fatalf("comments %+v", env.hub.comments)
 	}
 }

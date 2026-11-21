@@ -91,6 +91,12 @@ export const Docs = ({ size = 17, color = 'currentColor' }: P) => (
   </svg>
 )
 
+export const Folder = ({ size = 16, color = 'currentColor' }: P) => (
+  <svg {...line(size, color)}>
+    <path d="M3.5 7A1.5 1.5 0 0 1 5 5.5H9.4L11.4 7.5H19A1.5 1.5 0 0 1 20.5 9V17.5A1.5 1.5 0 0 1 19 19H5A1.5 1.5 0 0 1 3.5 17.5Z" />
+  </svg>
+)
+
 export const Plus = ({ size = 13, color = '#A3ABBE' }: P) => (
   <svg {...line(size, color, 2)}>
     <path d="M12 5V19M5 12H19" />

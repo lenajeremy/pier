@@ -168,6 +168,17 @@ func (a *API) workGitHub(ctx context.Context, j *store.GitHubJob) error {
 			return err
 		}
 		defer os.Remove(archive)
+		// A project built from one folder of a repository leaves alone a push
+		// that changes nothing it builds from. Not knowing builds it.
+		if skip, reason, err := a.unaffected(ctx, j, token, repo.Name, project, archive); err != nil {
+			a.Log.Warn("couldn't tell what a push changed, so it is built", "project", j.Project, "job", j.ID, "err", err)
+		} else if skip {
+			if err := status("success", "No changes for this project, so nothing was built.", ""); err != nil {
+				return err
+			}
+			a.event(ctx, j.Project, "Skipped build", reason, "")
+			return a.Store.SaveGitHubJob(ctx, j.ID, "skipped", "", reason)
+		}
 		target := store.TargetPreview
 		production := project.ProductionBranch
 		if production == "" {
@@ -242,7 +253,7 @@ func (a *API) workGitHub(ctx context.Context, j *store.GitHubJob) error {
 		return err
 	}
 	if j.PR > 0 && dep.Status == store.Ready {
-		if err := a.ghPreviewComment(ctx, token, repo.Name, app.ID, *j, link); err != nil {
+		if err := a.ghPreviewComment(ctx, token, repo.Name, app.ID, *j); err != nil {
 			return err
 		}
 	}
@@ -253,9 +264,17 @@ func (a *API) workGitHub(ctx context.Context, j *store.GitHubJob) error {
 // pull request, so each push rewrites it instead of adding another.
 const previewMarker = "<!-- pier-preview -->"
 
-func (a *API) ghPreviewComment(ctx context.Context, token, repo string, appID int64, j store.GitHubJob, link string) error {
+// ghPreviewComment writes Pier's comment on a job's pull request. Every
+// project of the repository builds the pull request as its own job, and the
+// comment lists each one's preview, read from the store, so whichever
+// finishes last leaves the whole list.
+func (a *API) ghPreviewComment(ctx context.Context, token, repo string, appID int64, j store.GitHubJob) error {
+	body, err := a.previewList(ctx, j)
+	if err != nil || body == "" {
+		return err
+	}
 	path := fmt.Sprintf("/repos/%s/issues/%d/comments", repo, j.PR)
-	msg := map[string]string{"body": fmt.Sprintf("Pier preview for `%s`: %s\n\n%s", j.SHA[:7], link, previewMarker)}
+	msg := map[string]string{"body": body + "\n\n" + previewMarker}
 	for page := 1; ; page++ {
 		var comments []struct {
 			ID   int64
@@ -279,6 +298,44 @@ func (a *API) ghPreviewComment(ctx context.Context, token, repo string, appID in
 		}
 	}
 	return a.ghJSON(ctx, "POST", path, token, msg, nil)
+}
+
+// previewList lists the previews of a job's pull request, one line for each
+// project of the repository that has one, or is empty when none has. A
+// preview is the pull request's address, or, when that isn't serving, the
+// project's newest ready build of it at its own address.
+func (a *API) previewList(ctx context.Context, j store.GitHubJob) (string, error) {
+	projects, err := a.Store.GitHubProjects(ctx, j.RepoID)
+	if err != nil {
+		return "", err
+	}
+	branch := fmt.Sprintf("pr-%d", j.PR)
+	var lines []string
+	for _, project := range projects {
+		host := names.Branch(project, branch, a.Deployer.Domain)
+		dep, serving, err := a.Store.BranchPreview(ctx, project, branch, host)
+		if errors.Is(err, store.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		if !serving {
+			host = names.Deployment(project, dep.ID, a.Deployer.Domain)
+		}
+		line := "- " + project + ": " + a.Deployer.URL(host)
+		if len(dep.Commit) >= 7 {
+			line += " (`" + dep.Commit[:7] + "`)"
+		}
+		lines = append(lines, line)
+	}
+	switch len(lines) {
+	case 0:
+		return "", nil
+	case 1:
+		return "Pier preview of this pull request:\n\n" + lines[0], nil
+	}
+	return "Pier previews of this pull request:\n\n" + strings.Join(lines, "\n"), nil
 }
 
 // progress pushes a download's stall deadline back each time bytes arrive.

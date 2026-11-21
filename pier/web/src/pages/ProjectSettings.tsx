@@ -1,8 +1,9 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { api, ApiError, type Build, type RuntimeSettings, type Settings } from '../lib/api'
 import { useData } from '../lib/data'
-import { navigate } from '../lib/router'
+import { Link, navigate } from '../lib/router'
 import { BuildFields } from '../components/BuildFields'
+import type { Folders } from '../components/FolderPicker'
 import { Dialog } from '../components/Dialog'
 import { toast } from '../components/Toast'
 import { Problem, Skeleton } from '../components/ui'
@@ -16,6 +17,9 @@ type Draft = { build: Build; runtime: RuntimeSettings; branch: string }
 // Pier detects how to build on every deploy; anything filled in overrides it.
 export function ProjectSettings({ project, address, onDeleted }: { project: string; address: string; onDeleted?: () => void }) {
   const { data, error, reload } = useData<Settings>(`/api/projects/${encodeURIComponent(project)}/settings`)
+  // The folders of the repo, or of the last upload, for the root directory.
+  // A project with nothing to list yet keeps a plain field.
+  const tree = useData<Folders>(`/api/projects/${encodeURIComponent(project)}/folders`)
   const [draft, setDraft] = useState<Draft>({ build: empty, runtime: emptyRuntime, branch: '' })
   const [saved, setSaved] = useState<Draft | null>(null)
   const [state, setState] = useState<{ saving?: boolean; error?: string; field?: string }>({})
@@ -90,7 +94,10 @@ export function ProjectSettings({ project, address, onDeleted }: { project: stri
             <label className="field">
               <span className="field-label">Project name</span>
               <input className="input mono" value={project} readOnly tabIndex={-1} />
-              <span className="t-note">It lives at {address}. The name is set when the project is made.</span>
+              <span className="t-note">
+                It lives at {address}. The name is set when the project is made; the address can change under{' '}
+                <Link to={`/projects/${encodeURIComponent(project)}/domains`}>Domains</Link>.
+              </span>
             </label>
             <label className={field('production_branch')}>
               <span className="field-label">Production branch</span>
@@ -112,7 +119,14 @@ export function ProjectSettings({ project, address, onDeleted }: { project: stri
 
         <section className="panel form-panel">
           <h2 className="t-small t-strong">Build</h2>
-          <BuildFields build={b} onChange={(build) => change({ build })} plan={data.last_build_plan} problem={state} />
+          <BuildFields
+            build={b}
+            onChange={(build) => change({ build })}
+            plan={data.last_build_plan}
+            problem={state}
+            folders={tree.error ? undefined : { data: tree.data, loading: !tree.data }}
+            github={!!data.project.repo}
+          />
         </section>
 
         {!staticOnly && (

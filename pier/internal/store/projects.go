@@ -18,6 +18,16 @@ type Project struct {
 	Build            Build     `json:"build"`
 	Runtime          Runtime   `json:"runtime"`
 	RolledBackFrom   string    `json:"rolled_back_from"` // what production served before a rollback; empty if not rolled back
+	Subdomain        string    `json:"subdomain"`        // production's name under the base domain; empty: the project's name
+}
+
+// Label is the name production's address has under the base domain.
+// Previews and each deployment's own address keep the project's name.
+func (p Project) Label() string {
+	if p.Subdomain != "" {
+		return p.Subdomain
+	}
+	return p.Name
 }
 
 // Build is the owner's overrides of what Pier detects.
@@ -27,6 +37,10 @@ type Build struct {
 	Install string `json:"install"` // install command
 	Command string `json:"command"` // build command
 	Output  string `json:"output"`  // the folder that's served
+	// AlwaysBuild builds every push. Without it, a project built from a
+	// folder of its repository skips a push that changes nothing it builds
+	// from.
+	AlwaysBuild bool `json:"always_build"`
 }
 
 // Runtime is the owner's container runtime overrides for server apps.
@@ -44,14 +58,14 @@ var ErrExists = errors.New("already exists")
 // ErrBuilding means a project cannot be deleted while a build is running.
 var ErrBuilding = errors.New("build in progress")
 
-const projectCols = `name, created_at, production_branch, repo, root_dir, preset, install_cmd, build_cmd, output_dir, start_cmd, health_path, memory_mb, cpus, rolled_back_from`
+const projectCols = `name, created_at, production_branch, repo, root_dir, preset, install_cmd, build_cmd, output_dir, start_cmd, health_path, memory_mb, cpus, rolled_back_from, always_build, subdomain`
 
 func scanProject(sc interface{ Scan(...any) error }) (Project, error) {
 	var p Project
 	var created int64
 	err := sc.Scan(&p.Name, &created, &p.ProductionBranch, &p.Repo,
 		&p.Build.Root, &p.Build.Preset, &p.Build.Install, &p.Build.Command, &p.Build.Output,
-		&p.Runtime.StartCommand, &p.Runtime.HealthPath, &p.Runtime.MemoryMB, &p.Runtime.CPUs, &p.RolledBackFrom)
+		&p.Runtime.StartCommand, &p.Runtime.HealthPath, &p.Runtime.MemoryMB, &p.Runtime.CPUs, &p.RolledBackFrom, &p.Build.AlwaysBuild, &p.Subdomain)
 	if errors.Is(err, sql.ErrNoRows) {
 		return p, ErrNotFound
 	}
@@ -62,11 +76,11 @@ func scanProject(sc interface{ Scan(...any) error }) (Project, error) {
 // CreateProject adds a project. It fails with ErrExists if the name is taken.
 func (s *Store) CreateProject(ctx context.Context, p Project) error {
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO projects(name, created_at, production_branch, repo, root_dir, preset, install_cmd, build_cmd, output_dir, start_cmd, health_path, memory_mb, cpus)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		INSERT INTO projects(name, created_at, production_branch, repo, root_dir, preset, install_cmd, build_cmd, output_dir, start_cmd, health_path, memory_mb, cpus, always_build)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.Name, time.Now().UnixMilli(), p.ProductionBranch, p.Repo,
 		p.Build.Root, p.Build.Preset, p.Build.Install, p.Build.Command, p.Build.Output,
-		p.Runtime.StartCommand, p.Runtime.HealthPath, p.Runtime.MemoryMB, p.Runtime.CPUs)
+		p.Runtime.StartCommand, p.Runtime.HealthPath, p.Runtime.MemoryMB, p.Runtime.CPUs, p.Build.AlwaysBuild)
 	if err != nil && strings.Contains(err.Error(), "UNIQUE") {
 		return ErrExists
 	}
@@ -90,9 +104,9 @@ func (s *Store) SetProjectBuild(ctx context.Context, name, productionBranch stri
 // SetProjectSettings changes a project's production branch, build overrides, and runtime settings.
 func (s *Store) SetProjectSettings(ctx context.Context, name, productionBranch string, b Build, rt Runtime) error {
 	res, err := s.db.ExecContext(ctx, `
-		UPDATE projects SET production_branch = ?, root_dir = ?, preset = ?, install_cmd = ?, build_cmd = ?, output_dir = ?, start_cmd = ?, health_path = ?, memory_mb = ?, cpus = ?
+		UPDATE projects SET production_branch = ?, root_dir = ?, preset = ?, install_cmd = ?, build_cmd = ?, output_dir = ?, start_cmd = ?, health_path = ?, memory_mb = ?, cpus = ?, always_build = ?
 		WHERE name = ?`,
-		productionBranch, b.Root, b.Preset, b.Install, b.Command, b.Output, rt.StartCommand, rt.HealthPath, rt.MemoryMB, rt.CPUs, name)
+		productionBranch, b.Root, b.Preset, b.Install, b.Command, b.Output, rt.StartCommand, rt.HealthPath, rt.MemoryMB, rt.CPUs, b.AlwaysBuild, name)
 	if err != nil {
 		return err
 	}
@@ -151,4 +165,54 @@ func (s *Store) DeleteProject(ctx context.Context, name string) error {
 		}
 	}
 	return tx.Commit()
+}
+
+// ErrTaken means another project, or a custom domain, already has that
+// address.
+var ErrTaken = errors.New("address taken")
+
+// SetSubdomain renames production's address under the base domain: the
+// project's own name when sub is empty. host is the address it becomes.
+// Production's alias moves with it in the same transaction, so the router
+// never serves both or neither. A name another project goes by, as its name
+// or its address, or a custom domain's, is ErrTaken.
+func (s *Store) SetSubdomain(ctx context.Context, project, sub, host string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	label := sub
+	if label == "" {
+		label = project
+	}
+	var taken int
+	err = tx.QueryRowContext(ctx, `SELECT (SELECT COUNT(*) FROM projects WHERE name<>? AND (name=? OR subdomain=?))
+		+ (SELECT COUNT(*) FROM custom_domains WHERE host=? OR redirect=?)
+		+ (SELECT COUNT(*) FROM aliases WHERE host=? AND project<>?)`, project, label, label, host, host, host, project).Scan(&taken)
+	if err != nil {
+		return err
+	}
+	if taken > 0 {
+		return ErrTaken
+	}
+	res, err := tx.ExecContext(ctx, "UPDATE projects SET subdomain=? WHERE name=?", sub, project)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	if _, err = tx.ExecContext(ctx, "UPDATE aliases SET host=? WHERE project=? AND kind=?", host, project, KindProduction); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// SubdomainTaken reports whether a project has renamed its address to name,
+// which a new project can't then be called.
+func (s *Store) SubdomainTaken(ctx context.Context, name string) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM projects WHERE subdomain=?", name).Scan(&n)
+	return n > 0, err
 }

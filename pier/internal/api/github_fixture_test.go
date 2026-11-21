@@ -42,11 +42,27 @@ type hub struct {
 	heads    map[string]string // a branch, or pr-N, to its head; a missing one is deleted or closed
 	tokens   []string          // the installation each token was issued for
 	statuses []string          // each commit status posted
+	contexts []string          // the context each of those was posted under
 	comments []hubComment      // comments on pull requests
 	posted   int               // comments created
 	patched  int               // comments rewritten
 	fail     func(r *http.Request) int
 	tarball  func(w http.ResponseWriter, r *http.Request)
+	trees    map[string][]string   // a commit's files; a missing commit has no tree
+	clipped  bool                  // every tree says GitHub truncated it
+	compares map[string]hubCompare // "base...head" to how they differ; a missing pair can't be compared
+	details  []string              // each commit status's description
+}
+
+// hubCompare is how two commits differ, as GitHub's comparison says.
+type hubCompare struct {
+	Status string    `json:"status"`
+	Files  []hubFile `json:"files"`
+}
+
+type hubFile struct {
+	Name     string `json:"filename"`
+	Previous string `json:"previous_filename,omitempty"`
 }
 
 type hubComment struct {
@@ -66,6 +82,12 @@ func (h *hub) handler() http.Handler {
 	m.HandleFunc("POST /app/installations/{id}/access_tokens", func(w http.ResponseWriter, r *http.Request) {
 		h.tokens = append(h.tokens, r.PathValue("id"))
 		io.WriteString(w, `{"token":"installation-token"}`)
+	})
+	m.HandleFunc("GET /app/installations", func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `[{"id":42,"account":{"login":"owner","type":"User"}}]`)
+	})
+	m.HandleFunc("GET /installation/repositories", func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"repositories":[{"id":7,"full_name":"owner/site","default_branch":"main"},{"id":8,"full_name":"owner/other","default_branch":"main"}]}`)
 	})
 	m.HandleFunc("GET /repositories/7", func(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, `{"id":7,"full_name":"owner/site","default_branch":"main"}`)
@@ -92,10 +114,32 @@ func (h *hub) handler() http.Handler {
 	m.HandleFunc("GET /repos/owner/site/tarball/{sha}", func(w http.ResponseWriter, r *http.Request) {
 		w.Write(siteArchive(r.PathValue("sha")))
 	})
+	m.HandleFunc("GET /repos/owner/site/git/trees/{sha}", func(w http.ResponseWriter, r *http.Request) {
+		files, ok := h.trees[r.PathValue("sha")]
+		if !ok || r.URL.Query().Get("recursive") != "1" {
+			w.WriteHeader(404)
+			return
+		}
+		tree := []map[string]string{}
+		for _, f := range files {
+			tree = append(tree, map[string]string{"path": f, "type": "blob"})
+		}
+		json.NewEncoder(w).Encode(map[string]any{"sha": r.PathValue("sha"), "tree": tree, "truncated": h.clipped})
+	})
+	m.HandleFunc("GET /repos/owner/site/compare/{basehead}", func(w http.ResponseWriter, r *http.Request) {
+		c, ok := h.compares[r.PathValue("basehead")]
+		if !ok {
+			w.WriteHeader(404)
+			return
+		}
+		json.NewEncoder(w).Encode(c)
+	})
 	m.HandleFunc("POST /repos/owner/site/statuses/{sha}", func(w http.ResponseWriter, r *http.Request) {
-		var msg struct{ State string }
+		var msg struct{ State, Context, Description string }
 		json.NewDecoder(r.Body).Decode(&msg)
 		h.statuses = append(h.statuses, msg.State)
+		h.contexts = append(h.contexts, msg.Context)
+		h.details = append(h.details, msg.Description)
 	})
 	m.HandleFunc("GET /repos/owner/site/issues/{n}/comments", func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(append([]hubComment{}, h.comments...))
@@ -383,8 +427,8 @@ func (e *ghEnv) job(id int64) (state, deployment, detail string) {
 	return
 }
 
-// waiting lists the jobs that wait for the owner.
-func (e *ghEnv) waiting() []store.GitHubJob {
+// waiting lists the deliveries that wait for the owner.
+func (e *ghEnv) waiting() []store.GitHubWaiting {
 	e.t.Helper()
 	jobs, err := e.st.GitHubAttention(context.Background())
 	if err != nil {

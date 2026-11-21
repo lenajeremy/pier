@@ -281,6 +281,14 @@ func (a *API) ghImport(w http.ResponseWriter, r *http.Request) {
 		githubError(w, 400, "Choose a repository and a valid project name.")
 		return
 	}
+	if taken, err := a.Store.SubdomainTaken(r.Context(), req.Name); err != nil || taken {
+		if err != nil {
+			a.fail(w, err)
+			return
+		}
+		githubError(w, 409, req.Name+" is another project's address. Choose another name.")
+		return
+	}
 	if _, err := build.Folder(req.Build.Root); err != nil {
 		githubError(w, 400, "Choose a root directory inside the project.")
 		return
@@ -323,7 +331,7 @@ func (a *API) ghImport(w http.ResponseWriter, r *http.Request) {
 	}
 	err = a.Store.ImportGitHub(ctx, store.Project{Name: req.Name, Repo: repo.Name, ProductionBranch: req.Branch, Build: req.Build}, repo.ID, req.Installation, sha)
 	if errors.Is(err, store.ErrExists) || err != nil && strings.Contains(err.Error(), "UNIQUE") {
-		githubError(w, 409, "This project name or repository is already in use.")
+		githubError(w, 409, "This project name is already in use.")
 		return
 	}
 	if err != nil {
@@ -455,7 +463,7 @@ func (a *API) ghEvent(w http.ResponseWriter, r *http.Request) {
 	// GitHub's own time orders a pull request's deliveries, which can arrive
 	// out of order. One it can't read sorts by arrival.
 	updated, _ := time.Parse(time.RFC3339, e.Pull.Updated)
-	project, err := a.Store.QueueGitHub(r.Context(), e.Repository.ID, e.Installation.ID, delivery, branch, sha, pr, approval, updated)
+	projects, err := a.Store.QueueGitHub(r.Context(), e.Repository.ID, e.Installation.ID, delivery, branch, sha, pr, approval, updated)
 	if err != nil {
 		a.fail(w, err)
 		return
@@ -463,7 +471,7 @@ func (a *API) ghEvent(w http.ResponseWriter, r *http.Request) {
 	// The App can be installed on repositories no project deploys. Say so,
 	// here and to GitHub, so a delivery that does nothing can be told from
 	// one that was queued.
-	if project == "" {
+	if len(projects) == 0 {
 		a.Log.Info("GitHub delivery ignored: no project uses this repository", "repository", e.Repository.Name, "id", e.Repository.ID, "installation", e.Installation.ID, "delivery", delivery)
 		w.WriteHeader(204)
 		return

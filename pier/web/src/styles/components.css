@@ -2548,3 +2548,70 @@ select.input.compact,
 .service-row .bad {
   color: var(--d-red-text);
 }
+
+/* ---- Monorepo: one repo, several projects ------------------------------- */
+
+.repo-name .repo-projects {
+  flex: 0 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.repo-projects a {
+  color: var(--d-muted);
+}
+.repo-projects a:hover {
+  color: var(--d-text);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+/* The apps found in a repo, to pick the one a new project builds. */
+.app-choices {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px 32px;
+}
+.app-choice .app-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.app-choice .t-note {
+  flex: none;
+}
+
+/* An input with a fixed end, like an address under the base domain: the
+   field draws the pill, the input inside has none of its own. */
+.input.affixed {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 0;
+  font-family: var(--d-mono);
+}
+.input.affixed:focus-within {
+  border-color: var(--d-focus);
+  box-shadow: var(--d-focus-ring);
+}
+/* The input is as wide as its text, so the end follows what's typed. */
+.input.affixed input {
+  flex: 0 1 auto;
+  width: auto;
+  field-sizing: content;
+  min-width: 1ch;
+  max-width: 70%;
+  height: 100%;
+  padding: 0 0 0 18px;
+  background: none;
+  border: 0;
+  outline: none;
+  font: inherit;
+  color: inherit;
+}
+.input.affixed .affix {
+  flex: none;
+  padding-right: 18px;
+  color: var(--d-note);
+}
