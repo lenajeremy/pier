@@ -132,7 +132,8 @@ func (a *API) workGitHub(ctx context.Context, j *store.GitHubJob) error {
 		return a.ghJSON(ctx, "POST", statusPath, token, msg, nil)
 	}
 	// On a retry, reuse the recorded result. A build that pierd stopped
-	// during has none: it stays visible as failed, and the commit builds again.
+	// during has none: it stays visible as failed, and the commit builds
+	// again, unless pierd has stopped during it too often.
 	var dep store.Deployment
 	if j.Deployment != "" {
 		dep, err = a.Store.Deployment(ctx, j.Deployment)
@@ -141,8 +142,13 @@ func (a *API) workGitHub(ctx context.Context, j *store.GitHubJob) error {
 		}
 	}
 	if j.Detail == store.InterruptedBuild || j.Deployment != "" && dep.Interrupted() {
-		if err = a.Store.InterruptGitHubBuild(ctx, j.ID, j.Deployment); err != nil {
+		gaveUp, err := a.Store.InterruptGitHubBuild(ctx, j.ID, j.Deployment)
+		if err != nil {
 			return err
+		}
+		if gaveUp {
+			a.Log.Warn("GitHub build keeps being cut short by pierd stopping; it waits for the owner", "project", j.Project, "job", j.ID)
+			return nil
 		}
 		j.Deployment, j.Detail = "", ""
 	}
@@ -185,20 +191,30 @@ func (a *API) workGitHub(ctx context.Context, j *store.GitHubJob) error {
 		// Note the stop on the job the moment it comes. pierd can exit before
 		// the build has unwound, and by then its record may already say failed.
 		job := j.ID
+		noted := make(chan struct{})
 		unwatch := context.AfterFunc(ctx, func() {
+			defer close(noted)
 			if err := a.Store.NoteGitHubJob(context.WithoutCancel(ctx), job, store.InterruptedBuild); err != nil {
 				a.Log.Warn("note interrupted GitHub build", "job", job, "err", err)
 			}
 		})
 		buildErr := a.Deployer.DeployGitHub(ctx, j.Project, archive, src, io.Discard)
-		unwatch()
+		// A note still being written would land after the detach below, and
+		// the next start would count this stop a second time.
+		if !unwatch() {
+			<-noted
+		}
 		if ctx.Err() != nil {
 			// pierd is stopping, and a build it cut short was recorded as
 			// failed. Detach it so the next start builds the commit again
 			// instead of reporting a failure the commit didn't cause.
 			if buildErr != nil && j.Deployment != "" {
-				if err := a.Store.InterruptGitHubBuild(context.WithoutCancel(ctx), j.ID, j.Deployment); err != nil {
+				gaveUp, err := a.Store.InterruptGitHubBuild(context.WithoutCancel(ctx), j.ID, j.Deployment)
+				if err != nil {
 					a.Log.Warn("detach interrupted GitHub build", "project", j.Project, "err", err)
+				}
+				if gaveUp {
+					a.Log.Warn("GitHub build keeps being cut short by pierd stopping; it waits for the owner", "project", j.Project, "job", j.ID)
 				}
 			}
 			return ctx.Err()

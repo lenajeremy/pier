@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -29,6 +30,21 @@ const (
 
 // maxDelivery is the largest delivery GitHub sends.
 const maxDelivery = 25 << 20
+
+// spool writes a delivery to disk and remembers whether the disk failed,
+// which is pierd's fault rather than the sender's.
+type spool struct {
+	f   *os.File
+	err error
+}
+
+func (s *spool) Write(p []byte) (int, error) {
+	n, err := s.f.Write(p)
+	if err != nil {
+		s.err = err
+	}
+	return n, err
+}
 
 type pendingManifest struct {
 	State   string
@@ -330,15 +346,43 @@ func (a *API) ghEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(10 * time.Second))
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxDelivery))
-	if err != nil {
-		githubError(w, 413, "Delivery too large.")
+	// The body goes to disk as it arrives, through the signature check, so a
+	// request that isn't from GitHub holds a small buffer whatever its size,
+	// and only a signed one is decoded.
+	if err = os.MkdirAll(a.Deployer.Tmp, 0o700); err != nil {
+		a.fail(w, err)
 		return
 	}
+	f, err := os.CreateTemp(a.Deployer.Tmp, "delivery-*.json")
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	defer func() {
+		f.Close()
+		os.Remove(f.Name())
+	}()
 	mac := hmac.New(sha256.New, []byte(app.Secret))
-	mac.Write(body)
+	disk := &spool{f: f}
+	_, err = io.Copy(io.MultiWriter(mac, disk), http.MaxBytesReader(w, r.Body, maxDelivery))
+	var tooLarge *http.MaxBytesError
+	switch {
+	case disk.err != nil:
+		a.fail(w, disk.err)
+		return
+	case errors.As(err, &tooLarge):
+		githubError(w, 413, "Delivery too large.")
+		return
+	case err != nil:
+		githubError(w, 400, "Invalid delivery.")
+		return
+	}
 	if !hmac.Equal(sig, mac.Sum(nil)) {
 		githubError(w, 401, "Invalid delivery signature.")
+		return
+	}
+	if _, err = f.Seek(0, io.SeekStart); err != nil {
+		a.fail(w, err)
 		return
 	}
 	var e struct {
@@ -351,14 +395,15 @@ func (a *API) ghEvent(w http.ResponseWriter, r *http.Request) {
 			Name string `json:"full_name"`
 		}
 		Pull struct {
-			Head struct {
+			Updated string `json:"updated_at"`
+			Head    struct {
 				SHA  string
 				Repo struct{ ID int64 }
 			}
 			Base struct{ Repo struct{ ID int64 } }
 		} `json:"pull_request"`
 	}
-	if json.Unmarshal(body, &e) != nil {
+	if json.NewDecoder(f).Decode(&e) != nil {
 		githubError(w, 400, "Invalid delivery.")
 		return
 	}
@@ -407,7 +452,10 @@ func (a *API) ghEvent(w http.ResponseWriter, r *http.Request) {
 		githubError(w, 400, "Invalid commit or repository.")
 		return
 	}
-	project, err := a.Store.QueueGitHub(r.Context(), e.Repository.ID, e.Installation.ID, delivery, branch, sha, pr, approval)
+	// GitHub's own time orders a pull request's deliveries, which can arrive
+	// out of order. One it can't read sorts by arrival.
+	updated, _ := time.Parse(time.RFC3339, e.Pull.Updated)
+	project, err := a.Store.QueueGitHub(r.Context(), e.Repository.ID, e.Installation.ID, delivery, branch, sha, pr, approval, updated)
 	if err != nil {
 		a.fail(w, err)
 		return

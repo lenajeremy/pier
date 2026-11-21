@@ -221,6 +221,13 @@ var migrations = []string{
 	// activity_time orders everything; with a project chosen it could only
 	// be walked until enough of that project's rows turned up.
 	`CREATE INDEX activity_by_project ON activity(project, at DESC, id DESC);`,
+
+	// 12: how many times pierd stopped during a job's build, so a build that
+	// stops it every time is given up on; and, for a pull request, when GitHub
+	// last updated it as of the delivery (Unix milliseconds), because GitHub
+	// can deliver an older push after a newer one.
+	`ALTER TABLE github_jobs ADD COLUMN interrupted INTEGER NOT NULL DEFAULT 0;
+	ALTER TABLE github_jobs ADD COLUMN pr_updated  INTEGER NOT NULL DEFAULT 0;`,
 }
 
 // Open opens (and if needed creates) the database at path.

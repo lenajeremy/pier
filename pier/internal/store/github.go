@@ -33,6 +33,14 @@ type GitHubJob struct {
 // and the note on its job until the commit is built again.
 const InterruptedBuild = "pierd stopped during this build"
 
+// A build that is itself what stops pierd, by running it out of memory say,
+// would start again on every start. After maxInterruptions stops the job
+// waits for the owner instead, with UnsteadyBuild as its detail.
+const (
+	maxInterruptions = 3
+	UnsteadyBuild    = "pierd stopped during this build 3 times, so Pier stopped trying. Try again once the server is steady."
+)
+
 // Interrupted reports whether pierd stopping ended this deployment, rather
 // than its own build failing. A record still building has no process behind
 // it once the queue reads it, and InterruptAppBuilds has its own wording.
@@ -72,8 +80,10 @@ func (s *Store) ImportGitHub(ctx context.Context, p Project, repoID, installatio
 // repository and returns that project, or "" when no project does. The
 // delivery names the installation that can read the repository today. That
 // changes when the App is reinstalled or the repository moves, so it replaces
-// the one recorded at import. An empty sha retires the preview.
-func (s *Store) QueueGitHub(ctx context.Context, repoID, installation int64, delivery, branch, sha string, pr int, review bool) (string, error) {
+// the one recorded at import. An empty sha retires the preview. updated is
+// when GitHub last updated the pull request, as the delivery says, and is
+// zero for a push.
+func (s *Store) QueueGitHub(ctx context.Context, repoID, installation int64, delivery, branch, sha string, pr int, review bool, updated time.Time) (string, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return "", err
@@ -94,21 +104,40 @@ func (s *Store) QueueGitHub(ctx context.Context, repoID, installation int64, del
 	if review {
 		state = "approval"
 	}
-	res, err := tx.ExecContext(ctx, `INSERT INTO github_jobs(project,delivery,branch,sha,pr,state) VALUES(?,?,?,?,?,?)
- ON CONFLICT(project,delivery) DO NOTHING`, project, delivery, branch, sha, pr, state)
+	var at int64
+	if !updated.IsZero() {
+		at = updated.UnixMilli()
+	}
+	res, err := tx.ExecContext(ctx, `INSERT INTO github_jobs(project,delivery,branch,sha,pr,state,pr_updated) VALUES(?,?,?,?,?,?,?)
+ ON CONFLICT(project,delivery) DO NOTHING`, project, delivery, branch, sha, pr, state, at)
 	if err != nil {
 		return "", err
 	}
 	// Anyone can open a pull request from a fork and keep pushing to it. Only
 	// its newest commit is worth the owner's review, and none once it closes.
+	// Newest is by GitHub's time, not arrival, since GitHub can deliver an
+	// older push late; deliveries in the same second go by arrival. A late
+	// one is kept, already superseded, so its delivery reads as handled.
 	if n, _ := res.RowsAffected(); n == 1 && pr > 0 {
-		id, _ := res.LastInsertId()
-		detail := "A newer commit was pushed to this pull request."
 		if sha == "" {
-			detail = "The pull request was closed."
+			_, err = tx.ExecContext(ctx, "UPDATE github_jobs SET state='superseded',detail='The pull request was closed.' WHERE project=? AND pr=? AND state='approval'", project, pr)
+		} else {
+			_, err = tx.ExecContext(ctx, `UPDATE github_jobs SET state='superseded',detail='A newer commit was pushed to this pull request.'
+ WHERE project=? AND pr=? AND state='approval' AND id<>(SELECT id FROM github_jobs WHERE project=? AND pr=? AND state='approval' ORDER BY pr_updated DESC,id DESC LIMIT 1)`, project, pr, project, pr)
 		}
-		if _, err = tx.ExecContext(ctx, "UPDATE github_jobs SET state='superseded',detail=? WHERE project=? AND pr=? AND state='approval' AND id<?", detail, project, pr, id); err != nil {
+		if err != nil {
 			return "", err
+		}
+		// A late one can also come after GitHub's newer news was approved,
+		// built or closed, when no approval is left to compare it with.
+		if review && at > 0 {
+			id, _ := res.LastInsertId()
+			_, err = tx.ExecContext(ctx, `UPDATE github_jobs SET state='superseded',detail=(SELECT CASE WHEN o.sha='' THEN 'The pull request was closed.' ELSE 'A newer commit was pushed to this pull request.' END
+ FROM github_jobs o WHERE o.project=? AND o.pr=? AND o.pr_updated>? ORDER BY o.pr_updated DESC,o.id DESC LIMIT 1)
+ WHERE id=? AND state='approval' AND EXISTS(SELECT 1 FROM github_jobs o WHERE o.project=? AND o.pr=? AND o.pr_updated>?)`, project, pr, at, id, project, pr, at)
+			if err != nil {
+				return "", err
+			}
 		}
 	}
 	return project, tx.Commit()
@@ -150,7 +179,8 @@ func (s *Store) SaveGitHubJob(ctx context.Context, id int64, state, dep, detail 
 }
 
 // ResumeGitHub queues a job that waits for the owner: an approved pull
-// request from a fork, or an error to try again.
+// request from a fork, or an error to try again. Trying again starts the
+// count of times pierd stopped during its build over.
 func (s *Store) ResumeGitHub(ctx context.Context, id int64) error {
 	return s.answerGitHub(ctx, id, "queued", "")
 }
@@ -161,7 +191,7 @@ func (s *Store) DismissGitHub(ctx context.Context, id int64) error {
 }
 
 func (s *Store) answerGitHub(ctx context.Context, id int64, state, detail string) error {
-	r, err := s.db.ExecContext(ctx, "UPDATE github_jobs SET state=?,detail=? WHERE id=? AND state IN ('approval','error')", state, detail, id)
+	r, err := s.db.ExecContext(ctx, "UPDATE github_jobs SET state=?,detail=?,interrupted=0 WHERE id=? AND state IN ('approval','error')", state, detail, id)
 	if err != nil {
 		return err
 	}
@@ -180,22 +210,33 @@ func (s *Store) NoteGitHubJob(ctx context.Context, id int64, note string) error 
 
 // InterruptGitHubBuild records that pierd stopping, not the commit, ended a
 // job's build, and detaches the build and any note of the stop from the job.
-// The job stays queued, so the commit is built again. deployment may be
-// empty when the stop came before the build had a record, and a build that
-// did finish keeps its own result.
-func (s *Store) InterruptGitHubBuild(ctx context.Context, job int64, deployment string) error {
+// The job stays queued, so the commit is built again, until this is the
+// job's maxInterruptions-th stop: then it ends as an error for the owner to
+// try again, and gaveUp says so. deployment may be empty when the stop came
+// before the build had a record, and a build that did finish keeps its own
+// result.
+func (s *Store) InterruptGitHubBuild(ctx context.Context, job int64, deployment string) (gaveUp bool, err error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer tx.Rollback()
 	if _, err = tx.ExecContext(ctx, "UPDATE deployments SET status=?,error=? WHERE id=? AND status IN (?,?)", Failed, InterruptedBuild, deployment, Building, Failed); err != nil {
-		return err
+		return false, err
 	}
-	if _, err = tx.ExecContext(ctx, "UPDATE github_jobs SET deployment='',detail='' WHERE id=? AND state='queued'", job); err != nil {
-		return err
+	// A job that isn't queued any more was answered during its build, and
+	// keeps that answer.
+	var stops int
+	err = tx.QueryRowContext(ctx, "UPDATE github_jobs SET deployment='',detail='',interrupted=interrupted+1 WHERE id=? AND state='queued' RETURNING interrupted", job).Scan(&stops)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return false, err
 	}
-	return tx.Commit()
+	if gaveUp = stops >= maxInterruptions; gaveUp {
+		if _, err = tx.ExecContext(ctx, "UPDATE github_jobs SET state='error',detail=? WHERE id=?", UnsteadyBuild, job); err != nil {
+			return false, err
+		}
+	}
+	return gaveUp, tx.Commit()
 }
 
 // DisconnectGitHub forgets the App and any registration in progress, which

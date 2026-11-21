@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -461,4 +462,158 @@ func TestGitHubApprovalJobs(t *testing.T) {
 	}
 	env.run(bg)
 	env.idle()
+}
+
+func TestGitHubGivesUpOnABuildThatKeepsStoppingPierd(t *testing.T) {
+	env := newGitHubEnv(t)
+	bg := context.Background()
+	env.push("p1", "main", commit("b"))
+	// stopDuring starts the queued build and stops pierd while it runs.
+	stopDuring := func() int64 {
+		t.Helper()
+		ctx, stop := context.WithCancel(bg)
+		started := make(chan struct{})
+		env.runner.build(func(ctx context.Context) error {
+			close(started)
+			<-ctx.Done()
+			return ctx.Err()
+		})
+		j := env.next(bg)
+		done := make(chan error, 1)
+		go func() { done <- env.a.workGitHub(ctx, &j) }()
+		<-started
+		stop()
+		if err := <-done; !errors.Is(err, context.Canceled) {
+			t.Fatalf("the stopped build returned %v", err)
+		}
+		return j.ID
+	}
+
+	// Twice pierd stops during the build, and the commit waits to build again.
+	var job int64
+	for range 2 {
+		job = stopDuring()
+		if state, dep, detail := env.job(job); state != "queued" || dep != "" || detail != "" {
+			t.Fatalf("the job is %s with deployment %q and detail %q", state, dep, detail)
+		}
+	}
+	// The third time the build takes pierd down with it, so nothing unwinds
+	// and its record still says building. The next start doesn't build it.
+	j := env.next(bg)
+	cut := store.Deployment{ID: "0dead0", Project: "site", Branch: "main", Commit: j.SHA, Status: store.Building, Target: store.TargetProduction, Source: store.SourceGitHub}
+	if err := env.st.StartGitHubDeployment(bg, j.ID, cut); err != nil {
+		t.Fatal(err)
+	}
+	env.runner.build(nil)
+	builds := env.runner.count()
+	if j = env.next(bg); j.Deployment != cut.ID {
+		t.Fatalf("the next start reads %+v", j)
+	}
+	if err := env.a.workGitHub(bg, &j); err != nil {
+		t.Fatal(err)
+	}
+	if env.runner.count() != builds {
+		t.Fatal("the commit was built a fourth time")
+	}
+	if old, err := env.st.Deployment(bg, cut.ID); err != nil || old.Status != store.Failed || old.Error != store.InterruptedBuild {
+		t.Fatalf("the cut build is %+v, %v", old, err)
+	}
+	env.idle()
+	if jobs := env.waiting(); len(jobs) != 1 || jobs[0].ID != job || jobs[0].State != "error" || jobs[0].Detail != store.UnsteadyBuild {
+		t.Fatalf("waiting for the owner: %+v", jobs)
+	}
+
+	// Try again starts the count over, so one more stop doesn't end it.
+	if w := env.call("POST", fmt.Sprintf("/api/github/jobs/%d/resume", job), "", ownerHeaders); w.Code != 200 {
+		t.Fatalf("try again answered %d %s", w.Code, w.Body)
+	}
+	stopDuring()
+	if state, _, _ := env.job(job); state != "queued" {
+		t.Fatalf("after trying again and one stop the job is %s", state)
+	}
+	env.runner.build(nil)
+	if built := env.run(bg); built.ID != job || env.hub.lastStatus() != "success" || env.aliases()["site.pier.test"] != built.Deployment {
+		t.Fatalf("the commit wasn't built: %+v, status %s", built, env.hub.lastStatus())
+	}
+	if state, _, _ := env.job(job); state != "done" {
+		t.Fatalf("the job ended %s", state)
+	}
+	env.idle()
+}
+
+func TestGitHubApprovalFollowsGitHubsOrder(t *testing.T) {
+	env := newGitHubEnv(t)
+	bg := context.Background()
+	// forkPush delivers a fork's push to pull request 9 that GitHub made at
+	// the given minute.
+	forkPush := func(id, sha string, minute int) {
+		t.Helper()
+		body := fmt.Sprintf(`{"action":"synchronize","number":9,"installation":{"id":42},"repository":{"id":7},"pull_request":{"updated_at":"2026-11-20T10:%02d:00Z","base":{"repo":{"id":7}},"head":{"sha":%q,"repo":{"id":8}}}}`, minute, sha)
+		if code := env.event("pull_request", id, body); code != 202 {
+			t.Fatalf("pull request event answered %d", code)
+		}
+	}
+	// The pull request is at its second commit, and GitHub delivers that
+	// push before the first.
+	env.hub.mu.Lock()
+	env.hub.heads["pr-9"] = commit("c")
+	env.hub.mu.Unlock()
+	forkPush("pr2", commit("c"), 2)
+	forkPush("pr1", commit("b"), 1)
+	jobs := env.waiting()
+	if len(jobs) != 1 || jobs[0].SHA != commit("c") {
+		t.Fatalf("waiting for approval: %+v", jobs)
+	}
+	var late int64
+	if err := env.db.QueryRow("SELECT id FROM github_jobs WHERE delivery='pr1'").Scan(&late); err != nil {
+		t.Fatal(err)
+	}
+	if state, _, detail := env.job(late); state != "superseded" || detail != "A newer commit was pushed to this pull request." {
+		t.Fatalf("the late delivery is %s %q", state, detail)
+	}
+
+	// Approved, the newer commit builds and serves the preview.
+	if w := env.call("POST", fmt.Sprintf("/api/github/jobs/%d/resume", jobs[0].ID), "", ownerHeaders); w.Code != 200 {
+		t.Fatalf("approval answered %d %s", w.Code, w.Body)
+	}
+	built := env.run(bg)
+	if state, _, _ := env.job(built.ID); state != "done" || built.SHA != commit("c") || env.hub.lastStatus() != "success" || env.aliases()["pr-9--site.pier.test"] != built.Deployment {
+		t.Fatalf("job %+v ended %s, status %s", built, state, env.hub.lastStatus())
+	}
+	env.idle()
+}
+
+func TestGitHubUnsignedDeliveriesStaySmall(t *testing.T) {
+	env := newGitHubEnv(t)
+	const size = 20 << 20
+	// Not even JSON: a body is only decoded once its signature matches.
+	body := strings.Repeat("x", size)
+	forged := map[string]string{"X-GitHub-Event": "push", "X-GitHub-Delivery": "forged", "X-Hub-Signature-256": "sha256=" + strings.Repeat("0", 64)}
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	code := env.call("POST", "/github/events", body, forged).Code
+	runtime.ReadMemStats(&after)
+	if code != 401 {
+		t.Fatalf("a forged delivery answered %d", code)
+	}
+	if grew := after.TotalAlloc - before.TotalAlloc; grew > size/8 {
+		t.Fatalf("a forged %d MB delivery allocated %d KB", size>>20, grew>>10)
+	}
+
+	// Signed or not, nothing of a delivery stays on disk.
+	env.hub.heads["feature"] = commit("b")
+	signed := fmt.Sprintf(`{"installation":{"id":42},"repository":{"id":7},"ref":"refs/heads/feature","after":%q,"commits":[{"message":%q}]}`, commit("b"), strings.Repeat("x", 1<<20))
+	if code := env.event("push", "signed", signed); code != 202 {
+		t.Fatalf("a signed delivery answered %d", code)
+	}
+	files, err := os.ReadDir(env.a.Deployer.Tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		if strings.HasPrefix(f.Name(), "delivery-") {
+			t.Fatalf("a delivery was left in %s: %s", env.a.Deployer.Tmp, f.Name())
+		}
+	}
 }

@@ -283,7 +283,18 @@ func serve(args []string) int {
 	if err := a.ResumeCleanup(ctx); err != nil {
 		log.Warn("resume preview cleanup", "err", err)
 	}
-	go a.RunGitHub(ctx)
+	// A build cut short by the stop records that on its way out, so the
+	// database stays open until the queue returns, for a while at most.
+	githubDone := make(chan struct{})
+	go func() { defer close(githubDone); a.RunGitHub(ctx) }()
+	defer func() {
+		stop()
+		select {
+		case <-githubDone:
+		case <-time.After(30 * time.Second):
+			log.Warn("the GitHub queue didn't stop within 30 s; closing the database anyway")
+		}
+	}()
 	go a.SampleServer(ctx)
 	domainsDone := make(chan struct{})
 	go func() { defer close(domainsDone); a.RunDomainChecks(ctx) }()
