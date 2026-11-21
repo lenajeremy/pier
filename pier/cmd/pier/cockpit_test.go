@@ -66,6 +66,12 @@ func press(t *testing.T, m cockpit, keys ...string) cockpit {
 			msg = tea.KeyMsg{Type: tea.KeyUp}
 		case "backspace":
 			msg = tea.KeyMsg{Type: tea.KeyBackspace}
+		case "right":
+			msg = tea.KeyMsg{Type: tea.KeyRight}
+		case "left":
+			msg = tea.KeyMsg{Type: tea.KeyLeft}
+		case "shift+tab":
+			msg = tea.KeyMsg{Type: tea.KeyShiftTab}
 		default:
 			msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)}
 		}
@@ -96,24 +102,29 @@ func TestCockpitScreensFitEverySize(t *testing.T) {
 		w, h := size[0], size[1]
 		for _, color := range []bool{true, false} {
 			m := fixture(w, h, color)
-			checkScreen(t, "home", m.View(), w, h, "d deploy")
+			checkScreen(t, "home", m.View(), w, h, "p promote")
 			focused := m
 			focused.focus = projectPane
-			checkScreen(t, "home, the project focused", focused.View(), w, h, "d deploy")
+			checkScreen(t, "home, the project focused", focused.View(), w, h, "p promote")
+			acting := m
+			acting.focus = actionsPane
+			checkScreen(t, "home, the actions focused", acting.View(), w, h, "p promote")
 			checkScreen(t, "board", press(t, m, "b").View(), w, h, "↑↓ move")
 			checkScreen(t, "help", press(t, m, "?").View(), w, h, "esc back")
-			checkScreen(t, "promote", press(t, focused, "down", "p").View(), w, h, "enter promote")
-			checkScreen(t, "roll back", press(t, m, "r").View(), w, h, "")
-			checkScreen(t, "production", press(t, m, "D").View(), w, h, "enter deploy")
+			checkScreen(t, "promote", press(t, focused, "down", "p").View(), w, h, "enter run it")
+			checkScreen(t, "roll back", press(t, m, "r").View(), w, h, "enter roll back")
+			checkScreen(t, "production", press(t, m, "D").View(), w, h, "enter run it")
 
 			d := m
 			running(&d)
-			checkScreen(t, "deploy", d.View(), w, h, "esc back")
+			checkScreen(t, "deploy", d.View(), w, h, "enter run it")
+			d.onDeploy(deployEvent{done: true})
+			checkScreen(t, "deploy, finished", d.View(), w, h, "enter run it")
 
 			det := press(t, focused, "down")
 			det.view, det.detailProject, det.detailID = detailView, "landing", "c19e77"
 			det.detail = &deploymentDetail{Deployment: det.details["landing"].Deployments[1]}
-			checkScreen(t, "detail", det.View(), w, h, "esc back")
+			checkScreen(t, "detail", det.View(), w, h, "enter run it")
 
 			lg := m
 			lg.view, lg.logOpen = logsView, true
@@ -138,13 +149,19 @@ func TestCockpitMatchesTheDesign(t *testing.T) {
 	if got := ansi.StringWidth(strings.SplitAfter(lines[2], "╮")[0]); got != leftWidth {
 		t.Fatalf("projects pane is %d wide", got)
 	}
-	for _, want := range []string{"Addresses", "landing.thesunset.live", "L I V E", "P R E V I E W", "Deployments", "c19e77  Show the install command on pho…", "● ready", "● live", "● failed"} {
+	for _, want := range []string{"Addresses", "landing.thesunset.live", "L I V E", "P R E V I E W", "Deployments", "c19e77  Show the install command on p…", "● ready", "● live", "● failed"} {
 		if !strings.Contains(strings.Join(lines, "\n"), want) {
 			t.Errorf("home lacks %q", want)
 		}
 	}
-	if !strings.HasPrefix(lines[29], " d deploy    D production    p promote    r roll back    l logs    b board    / find    ? help") {
+	// The actions the pane shows as rows leave the key bar.
+	if !strings.HasPrefix(lines[29], " p promote    l logs    b board    / find    ? help    q quit") {
 		t.Fatalf("keys %q", lines[29])
+	}
+	for _, want := range []string{"Actions", "Deploy this folder as a preview", "Deploy this folder to production", "Roll back production", "Open landing.thesunset.live"} {
+		if !strings.Contains(strings.Join(lines, "\n"), want) {
+			t.Errorf("home lacks the action %q", want)
+		}
 	}
 	colored := m.View()
 	if !strings.Contains(colored, "\x1b[38;2;"+blue+"m╭─") {
@@ -189,6 +206,17 @@ func TestCockpitNarrowHidesTheProjects(t *testing.T) {
 	if m.shown != "docs" || m.dialog != noDialog {
 		t.Fatalf("the picker chose %q", m.shown)
 	}
+	// docs isn't this folder's and has no production in the fixture, so it
+	// has no actions; landing has, and Tab goes picker, actions, deployments.
+	l := fixture(80, 24, true)
+	l.focus = projectPane
+	l = press(t, l, "tab", "esc")
+	if l.focused() != actionsPane {
+		t.Fatal("after the picker, Tab's next stop is the actions")
+	}
+	if l = press(t, l, "tab"); l.focused() != projectPane {
+		t.Fatal("then the deployments")
+	}
 }
 
 func TestCockpitKeys(t *testing.T) {
@@ -200,14 +228,23 @@ func TestCockpitKeys(t *testing.T) {
 	if m.shown != "agentman" {
 		t.Fatalf("moving the cursor shows %q", m.shown)
 	}
-	m = press(t, m, "k", "tab", "j", "j")
+	if got := press(t, m, "k", "tab"); got.focused() != actionsPane {
+		t.Fatal("tab should go from the projects to the actions")
+	}
+	if got := press(t, m, "k", "tab", "tab"); got.focused() != projectPane {
+		t.Fatal("tab should go from the actions to the deployments")
+	}
+	m = press(t, m, "k", "right", "j", "j")
 	if m.focus != projectPane || m.selectedDeployment().ID != "8f3a2c" {
 		t.Fatalf("focus %v, deployment %+v", m.focus, m.selectedDeployment())
+	}
+	if got := press(t, m, "k", "k", "k"); got.focused() != actionsPane || got.actKeys[homeView] != "o" {
+		t.Fatalf("up from the first deployment should reach the last action, got %v %q", got.focused(), got.actKeys[homeView])
 	}
 	if got := press(t, m, "p"); got.notice == "" || got.dialog != noDialog {
 		t.Fatal("promoting production should say it already is")
 	}
-	if got := press(t, m, "k", "p"); got.dialog != askPromote || got.dlgItems[0].id != "c19e77" {
+	if got := press(t, m, "k", "p"); got.dialog != askPromote || got.dlgTarget != "c19e77" {
 		t.Fatal("p should ask before promoting the selected deployment")
 	}
 	if got := press(t, m, "r"); got.dialog != pickRollback || got.dlgItems[0].id != "1c9d22" {
@@ -239,7 +276,7 @@ func TestCockpitKeys(t *testing.T) {
 }
 
 func TestCockpitKeepsSelectionOnRefresh(t *testing.T) {
-	m := press(t, fixture(96, 30, true), "tab", "j", "j")
+	m := press(t, fixture(96, 30, true), "right", "j", "j")
 	d := *m.details["landing"]
 	d.Deployments = append([]deploymentSummary{{ID: "a1b2c3", Status: "building", Role: "building"}}, d.Deployments...)
 	projects := append([]cockpitProject{{Name: "aardvark", Status: "none"}}, m.projects...)
@@ -300,5 +337,18 @@ func TestDeploySteps(t *testing.T) {
 	}
 	if !strings.Contains(ansi.Strip(f.View()), "npm run build failed") {
 		t.Fatal("the log should show why it failed")
+	}
+}
+
+// The longest age, "23 hours ago", fills its column; the status still keeps
+// its gap instead of running into it.
+func TestLongAgeKeepsItsGap(t *testing.T) {
+	d := deploymentSummary{ID: "53f609", Message: "Fix dice selection and sound playback", Role: "production", CreatedAt: time.Now().Add(-10*time.Hour - time.Minute)}
+	row := ansi.Strip(deploymentRow(d, 67, false, true))
+	if !strings.Contains(row, "10 hours ago  ● live") {
+		t.Fatalf("row %q", row)
+	}
+	if w := ansi.StringWidth(row); w > 67 {
+		t.Fatalf("row is %d wide", w)
 	}
 }

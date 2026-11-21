@@ -105,6 +105,7 @@ func (m *cockpit) startDeployState(p pendingDeploy) (context.Context, chan<- dep
 	}
 	m.run = r
 	m.view = deployView
+	m.actKeys[deployView] = ""
 	m.deployErr = nil
 	m.choose(p.project)
 	return ctx, events
@@ -241,6 +242,9 @@ func (m *cockpit) onDeploy(ev deployEvent) tea.Cmd {
 	}
 	r.done = true
 	r.err = ev.err
+	// What can be done changes once it's over; the first of it gets the
+	// focus, such as opening the address it went live at.
+	m.actKeys[deployView] = ""
 	if ev.err != nil {
 		if r.failed < 0 {
 			r.failed = min(r.step, stepLive)

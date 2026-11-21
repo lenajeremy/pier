@@ -10,59 +10,86 @@ import (
 )
 
 func (m cockpit) View() string {
+	s, _ := m.render()
+	return s
+}
+
+// render draws the screen and notes where each clickable thing landed:
+// rows of every list, action rows, a dialog's choices, and the keys in the
+// key bar. A click is matched against this, so it always hits what's
+// drawn.
+func (m cockpit) render() (string, []hit) {
 	w, h := m.width, m.height
+	top := bodyTop(h)
+	rows := m.paneRows()
 	var body []string
-	var bar string
+	var hits []hit
+	var keys []keyHelp
 	project := m.shown
 	switch m.view {
 	case logsView:
-		return m.logs.View()
+		// The mouse is off on the logs so their text can be selected.
+		return m.logs.View(), nil
 	case helpView:
-		return m.help.View()
+		_, kh := keyBarHits(helpKeys, w, m.color)
+		return m.help.View(), atRow(kh, h-1)
 	case boardView:
 		project = "every project"
-		body = m.boardPane(w, m.paneRows())
-		bar = keyBar([]keyHelp{{"↑↓", "move"}, {"enter", "deployment"}, {"o", "open"}, {"l", "logs"}, {"esc", "back"}}, w, m.color)
+		var bh []hit
+		body, bh = m.boardPane(w, rows)
+		hits = place(bh, 0, top)
+		keys = []keyHelp{{"↑↓", "move"}, {"enter", "deployment"}, {"o", "open"}, {"l", "logs"}, {"esc", "back"}, {"?", "help"}}
 	default:
-		right, keys := m.rightPane()
+		right, rh, k := m.rightPane()
+		keys = k
 		if m.wide() {
-			body = beside(m.projectsPane(m.paneRows()), right, leftWidth, w-leftWidth-1)
+			left, lh := m.projectsPane(rows)
+			body = beside(left, right, leftWidth, w-leftWidth-1)
+			hits = append(place(lh, 0, top), place(rh, leftWidth+1, top)...)
 		} else {
 			body = right
+			hits = place(rh, 0, top)
 		}
-		bar = keyBar(keys, w, m.color)
 	}
+	bar, barHits := keyBarHits(keys, w, m.color)
 	if m.searching {
-		bar = m.searchBar(w)
+		bar, barHits = m.searchBar(w), nil
 	}
 	switch {
 	case m.busy != "":
-		bar = noticeBar(spinnerFrames[m.spin]+" "+m.busy+"…", lavender, w, m.color)
+		bar, barHits = noticeBar(spinnerFrames[m.spin]+" "+m.busy+"…", lavender, w, m.color), nil
 	case m.notice != "":
-		bar = noticeBar(m.notice, m.noticeInk, w, m.color)
+		bar, barHits = noticeBar(m.notice, m.noticeInk, w, m.color), nil
 	}
 	if m.dialog != noDialog {
-		var rows []string
-		var keys []keyHelp
-		rows, keys = m.dialogBox()
-		bar = keyBar(keys, w, m.color)
-		dw := 0
-		if len(rows) > 0 {
-			dw = ansi.StringWidth(rows[0])
-		}
-		x := max(0, (w-dw)/2)
+		rows, dh, dkeys, dw := m.dialogBox()
+		bar, barHits = keyBarHits(dkeys, w, m.color)
+		x := max(0, (w-dw-2)/2)
 		if m.wide() {
-			x = leftWidth + 1 + max(0, (w-leftWidth-1-dw)/2)
+			x = leftWidth + 1 + max(0, (w-leftWidth-1-dw-2)/2)
 		}
 		y := max(0, (len(body)-len(rows))/3)
 		body = overlay(padRows(body, m.paneRows()), rows, x, y, w)
+		// While a dialog is open, only its choices and keys answer.
+		hits = place(dh, x+1, top+y+1)
 	}
+	hits = append(hits, atRow(barHits, h-1)...)
 	right, rightInk := "", ""
 	if m.offline != nil {
 		right, rightInk = "can't reach "+m.server, coralTxt
 	}
-	return screen(header(w, project, m.server, right, rightInk, m.color), body, bar, w, h)
+	return screen(header(w, project, m.server, right, rightInk, m.color), body, bar, w, h), hits
 }
+
+// atRow puts key bar hits on the screen row the bar is drawn on.
+func atRow(hits []hit, y int) []hit {
+	for i := range hits {
+		hits[i].y = y
+	}
+	return hits
+}
+
+var helpKeys = []keyHelp{{"↑↓", "scroll"}, {"esc", "back"}}
 
 func padRows(rows []string, n int) []string {
 	for len(rows) < n {
@@ -72,8 +99,9 @@ func padRows(rows []string, n int) []string {
 }
 
 // rightPane is whatever the screen shows beside the projects: the
-// project, a deploy, or one deployment; and the keys that go with it.
-func (m cockpit) rightPane() ([]string, []keyHelp) {
+// project, a deploy, or one deployment; with where its rows are and the
+// keys that go with it.
+func (m cockpit) rightPane() ([]string, []hit, []keyHelp) {
 	rows := m.paneRows()
 	rw := m.width
 	if m.wide() {
@@ -100,7 +128,7 @@ func (m cockpit) searchBar(w int) string {
 
 // projectsPane lists every project with a dot for what its production is
 // doing. The project shown on the right keeps the selected row's colour.
-func (m cockpit) projectsPane(rows int) []string {
+func (m cockpit) projectsPane(rows int) ([]string, []hit) {
 	focused := m.focused() == projectsPane && m.view == homeView && m.dialog == noDialog
 	title := "Projects"
 	if m.pFilter != "" {
@@ -109,6 +137,7 @@ func (m cockpit) projectsPane(rows int) []string {
 	inner := leftWidth - 4
 	vis := m.visibleProjects()
 	var lines []string
+	var hits []hit
 	switch {
 	case len(m.projects) == 0:
 		lines = append(lines, sgr("No projects yet", fgDim, "", false, m.color))
@@ -119,13 +148,14 @@ func (m cockpit) projectsPane(rows int) []string {
 	for i := off; i < len(vis) && len(lines) < rows-2; i++ {
 		p := m.projects[vis[i]]
 		dot := sgr("● ", projectInk(p.Status), "", false, m.color)
+		hits = append(hits, hit{y: len(lines), x1: leftWidth, kind: hitProject, index: i})
 		if p.Name == m.shown {
 			lines = append(lines, dot+lit(sgr(fit(p.Name, inner-2), fgBright, "", true, m.color), inner-2, m.color))
 		} else {
 			lines = append(lines, dot+sgr(fit(p.Name, inner-2), fgSecondary, "", false, m.color))
 		}
 	}
-	return box(title, lines, leftWidth, rows, focused, m.color)
+	return box(title, lines, leftWidth, rows, focused, m.color), hits
 }
 
 // projectInk is a project's dot: what its production is doing.
@@ -153,16 +183,25 @@ func (m cockpit) addresses() []boardRow {
 	return out
 }
 
-// projectLayout shares the project pane's rows between its addresses and
-// its deployments. Deployments get at least half when there are many of
-// both, and addresses take what deployments don't need.
-func (m cockpit) projectLayout() (addr, gap, dep int) {
+// projectLayout shares the project pane's rows between its addresses, its
+// actions and its deployments. Actions show only when the pane is tall
+// enough to keep a few deployments under them. Deployments get at least
+// half of what's left when there are many of both, and addresses take what
+// deployments don't need.
+func (m cockpit) projectLayout() (addr, gap, acts, dep int) {
 	avail := m.paneRows() - 2
 	n := max(1, len(m.addresses()))
 	if avail >= 8 {
 		gap = 1
 	}
-	room := max(0, avail-2-gap)
+	if a := len(m.homeActions()); a > 0 && avail-2-gap-1-(a+1+gap) >= 3 {
+		acts = a
+	}
+	block := 0
+	if acts > 0 {
+		block = acts + 1 + gap
+	}
+	room := max(0, avail-2-gap-block)
 	addr = min(n, max(1, room/2))
 	dep = room - addr
 	if need := max(1, len(m.visibleDeployments())); dep > need && n > addr {
@@ -170,30 +209,43 @@ func (m cockpit) projectLayout() (addr, gap, dep int) {
 		addr += extra
 		dep -= extra
 	}
-	return addr, gap, max(0, dep)
+	return addr, gap, acts, max(0, dep)
 }
 
 func (m cockpit) deploymentRows() int {
-	_, _, dep := m.projectLayout()
+	_, _, _, dep := m.projectLayout()
 	return dep
 }
 
-func (m cockpit) projectPane(w, rows int) ([]string, []keyHelp) {
+// shownActions are the home actions the project pane has room to show.
+func (m cockpit) shownActions() []action {
+	if _, _, acts, _ := m.projectLayout(); acts > 0 {
+		return m.homeActions()
+	}
+	return nil
+}
+
+func (m cockpit) projectPane(w, rows int) ([]string, []hit, []keyHelp) {
 	inner := w - 4
 	c := m.color
-	focused := m.focused() == projectPane && m.dialog == noDialog
+	active := m.dialog == noDialog
+	focused := (m.focused() == projectPane || m.focused() == actionsPane) && active
+	acts := m.shownActions()
 	keys := []keyHelp{{"d", "deploy"}, {"D", "production"}, {"p", "promote"}, {"r", "roll back"}, {"l", "logs"}, {"b", "board"}, {"/", "find"}, {"?", "help"}, {"q", "quit"}}
+	// Keys the pane already shows as rows leave the key bar.
+	keys = withoutKeys(keys, acts)
 	if !m.wide() {
-		keys = append(keys[:2], append([]keyHelp{{"tab", "projects"}}, keys[2:]...)...)
+		keys = append([]keyHelp{{"tab", "projects"}}, keys...)
 	}
 	if m.shown == "" {
 		lines := []string{sgr("No projects on "+m.server+" yet. Run pier deploy in a folder to make the first one.", fgSecondary, "", false, c)}
-		return box("Nothing here yet", lines, w, rows, focused, c), keys
+		return box("Nothing here yet", lines, w, rows, focused, c), nil, keys
 	}
 	d := m.details[m.shown]
-	addrRows, gap, depRows := m.projectLayout()
+	addrRows, gap, _, depRows := m.projectLayout()
 
 	var lines []string
+	var hits []hit
 	lines = append(lines, sgr("Addresses", fgMuted, "", false, c))
 	addrs := m.addresses()
 	idW, tileW := 9, tileWidth(8)
@@ -226,6 +278,17 @@ func (m cockpit) projectPane(w, rows int) ([]string, []keyHelp) {
 	if hidden > 0 {
 		lines = append(lines, sgr(fmt.Sprintf("%d more on the board, b shows them", hidden), fgDim, "", false, c))
 	}
+	if len(acts) > 0 {
+		for range gap {
+			lines = append(lines, "")
+		}
+		lines = append(lines, sgr("Actions", fgMuted, "", false, c))
+		cur := m.actionCursor(homeView, acts)
+		for i, a := range acts {
+			hits = append(hits, hit{y: len(lines), x1: w, kind: hitAction, index: i})
+			lines = append(lines, actionRow(a, inner, active && m.focused() == actionsPane && i == cur, c))
+		}
+	}
 	for range gap {
 		lines = append(lines, "")
 	}
@@ -246,11 +309,28 @@ func (m cockpit) projectPane(w, rows int) ([]string, []keyHelp) {
 	off := window(m.dCursor, m.dOff, len(vis), depRows)
 	for i := off; i < len(vis) && i < off+depRows; i++ {
 		dep := d.Deployments[vis[i]]
-		sel := focused && i == m.dCursor && m.view == homeView
+		sel := active && m.focused() == projectPane && i == m.dCursor && m.view == homeView
+		hits = append(hits, hit{y: len(lines), x1: w, kind: hitDeployment, index: i})
 		lines = append(lines, deploymentRow(dep, inner, sel, c))
 	}
-	title := m.shown
-	return box(title, lines, w, rows, focused, c), keys
+	return box(m.shown, lines, w, rows, focused, c), hits, keys
+}
+
+// withoutKeys drops from the key bar the keys that rows already show.
+func withoutKeys(keys []keyHelp, acts []action) []keyHelp {
+	var out []keyHelp
+	for _, k := range keys {
+		shown := false
+		for _, a := range acts {
+			if a.key == k.key {
+				shown = true
+			}
+		}
+		if !shown {
+			out = append(out, k)
+		}
+	}
+	return out
 }
 
 // deploymentWord is what a deployment is, in one word: live while
@@ -273,8 +353,10 @@ func deploymentRow(d deploymentSummary, inner int, sel, c bool) string {
 	if msg == "" && d.Branch != "" {
 		msg = "from " + cleanLog(d.Branch)
 	}
+	// The age takes 12 ("23 hours ago") and always keeps two spaces before
+	// the status, so the longest one never runs into its dot.
 	ageW := 12
-	msgW := inner - 8 - 2 - ageW - 11
+	msgW := inner - 8 - 2 - ageW - 2 - 11
 	if msgW < 10 {
 		ageW = 0
 		msgW = inner - 8 - 11
@@ -284,7 +366,7 @@ func deploymentRow(d deploymentSummary, inner int, sel, c bool) string {
 		row += sgr(fit(msg, msgW), fgBright, "", sel, c) + "  "
 	}
 	if ageW > 0 {
-		row += sgr(fit(since(d.CreatedAt), ageW), fgDim, "", false, c)
+		row += sgr(fit(since(d.CreatedAt), ageW), fgDim, "", false, c) + "  "
 	}
 	row += dotted(word, statusInk(word), c)
 	if sel {
@@ -317,8 +399,9 @@ func since(t time.Time) string {
 }
 
 // deployPane follows a deploy: its four steps with their numbers as
-// tiles, a rule, and the tail of the build log under them.
-func (m cockpit) deployPane(w, rows int) ([]string, []keyHelp) {
+// tiles, what can be done now as rows, a rule, and the tail of the build
+// log under them.
+func (m cockpit) deployPane(w, rows int) ([]string, []hit, []keyHelp) {
 	r := m.run
 	inner := w - 4
 	c := m.color
@@ -339,9 +422,11 @@ func (m cockpit) deployPane(w, rows int) ([]string, []keyHelp) {
 			title += " to production"
 		}
 	}
+	acts := m.deployActions()
 
 	var lines []string
-	gap := rows-2 >= stepCount*2+6
+	var hits []hit
+	gap := rows-2 >= stepCount*2+len(acts)+6
 	if gap {
 		lines = append(lines, "")
 	}
@@ -374,7 +459,15 @@ func (m cockpit) deployPane(w, rows int) ([]string, []keyHelp) {
 			lines = append(lines, "")
 		}
 	}
-	lines = append(lines, sgr(strings.Repeat("─", inner), fgBorder, "", false, c))
+	if !gap {
+		lines = append(lines, "")
+	}
+	cur := m.actionCursor(deployView, acts)
+	for i, a := range acts {
+		hits = append(hits, hit{y: len(lines), x1: w, kind: hitAction, index: i})
+		lines = append(lines, actionRow(a, inner, m.dialog == noDialog && i == cur, c))
+	}
+	lines = append(lines, "", sgr(strings.Repeat("─", inner), fgBorder, "", false, c))
 	room := rows - 2 - len(lines)
 	tail := r.rows[max(0, len(r.rows)-max(0, room)):]
 	if len(r.rows) == 0 && room > 0 {
@@ -383,27 +476,31 @@ func (m cockpit) deployPane(w, rows int) ([]string, []keyHelp) {
 	for _, row := range tail {
 		lines = append(lines, sgr(fit(row.label, 8), row.tone, "", false, c)+sgr(ansi.Truncate(row.message, max(0, inner-8), "…"), fgSecondary, "", false, c))
 	}
-
-	var keys []keyHelp
-	switch {
-	case !r.done:
-		keys = []keyHelp{{"esc", "back; the build carries on"}, {"o", "open when live"}, {"l", "full log"}}
-	case r.liveURL != "" && r.err == nil:
-		keys = []keyHelp{{"o", "open " + host(r.liveURL)}, {"l", "full log"}, {"esc", "back"}}
-	default:
-		keys = []keyHelp{{"l", "full log"}, {"esc", "back"}}
-	}
-	return boxIn(title, lines, w, rows, edge, fgBright, c), keys
+	keys := []keyHelp{{"↑↓", "choose"}, {"enter", "run it"}, {"?", "help"}, {"q", "quit"}}
+	return boxIn(title, lines, w, rows, edge, fgBright, c), hits, keys
 }
 
 // detailPane is one deployment: what it is, where it came from, where it
-// is served, and what can be done with it.
-func (m cockpit) detailPane(w, rows int) ([]string, []keyHelp) {
+// is served, and what can be done with it, as rows to run.
+func (m cockpit) detailPane(w, rows int) ([]string, []hit, []keyHelp) {
 	inner := w - 4
 	c := m.color
 	title := "Deployment " + m.detailID
+	keys := []keyHelp{{"↑↓", "choose"}, {"enter", "run it"}, {"?", "help"}, {"q", "quit"}}
+	acts := m.detailActions()
+	cur := m.actionCursor(detailView, acts)
+	actionRows := func(lines []string) ([]string, []hit) {
+		var hits []hit
+		lines = append(lines, "", sgr("Actions", fgMuted, "", false, c))
+		for i, a := range acts {
+			hits = append(hits, hit{y: len(lines), x1: w, kind: hitAction, index: i})
+			lines = append(lines, actionRow(a, inner, m.dialog == noDialog && i == cur, c))
+		}
+		return lines, hits
+	}
 	if m.detail == nil {
-		return box(title, []string{sgr("Loading…", fgDim, "", false, c)}, w, rows, true, c), []keyHelp{{"esc", "back"}}
+		lines, hits := actionRows([]string{sgr("Loading…", fgDim, "", false, c)})
+		return box(title, lines, w, rows, true, c), hits, keys
 	}
 	d := m.detail.Deployment
 	labelW := 12
@@ -500,34 +597,17 @@ func (m cockpit) detailPane(w, rows int) ([]string, []keyHelp) {
 		}
 		field("Why", wrapped...)
 	}
-
-	keys := []keyHelp{}
-	if deploymentURL(m.detail) != "" {
-		keys = append(keys, keyHelp{"o", "open"})
+	// The actions always fit: a long error gives up its last lines first.
+	if room := rows - 2 - (len(acts) + 2); len(lines) > room && room > 0 {
+		lines = append(lines[:room-1], sgr(fit("…", labelW), fgMuted, "", false, c))
 	}
-	if d.Status == "ready" && d.Role != "production" {
-		keys = append(keys, keyHelp{"p", "promote"})
-	}
-	if d.Role == "production" {
-		keys = append(keys, keyHelp{"r", "roll back"})
-	}
-	keys = append(keys, keyHelp{"l", "build log"})
-	if d.Runtime != "" {
-		keys = append(keys, keyHelp{"s", "server log"})
-		if d.Status == "ready" {
-			keys = append(keys, keyHelp{"R", "restart"})
-		}
-	}
-	if d.Status != "building" {
-		keys = append(keys, keyHelp{"a", "build again"})
-	}
-	keys = append(keys, keyHelp{"esc", "back"})
-	return box(title, lines, w, rows, true, c), keys
+	lines, hits := actionRows(lines)
+	return box(title, lines, w, rows, true, c), hits, keys
 }
 
 // boardPane is every address on the server, in one box the width of the
 // terminal, with its status in tiles.
-func (m cockpit) boardPane(w, rows int) []string {
+func (m cockpit) boardPane(w, rows int) ([]string, []hit) {
 	inner := w - 4
 	c := m.color
 	tileW := tileWidth(8)
@@ -552,6 +632,7 @@ func (m cockpit) boardPane(w, rows int) []string {
 	if len(m.rows) == 0 {
 		lines = append(lines, sgr("Nothing on "+m.server+" yet. Deploy a folder to put it on the board.", fgDim, "", false, c))
 	}
+	var hits []hit
 	visible := max(0, rows-3)
 	off := window(m.bCursor, m.bOff, len(m.rows), visible)
 	for i := off; i < len(m.rows) && i < off+visible; i++ {
@@ -568,13 +649,15 @@ func (m cockpit) boardPane(w, rows int) []string {
 		if sel && !c {
 			row = lit(row, inner, c)
 		}
+		hits = append(hits, hit{y: len(lines), x1: w, kind: hitBoard, index: i})
 		lines = append(lines, row)
 	}
-	return boxIn("Every address on "+m.server, lines, w, rows, fgBorder, fgSecondary, c)
+	return boxIn("Every address on "+m.server, lines, w, rows, fgBorder, fgSecondary, c), hits
 }
 
-// dialogBox is the dialog over the screen, and the keys it takes.
-func (m cockpit) dialogBox() ([]string, []keyHelp) {
+// dialogBox is the dialog over the screen: its rows, where its choices
+// are inside its box, the keys it takes, and how wide its box is.
+func (m cockpit) dialogBox() ([]string, []hit, []keyHelp, int) {
 	c := m.color
 	room := m.width - 6
 	if m.wide() {
@@ -586,8 +669,9 @@ func (m cockpit) dialogBox() ([]string, []keyHelp) {
 		for _, it := range m.dlgItems {
 			longest = max(longest, ansi.StringWidth(it.title))
 		}
-		dw = min(room, max(32, longest+10))
+		dw = min(room, max(32, longest+12))
 	}
+	dw = max(dw, 8)
 	inner := dw - 4
 	para := func(s string) []string {
 		var out []string
@@ -596,28 +680,18 @@ func (m cockpit) dialogBox() ([]string, []keyHelp) {
 		}
 		return out
 	}
-	list := func() []string {
+	var hits []hit
+	choices := func(lines []string) []string {
 		vis := m.dialogVisible()
-		var out []string
 		if len(vis) == 0 {
-			out = append(out, sgr("Nothing matches", fgDim, "", false, c))
+			lines = append(lines, sgr("Nothing matches", fgDim, "", false, c))
 		}
 		off := window(m.dlgCursor, m.dlgOff, len(vis), dialogListRows)
 		for i := off; i < len(vis) && i < off+dialogListRows; i++ {
-			it := m.dlgItems[vis[i]]
-			var row string
-			if m.dialog == pickProject {
-				row = sgr("● ", it.ink, "", false, c) + sgr(fit(it.title, inner-2), fgBright, "", i == m.dlgCursor, c)
-			} else {
-				detailW := min(16, inner/3)
-				row = sgr(fit(it.title, inner-detailW-1), fgBright, "", i == m.dlgCursor, c) + " " + sgr(fit(it.detail, detailW), fgDim, "", false, c)
-			}
-			if i == m.dlgCursor {
-				row = lit(row, inner, c)
-			}
-			out = append(out, row)
+			hits = append(hits, hit{y: len(lines), x1: dw, kind: hitChoice, index: i})
+			lines = append(lines, m.choiceRow(m.dlgItems[vis[i]], inner, i == m.dlgCursor))
 		}
-		return out
+		return lines
 	}
 	d := m.details[m.shown]
 	address := m.shown + "'s address"
@@ -630,11 +704,16 @@ func (m cockpit) dialogBox() ([]string, []keyHelp) {
 	switch m.dialog {
 	case askProduction:
 		title = "Deploy to production"
+		folder := filepath.Base(m.dir)
+		if m.pending != nil {
+			folder = filepath.Base(m.pending.dir)
+		}
 		lines = append(lines, "")
-		lines = append(lines, para("Build "+filepath.Base(m.dir)+" and put it live at "+address+". The build carries on if you leave this screen.")...)
-		keys = []keyHelp{{"enter", "deploy to production"}, {"esc", "cancel"}}
+		lines = append(lines, para("Build "+folder+" and put it live at "+address+". The build carries on if you leave this screen.")...)
+		lines = choices(append(lines, ""))
+		keys = []keyHelp{{"↑↓", "choose"}, {"enter", "run it"}, {"esc", "cancel"}}
 	case askPromote:
-		id := m.dlgItems[0].id
+		id := m.dlgTarget
 		title = "Promote " + id
 		msg := ""
 		if d != nil {
@@ -646,20 +725,20 @@ func (m cockpit) dialogBox() ([]string, []keyHelp) {
 		}
 		lines = append(lines, "")
 		lines = append(lines, para(address+" will serve "+id+msg+". What it serves now stays kept, so you can roll back to it.")...)
-		keys = []keyHelp{{"enter", "promote"}, {"esc", "cancel"}}
+		lines = choices(append(lines, ""))
+		keys = []keyHelp{{"↑↓", "choose"}, {"enter", "run it"}, {"esc", "cancel"}}
 	case pickRollback:
 		title = "Roll back " + m.shown
 		lines = append(lines, "")
 		lines = append(lines, para(address+" goes back to the deployment you choose. New production builds wait until you promote one.")...)
-		lines = append(lines, "")
-		lines = append(lines, list()...)
+		lines = choices(append(lines, ""))
 		keys = []keyHelp{{"↑↓", "choose"}, {"enter", "roll back"}, {"esc", "cancel"}}
 	case pickProject:
 		title = "Projects"
 		if m.dlgFilter != "" {
 			title = "Projects matching " + m.dlgFilter
 		}
-		lines = list()
+		lines = choices(nil)
 		keys = []keyHelp{{"↑↓", "move"}, {"enter", "show"}, {"type", "to find"}, {"esc", "close"}}
 	}
 	if m.dialog != pickProject {
@@ -671,5 +750,38 @@ func (m cockpit) dialogBox() ([]string, []keyHelp) {
 	for _, r := range boxIn(title, lines, dw, len(lines)+2, blue, fgBright, c) {
 		rows = append(rows, " "+r+" ")
 	}
-	return append(rows, strings.Repeat(" ", dw+2)), keys
+	return append(rows, strings.Repeat(" ", dw+2)), hits, keys, dw
+}
+
+// choiceRow is one of a dialog's choices, drawn like an action row: a
+// project with its dot, a deployment with how old it is, or a button with
+// its key.
+func (m cockpit) choiceRow(it dialogItem, inner int, focused bool) string {
+	c := m.color
+	mark, ink := "  ", fgSecondary
+	if focused {
+		mark, ink = sgr("▌ ", pink, "", false, c), fgBright
+	}
+	right := it.detail
+	if right == "" {
+		right = it.key
+	}
+	rightW := ansi.StringWidth(right)
+	if it.detail != "" {
+		rightW = max(rightW, min(16, inner/3))
+	}
+	row := mark
+	titleW := inner - 2 - rightW - 2
+	if m.dialog == pickProject {
+		row += sgr("● ", it.ink, "", false, c)
+		titleW -= 2
+	}
+	row += sgr(fit(it.title, max(0, titleW)), ink, "", focused, c)
+	if right != "" {
+		row += "  " + sgr(fit(right, rightW), fgDim, "", false, c)
+	}
+	if focused {
+		return lit(row, inner, c)
+	}
+	return row
 }

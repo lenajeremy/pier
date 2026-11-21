@@ -31,6 +31,8 @@ type textPrompt struct {
 	cfg           inputConfig
 	value         []rune
 	cursor        int
+	choice        int // the focused row under the field: Continue or Cancel
+	last          click
 	errMsg        string
 	width, height int
 	color         bool
@@ -38,18 +40,35 @@ type textPrompt struct {
 	cancelled     bool
 }
 
+// promptActions are the rows under a prompt's field. Typing always goes to
+// the field; Enter runs whichever row has the focus.
+var promptActions = []action{{"Continue", "enter"}, {"Cancel", "esc"}}
+
 func (m textPrompt) Init() tea.Cmd { return nil }
 
 func (m textPrompt) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch k := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = k.Width, k.Height
+	case tea.MouseMsg:
+		return m.mouse(k)
 	case tea.KeyMsg:
+		// Typing goes to the field, and puts the focus back on Continue so
+		// Enter after typing never cancels.
+		if k.Type != tea.KeyUp && k.Type != tea.KeyDown && k.Type != tea.KeyEnter {
+			m.choice = 0
+		}
 		switch k.Type {
 		case tea.KeyCtrlC, tea.KeyEsc:
 			m.cancelled = true
 			return m, tea.Quit
+		case tea.KeyUp, tea.KeyDown:
+			m.choice = 1 - m.choice
 		case tea.KeyEnter:
+			if m.choice == 1 {
+				m.cancelled = true
+				return m, tea.Quit
+			}
 			v := strings.TrimSpace(string(m.value))
 			if v == "" && m.cfg.placeholder != "" && m.cfg.initial != "" {
 				v = m.cfg.initial
@@ -113,6 +132,12 @@ func (m textPrompt) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m textPrompt) View() string {
+	v, _ := m.render()
+	return v
+}
+
+// render draws the prompt and notes where its rows are, for clicks.
+func (m textPrompt) render() (string, []hit) {
 	c := m.color
 	w := m.width
 	inner := w - 4
@@ -134,9 +159,33 @@ func (m textPrompt) View() string {
 	} else if m.cfg.hint != "" {
 		lines = append(lines, sgr(singleLine(m.cfg.hint), fgDim, "", false, c))
 	}
+	lines = append(lines, "")
+	var hits []hit
+	for i, a := range promptActions {
+		hits = append(hits, hit{y: len(lines), x1: w, kind: hitAction, index: i})
+		lines = append(lines, actionRow(a, inner, i == m.choice, c))
+	}
 	body := box(m.cfg.title, lines, w, bodyRows(m.height), true, c)
-	bar := keyBar([]keyHelp{{"enter", "confirm"}, {"ctrl+u", "clear"}, {"esc", "back"}}, w, c)
-	return screen(header(w, m.cfg.project, m.cfg.server, "", "", c), body, bar, w, m.height)
+	bar := keyBar([]keyHelp{{"↑↓", "choose"}, {"ctrl+u", "clear"}}, w, c)
+	return screen(header(w, m.cfg.project, m.cfg.server, "", "", c), body, bar, w, m.height), place(hits, 0, bodyTop(m.height))
+}
+
+// mouse runs a row clicked twice, or once after it was chosen.
+func (m textPrompt) mouse(e tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if e.Action != tea.MouseActionPress || e.Button != tea.MouseButtonLeft {
+		return m, nil
+	}
+	_, hits := m.render()
+	h, ok := hitAt(hits, e.X, e.Y)
+	if !ok {
+		return m, nil
+	}
+	run := pressed(&m.last, h, m.choice == h.index)
+	m.choice = h.index
+	if run {
+		return m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	}
+	return m, nil
 }
 
 func promptInput(cfg inputConfig) (string, bool, error) {
@@ -149,7 +198,7 @@ func promptInput(cfg inputConfig) (string, bool, error) {
 		height: 26,
 		color:  os.Getenv("NO_COLOR") == "",
 	}
-	final, err := tea.NewProgram(m, tea.WithAltScreen()).Run()
+	final, err := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion()).Run()
 	if err != nil {
 		return "", false, err
 	}
@@ -172,6 +221,8 @@ type loginModel struct {
 	base, link, code, poll string
 	deadline               time.Time
 	spin                   int
+	choice                 int // the focused row
+	last                   click
 	width, height          int
 	color                  bool
 	notice                 string
@@ -243,21 +294,60 @@ func (m loginModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		default:
 			return m, pollLoginCmd(m.base, m.poll)
 		}
+	case tea.MouseMsg:
+		if v.Action != tea.MouseActionPress || v.Button != tea.MouseButtonLeft {
+			return m, nil
+		}
+		_, hits := m.render()
+		if h, ok := hitAt(hits, v.X, v.Y); ok {
+			run := pressed(&m.last, h, m.choice == h.index)
+			m.choice = h.index
+			if run {
+				return m.Update(keyMsg(m.actions()[h.index].key))
+			}
+		}
 	case tea.KeyMsg:
 		switch v.String() {
 		case "esc", "q", "ctrl+c":
 			m.done = true
 			m.err = errCancelled
 			return m, tea.Quit
+		case "up", "k":
+			m.choice = max(0, m.choice-1)
+		case "down", "j":
+			m.choice = min(len(m.actions())-1, m.choice+1)
+		case "enter":
+			return m.Update(keyMsg(m.actions()[min(m.choice, len(m.actions())-1)].key))
 		case "o":
 			openBrowser(m.link)
-			m.notice = "Reopened approval link in your browser"
+			m.notice = "Opened the link in your browser again"
+		case "c":
+			if canCopy() {
+				if err := copyText(m.link); err == nil {
+					m.notice = "Copied the link"
+				}
+			}
 		}
 	}
 	return m, nil
 }
 
+// actions are the rows under the code: open the link again, copy it when
+// this computer has a clipboard, or give up.
+func (m loginModel) actions() []action {
+	out := []action{{"Open the link again", "o"}}
+	if canCopy() {
+		out = append(out, action{"Copy the link", "c"})
+	}
+	return append(out, action{"Cancel", "esc"})
+}
+
 func (m loginModel) View() string {
+	v, _ := m.render()
+	return v
+}
+
+func (m loginModel) render() (string, []hit) {
 	c := m.color
 	w := m.width
 	lines := []string{
@@ -275,9 +365,15 @@ func (m loginModel) View() string {
 	if m.notice != "" {
 		lines = append(lines, "", sgr("✓ "+m.notice, mint, "", false, c))
 	}
+	lines = append(lines, "")
+	var hits []hit
+	for i, a := range m.actions() {
+		hits = append(hits, hit{y: len(lines), x1: w, kind: hitAction, index: i})
+		lines = append(lines, actionRow(a, w-4, i == m.choice, c))
+	}
 	body := box("Approve this computer", lines, w, bodyRows(m.height), true, c)
-	bar := keyBar([]keyHelp{{"o", "open the link again"}, {"esc", "cancel"}}, w, c)
-	return screen(header(w, "", host(m.base), "", "", c), body, bar, w, m.height)
+	bar := keyBar([]keyHelp{{"↑↓", "choose"}, {"enter", "run it"}}, w, c)
+	return screen(header(w, "", host(m.base), "", "", c), body, bar, w, m.height), place(hits, 0, bodyTop(m.height))
 }
 
 func openLoginView(base string) (config, error) {
@@ -304,7 +400,7 @@ func openLoginView(base string) (config, error) {
 		height:   26,
 		color:    os.Getenv("NO_COLOR") == "",
 	}
-	final, err := tea.NewProgram(m, tea.WithAltScreen()).Run()
+	final, err := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion()).Run()
 	if err != nil {
 		return config{}, err
 	}
@@ -385,7 +481,7 @@ func (m helpModel) View() string {
 	rows := bodyRows(m.height)
 	off := min(m.offset, max(0, len(lines)-(rows-2)))
 	body := box("Help", lines[off:], w, rows, true, c)
-	bar := keyBar([]keyHelp{{"↑↓", "scroll"}, {"esc", "back"}}, w, c)
+	bar := keyBar(helpKeys, w, c)
 	return screen(header(w, m.project, m.server, "", "", c), body, bar, w, m.height)
 }
 
@@ -414,9 +510,10 @@ func (m helpModel) lines() []string {
 
 // cockpitKeys is what each key does in the cockpit, for its help.
 var cockpitKeys = [][2]string{
-	{"tab  ←→", "move between the projects and the project"},
+	{"tab  ←→", "move between the projects, the actions and the deployments"},
 	{"↑↓  j k", "move in the pane you're in"},
-	{"enter", "show a project, or open a deployment"},
+	{"enter", "show a project, open a deployment, or run the focused action"},
+	{"click", "choose a row; click it again, or double click, to run it"},
 	{"d", "deploy this folder as a preview"},
 	{"D", "deploy this folder to production"},
 	{"p", "promote the selected deployment"},
@@ -424,6 +521,7 @@ var cockpitKeys = [][2]string{
 	{"l", "logs: the project's requests, or a deployment's build"},
 	{"b", "every address on the server"},
 	{"o", "open the address"},
+	{"c", "copy the address, where this computer has a clipboard"},
 	{"/", "find a project, or a deployment"},
 	{"?", "this help"},
 	{"q", "quit"},

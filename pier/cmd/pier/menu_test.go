@@ -133,7 +133,7 @@ func TestTextPromptEditAndValidate(t *testing.T) {
 	}
 	for _, size := range sizes {
 		m.width, m.height = size[0], size[1]
-		checkScreen(t, "prompt", m.View(), size[0], size[1], "enter confirm")
+		checkScreen(t, "prompt", m.View(), size[0], size[1], "ctrl+u clear")
 	}
 	upd(tea.KeyMsg{Type: tea.KeyCtrlU})
 	upd(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("my-site")})
@@ -146,7 +146,7 @@ func TestTextPromptEditAndValidate(t *testing.T) {
 func TestLoginAndHelpShareTheHeader(t *testing.T) {
 	for _, size := range sizes {
 		lm := loginModel{base: "https://pier.thesunset.live", link: "https://pier.thesunset.live/approve?code=BXRT-4KQ9", code: "BXRT-4KQ9", width: size[0], height: size[1], color: true}
-		checkScreen(t, "login", lm.View(), size[0], size[1], "esc cancel")
+		checkScreen(t, "login", lm.View(), size[0], size[1], "enter run it")
 		hm := helpModel{server: "pier.thesunset.live", project: "landing", width: size[0], height: size[1], color: true}
 		checkScreen(t, "help", hm.View(), size[0], size[1], "esc back")
 	}

@@ -245,18 +245,105 @@ type keyHelp struct{ key, does string }
 // keyBar is the last row: each key and what it does, most important first,
 // as many as fit.
 func keyBar(keys []keyHelp, w int, color bool) string {
+	line, _ := keyBarHits(keys, w, color)
+	return line
+}
+
+// keyBarHits draws the key bar and says where each key landed, so a click
+// on one does what pressing it would.
+func keyBarHits(keys []keyHelp, w int, color bool) (string, []hit) {
 	line := " "
+	var hits []hit
 	for i, k := range keys {
 		part := sgr(k.key, fgSecondary, "", true, color) + " " + sgr(k.does, fgDim, "", false, color)
+		gap := ""
 		if i > 0 {
-			part = "    " + part
+			gap = "    "
 		}
-		if ansi.StringWidth(line)+ansi.StringWidth(part) > w {
+		at := ansi.StringWidth(line) + len(gap)
+		if at+ansi.StringWidth(part) > w {
 			break
 		}
-		line += part
+		line += gap + part
+		hits = append(hits, hit{x0: at, x1: at + ansi.StringWidth(part), kind: hitKey, key: k.key})
 	}
-	return line
+	return line, hits
+}
+
+// An action is something a screen can do, drawn as a row like a button.
+// Its key does the same thing, so running the row and pressing the key
+// take one path, confirmations included.
+type action struct {
+	label, key string
+}
+
+// actionRow draws an action: its label, and its key at the right in the
+// faint colour. The focused one has a pink bar and the selected row's
+// colour, like a selection anywhere else in the cockpit.
+func actionRow(a action, inner int, focused, color bool) string {
+	mark, ink := "  ", fgSecondary
+	if focused {
+		mark, ink = sgr("▌ ", pink, "", false, color), fgBright
+	}
+	keyW := ansi.StringWidth(a.key)
+	row := mark + sgr(fit(a.label, max(0, inner-2-keyW-2)), ink, "", focused, color) + "  " + sgr(a.key, fgDim, "", false, color)
+	if focused {
+		return lit(row, inner, color)
+	}
+	return pad(row, inner)
+}
+
+// A hit is where something clickable was drawn: a row of a list, an
+// action, a dialog's choice, or a key in the key bar. Screens note them as
+// they draw, so a click is matched against exactly what's on the screen.
+type hit struct {
+	y, x0, x1 int // the screen row, and the columns from x0 up to x1
+	kind      hitKind
+	index     int    // which row of its list
+	key       string // the key a key bar entry stands for
+}
+
+type hitKind int
+
+const (
+	hitProject hitKind = iota + 1
+	hitDeployment
+	hitBoard
+	hitAction
+	hitChoice
+	hitKey
+)
+
+// hitAt finds what was drawn under a cell.
+func hitAt(hits []hit, x, y int) (hit, bool) {
+	for _, h := range hits {
+		if h.y == y && x >= h.x0 && x < h.x1 {
+			return h, true
+		}
+	}
+	return hit{}, false
+}
+
+// place moves hits noted inside a box to where the box is on the screen:
+// content row r of a box whose top edge is at row y is at row y+1+r.
+func place(hits []hit, x, y int) []hit {
+	out := make([]hit, 0, len(hits))
+	for _, h := range hits {
+		h.x0 += x
+		h.x1 += x
+		h.y += y + 1
+		out = append(out, h)
+	}
+	return out
+}
+
+// bodyTop is the screen row a screen's body starts on, under the header
+// and the blank row that follows it when there's room.
+func bodyTop(h int) int {
+	if bodyRows(h) == h-3 {
+		return 2
+	}
+	return 1
 }
 
 // noticeBar says what just happened in the key bar's place, until the

@@ -28,6 +28,7 @@ type choice struct {
 }
 
 type menu struct {
+	last                           click
 	title, server, project, filter string
 	notice, noticeTone             string
 	items, visible                 []choice
@@ -55,6 +56,8 @@ func (m menu) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch k := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = k.Width, k.Height
+	case tea.MouseMsg:
+		return m.mouse(k)
 	case tea.KeyMsg:
 		m.notice = ""
 		switch k.Type {
@@ -139,6 +142,13 @@ func (m menu) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m menu) View() string {
+	v, _ := m.render()
+	return v
+}
+
+// render draws the picker and notes where each item and key landed, so a
+// click picks what's under it.
+func (m menu) render() (string, []hit) {
 	c := m.color
 	w := m.width
 	inner := w - 4
@@ -171,9 +181,14 @@ func (m menu) View() string {
 		lines = append(lines, sgr("Nothing matches", fgDim, "", false, c))
 	}
 	off := window(selected, m.offset, len(all), rows-2)
+	var hits []hit
 	for _, l := range all[off:min(len(all), off+max(0, rows-2))] {
+		if l.item >= 0 {
+			hits = append(hits, hit{y: len(lines), x1: w, kind: hitChoice, index: l.item})
+		}
 		lines = append(lines, l.text)
 	}
+	hits = place(hits, 0, bodyTop(m.height))
 	title := m.title
 	if m.filter != "" {
 		title += ", matching " + m.filter
@@ -181,6 +196,7 @@ func (m menu) View() string {
 	body := box(title, lines, w, rows, true, c)
 
 	var bar string
+	var barHits []hit
 	switch {
 	case m.notice != "":
 		tone := m.noticeTone
@@ -197,9 +213,44 @@ func (m menu) View() string {
 			keys = append(keys, keyHelp{fmt.Sprintf("1-%d", min(9, len(m.visible))), "jump"})
 		}
 		keys = append(keys, keyHelp{"/", "find"}, keyHelp{"esc", "back"})
-		bar = keyBar(keys, w, c)
+		bar, barHits = keyBarHits(keys, w, c)
 	}
-	return screen(header(w, m.project, m.server, "", "", c), body, bar, w, m.height)
+	hits = append(hits, atRow(barHits, m.height-1)...)
+	return screen(header(w, m.project, m.server, "", "", c), body, bar, w, m.height), hits
+}
+
+// mouse picks an item clicked twice, or once after it was selected, and
+// moves through the items with the wheel.
+func (m menu) mouse(e tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if e.Action != tea.MouseActionPress {
+		return m, nil
+	}
+	switch e.Button {
+	case tea.MouseButtonWheelUp:
+		return m.Update(tea.KeyMsg{Type: tea.KeyUp})
+	case tea.MouseButtonWheelDown:
+		return m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	case tea.MouseButtonLeft:
+	default:
+		return m, nil
+	}
+	_, hits := m.render()
+	h, ok := hitAt(hits, e.X, e.Y)
+	switch {
+	case !ok:
+		return m, nil
+	case h.kind == hitKey:
+		if h.key == "↑↓" || strings.Contains(h.key, "-") {
+			return m, nil
+		}
+		return m.Update(keyMsg(h.key))
+	}
+	run := pressed(&m.last, h, m.cursor == h.index)
+	m.cursor = h.index
+	if run {
+		return m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	}
+	return m, nil
 }
 
 func (m menu) renderItem(idx, inner int) string {
@@ -207,14 +258,18 @@ func (m menu) renderItem(idx, inner int) string {
 	selected := idx == m.cursor
 	c := m.color
 
+	// The selected item has the pink bar a selection has everywhere else.
 	// Number keys jump to the first nine items, so each shows its number.
-	prefix := ""
+	prefix := "  "
+	if selected {
+		prefix = sgr("▌ ", pink, "", false, c)
+	}
 	if m.showKeys && !m.search {
 		num := "  "
 		if idx < 9 {
 			num = fmt.Sprintf("%d ", idx+1)
 		}
-		prefix = sgr(num, fgDim, "", false, c)
+		prefix += sgr(num, fgDim, "", false, c)
 	}
 	right := ""
 	if item.hint != "" {
@@ -262,7 +317,7 @@ func newMenu(title, server, project string, items []choice) menu {
 
 func (m *menu) choose() (string, error) {
 	m.chosen = ""
-	final, err := tea.NewProgram(*m, tea.WithAltScreen()).Run()
+	final, err := tea.NewProgram(*m, tea.WithAltScreen(), tea.WithMouseCellMotion()).Run()
 	if err != nil {
 		return "", err
 	}

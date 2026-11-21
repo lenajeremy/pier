@@ -36,11 +36,14 @@ const (
 	helpView
 )
 
+// The panes home's keys can act on: the projects, the project's actions,
+// and its deployments. projectPane is the deployments.
 type pane int
 
 const (
 	projectsPane pane = iota
 	projectPane
+	actionsPane
 )
 
 // A dialog asks before anything changes production, and picks a project
@@ -89,8 +92,10 @@ type deploymentDetail struct {
 	Container *apphost.ContainerStatus
 }
 
+// A dialog's choice: a project, a deployment to go back to, or a button.
+// Buttons show their key on the right, the others a detail.
 type dialogItem struct {
-	id, title, detail, ink string
+	id, title, detail, ink, key string
 }
 
 type cockpit struct {
@@ -123,6 +128,13 @@ type cockpit struct {
 	dlgCursor int
 	dlgOff    int
 	dlgFilter string
+	dlgTarget string         // the deployment a promote names
+	pending   *pendingDeploy // the deploy a production dialog starts
+
+	// actKeys remembers the focused action on each screen by its key, so
+	// focus stays on the same action when the list around it changes.
+	actKeys   [helpView + 1]string
+	lastClick click
 
 	run     *deployRun
 	runs    int
@@ -178,6 +190,13 @@ type logMsg struct {
 	msg tea.Msg
 }
 
+// click is the last click, to tell a double click from two clicks.
+type click struct {
+	kind  hitKind
+	index int
+	at    time.Time
+}
+
 // openCockpit loads what the first screen shows before it opens, so it
 // never opens empty, then runs until the owner quits.
 func openCockpit(c config, start view, project string, focus pane, dep *pendingDeploy) error {
@@ -214,7 +233,7 @@ func openCockpit(c config, start view, project string, focus pane, dep *pendingD
 		m.ranDeploy = true
 		m.startDeploy(*dep)
 	}
-	final, err := tea.NewProgram(m, tea.WithAltScreen()).Run()
+	final, err := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion()).Run()
 	if err != nil {
 		return err
 	}
@@ -454,10 +473,27 @@ func (m cockpit) wide() bool { return m.width >= wideEnough }
 // focused is the pane the keys act on. With the projects pane hidden it
 // is always the project.
 func (m cockpit) focused() pane {
-	if !m.wide() {
+	switch {
+	case m.focus == actionsPane && len(m.shownActions()) == 0:
+		return projectPane
+	case m.focus == actionsPane:
+		return actionsPane
+	case !m.wide():
 		return projectPane
 	}
 	return m.focus
+}
+
+// panes are the panes Tab goes through on home, in the order they read.
+func (m cockpit) panes() []pane {
+	var out []pane
+	if m.wide() {
+		out = append(out, projectsPane)
+	}
+	if len(m.shownActions()) > 0 {
+		out = append(out, actionsPane)
+	}
+	return append(out, projectPane)
 }
 
 // scroll keeps every cursor in view after anything moved or the terminal
@@ -559,6 +595,8 @@ func (m cockpit) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, wrapLog(v.gen, cmd)
 	case tea.KeyMsg:
 		return m.key(v)
+	case tea.MouseMsg:
+		return m.mouse(v)
 	}
 	return m, nil
 }
@@ -649,31 +687,51 @@ func (m cockpit) homeKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.scroll()
 		return m, nil
-	case "tab", "shift+tab", "left", "right":
-		if !m.wide() {
-			if k.String() == "tab" || k.String() == "shift+tab" {
-				m.openProjectPicker()
-			}
+	case "tab", "shift+tab":
+		if !m.wide() && len(m.panes()) == 1 {
+			m.openProjectPicker()
 			return m, nil
 		}
-		switch k.String() {
-		case "left", "h":
-			m.focus = projectsPane
-		case "right":
-			m.focus = projectPane
-		default:
-			m.focus = 1 - m.focus
+		// Without the projects pane, Tab picks a project after the
+		// actions and deployments have had their turn.
+		order := m.panes()
+		i := 0
+		for j, p := range order {
+			if p == m.focused() {
+				i = j
+			}
+		}
+		if k.String() == "tab" {
+			if !m.wide() && i == len(order)-1 {
+				// The picker stands in for the projects pane, so once it
+				// closes the focus is where Tab goes after the projects.
+				m.focus = order[0]
+				m.openProjectPicker()
+				return m, nil
+			}
+			i = (i + 1) % len(order)
+		} else {
+			i = (i + len(order) - 1) % len(order)
+		}
+		m.focus = order[i]
+		return m, nil
+	case "left", "right":
+		if m.wide() {
+			m.focus = map[string]pane{"left": projectsPane, "right": projectPane}[k.String()]
 		}
 		return m, nil
 	case "up", "k", "down", "j", "pgup", "pgdown", "home", "end", "g", "G":
 		return m, m.move(k.String())
 	case "enter":
-		if m.focused() == projectsPane {
+		switch m.focused() {
+		case projectsPane:
 			m.focus = projectPane
-			return m, nil
-		}
-		if dep := m.selectedDeployment(); dep != nil {
-			return m, m.openDetail(m.shown, dep.ID, false)
+		case actionsPane:
+			return m.runAction()
+		default:
+			if dep := m.selectedDeployment(); dep != nil {
+				return m, m.openDetail(m.shown, dep.ID, false)
+			}
 		}
 		return m, nil
 	case "/":
@@ -694,7 +752,7 @@ func (m cockpit) homeKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "d", "D":
 		return m.deployKeyHome(k.String() == "D")
 	case "p":
-		return m.askPromote()
+		return m.promoteSelected()
 	case "r":
 		return m.askRollback()
 	case "l":
@@ -741,13 +799,28 @@ func (m *cockpit) move(key string) tea.Cmd {
 		}
 		return min(max(cursor, 0), n-1)
 	}
-	if m.focused() == projectsPane {
+	switch m.focused() {
+	case projectsPane:
 		vis := m.visibleProjects()
 		m.pCursor = step(m.pCursor, len(vis), m.paneRows()-2)
 		m.scroll()
 		if m.pCursor < len(vis) {
 			return m.show(m.projects[vis[m.pCursor]].Name)
 		}
+		return nil
+	case actionsPane:
+		// The actions sit above the deployments, so moving down off the
+		// last action carries on into the deployments.
+		if !m.moveAction(key) && (key == "down" || key == "j") && len(m.visibleDeployments()) > 0 {
+			m.focus, m.dCursor = projectPane, 0
+			m.scroll()
+		}
+		return nil
+	}
+	if (key == "up" || key == "k") && m.dCursor == 0 && len(m.shownActions()) > 0 {
+		acts := m.shownActions()
+		m.focus = actionsPane
+		m.actKeys[homeView] = acts[len(acts)-1].key
 		return nil
 	}
 	m.dCursor = step(m.dCursor, len(m.visibleDeployments()), m.deploymentRows())
@@ -810,15 +883,32 @@ func (m cockpit) deployKeyHome(production bool) (tea.Model, tea.Cmd) {
 		m.say("This folder deploys to "+m.linked+". Select "+m.linked+" to deploy it.", coralTxt)
 		return m, nil
 	}
+	p := pendingDeploy{project: m.linked, dir: m.dir, target: "preview"}
 	if production {
-		m.dialog = askProduction
+		p.target = "production"
+		m.askProduction(p)
 		return m, nil
 	}
-	return m, m.beginDeploy("preview")
+	return m, m.beginDeploy(p)
 }
 
-func (m *cockpit) beginDeploy(target string) tea.Cmd {
-	m.startDeploy(pendingDeploy{project: m.linked, dir: m.dir, target: target, g: gitInfo(m.dir)})
+// askProduction asks before a deploy goes to production.
+func (m *cockpit) askProduction(p pendingDeploy) {
+	m.pending = &p
+	m.openDialog(askProduction, []dialogItem{
+		{id: "go", title: "Deploy " + filepath.Base(p.dir) + " to production", key: "enter"},
+		{id: "cancel", title: "Cancel", key: "esc"},
+	})
+}
+
+func (m *cockpit) openDialog(kind dialogKind, items []dialogItem) {
+	m.dialog = kind
+	m.dlgItems, m.dlgCursor, m.dlgOff, m.dlgFilter = items, 0, 0, ""
+}
+
+func (m *cockpit) beginDeploy(p pendingDeploy) tea.Cmd {
+	p.g = gitInfo(p.dir)
+	m.startDeploy(p)
 	return tea.Batch(m.readDeploy(), m.spinner(), m.kick())
 }
 
@@ -830,8 +920,8 @@ func (m *cockpit) spinner() tea.Cmd {
 	return spinEvery()
 }
 
-// askPromote asks before production serves the selected deployment.
-func (m cockpit) askPromote() (tea.Model, tea.Cmd) {
+// promoteSelected asks before production serves the selected deployment.
+func (m cockpit) promoteSelected() (tea.Model, tea.Cmd) {
 	dep := m.selectedDeployment()
 	switch {
 	case m.focused() != projectPane || dep == nil:
@@ -844,8 +934,7 @@ func (m cockpit) askPromote() (tea.Model, tea.Cmd) {
 		m.say(dep.ID+" didn't build, so it can't be promoted.", coralTxt)
 		return m, nil
 	}
-	m.dialog = askPromote
-	m.dlgItems = []dialogItem{{id: dep.ID}}
+	m.askPromote(dep.ID)
 	return m, nil
 }
 
@@ -856,31 +945,22 @@ func (m cockpit) askRollback() (tea.Model, tea.Cmd) {
 	if d == nil {
 		return m, nil
 	}
-	var items []dialogItem
-	if d.RolledBackFrom != "" {
-		items = append(items, dialogItem{id: "__undo__", title: "Undo the rollback", detail: "back to " + d.RolledBackFrom, ink: pink})
-	}
-	var rest []dialogItem
-	for _, dep := range d.Deployments {
-		if dep.Status != "ready" || dep.Role == "production" || dep.Target != "production" {
-			continue
-		}
-		item := dialogItem{id: dep.ID, title: dep.ID + "  " + cleanLog(dep.Message), detail: since(dep.CreatedAt), ink: mint}
-		if dep.ID == d.RollbackTo {
-			item.detail = "the one before"
-			items = append(items, item)
-			continue
-		}
-		rest = append(rest, item)
-	}
-	items = append(items, rest...)
+	items := rollbackChoices(d)
 	if len(items) == 0 {
 		m.say("There's no earlier production deployment of "+m.shown+" to go back to.", coralTxt)
 		return m, nil
 	}
-	m.dialog = pickRollback
-	m.dlgItems, m.dlgCursor, m.dlgOff, m.dlgFilter = items, 0, 0, ""
+	m.openDialog(pickRollback, append(items, dialogItem{id: "cancel", title: "Cancel", key: "esc"}))
 	return m, nil
+}
+
+// askPromote asks before production serves a deployment.
+func (m *cockpit) askPromote(id string) {
+	m.dlgTarget = id
+	m.openDialog(askPromote, []dialogItem{
+		{id: "go", title: "Promote " + id + " to production", key: "enter"},
+		{id: "cancel", title: "Cancel", key: "esc"},
+	})
 }
 
 func (m *cockpit) openProjectPicker() {
@@ -888,8 +968,7 @@ func (m *cockpit) openProjectPicker() {
 	for _, p := range m.projects {
 		items = append(items, dialogItem{id: p.Name, title: p.Name, ink: projectInk(p.Status)})
 	}
-	m.dialog = pickProject
-	m.dlgItems, m.dlgCursor, m.dlgOff, m.dlgFilter = items, 0, 0, ""
+	m.openDialog(pickProject, items)
 	for i, it := range items {
 		if it.id == m.shown {
 			m.dlgCursor = i
@@ -926,27 +1005,42 @@ func (m cockpit) dialogKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "down", "j", "tab":
 		m.dlgCursor = min(max(0, len(vis)-1), m.dlgCursor+1)
 	case "enter", "y":
-		if k.String() == "y" && m.dialog == pickProject {
-			break
+		if k.String() == "y" {
+			if m.dialog == pickProject {
+				break
+			}
+			// y says yes, whichever choice has the focus.
+			if m.dialog != pickRollback {
+				m.dlgCursor = 0
+			}
 		}
+		if m.dlgCursor >= len(vis) {
+			return m, nil
+		}
+		choice := m.dlgItems[vis[m.dlgCursor]]
 		kind := m.dialog
 		m.dialog = noDialog
+		if choice.id == "cancel" {
+			return m, nil
+		}
 		switch kind {
 		case askProduction:
-			return m, m.beginDeploy("production")
+			if m.pending != nil {
+				return m, m.beginDeploy(*m.pending)
+			}
 		case askPromote:
-			return m, m.promote(m.dlgItems[0].id)
+			return m, m.promote(m.dlgTarget)
 		case pickRollback:
-			if m.dlgCursor < len(vis) {
-				return m, m.rollback(m.dlgItems[vis[m.dlgCursor]].id)
-			}
+			return m, m.rollback(choice.id)
 		case pickProject:
-			if m.dlgCursor < len(vis) {
-				m.choose(m.dlgItems[vis[m.dlgCursor]].id)
-				return m, m.fetchDetail(m.shown)
-			}
+			m.choose(choice.id)
+			return m, m.fetchDetail(m.shown)
 		}
 		return m, nil
+	case "home":
+		m.dlgCursor = 0
+	case "end":
+		m.dlgCursor = max(0, len(vis)-1)
 	case "backspace":
 		if r := []rune(m.dlgFilter); m.dialog == pickProject && len(r) > 0 {
 			m.dlgFilter = string(r[:len(r)-1])
@@ -1047,6 +1141,7 @@ func (m *cockpit) openDetail(project, id string, fromBoard bool) tea.Cmd {
 	}
 	m.detailProject, m.detailID, m.detailFromRows = project, id, fromBoard
 	m.detail = nil
+	m.actKeys[detailView] = ""
 	m.view = detailView
 	if project != m.shown {
 		m.choose(project)
@@ -1088,6 +1183,11 @@ func (m cockpit) detailKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "?":
 		m.openHelp()
 		return m, nil
+	case "up", "k", "down", "j", "home", "end", "g", "G", "pgup", "pgdown":
+		m.moveAction(k.String())
+		return m, nil
+	case "enter":
+		return m.runAction()
 	}
 	if d == nil {
 		return m, nil
@@ -1100,6 +1200,8 @@ func (m cockpit) detailKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			openBrowser(u)
 			m.say("Opened "+u, mint)
 		}
+	case "c":
+		m.copyAddress(deploymentURL(d))
 	case "p":
 		switch {
 		case dep.Role == "production":
@@ -1108,8 +1210,7 @@ func (m cockpit) detailKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.say(dep.ID+" didn't build, so it can't be promoted.", coralTxt)
 		default:
 			m.shown = project
-			m.dialog = askPromote
-			m.dlgItems = []dialogItem{{id: dep.ID}}
+			m.askPromote(dep.ID)
 		}
 	case "r":
 		m.shown = project
@@ -1183,7 +1284,9 @@ func (m *cockpit) openLogs(s logSource) tea.Cmd {
 	m.logs = logView{source: s, in: in, width: m.width, height: m.height, color: m.color}
 	m.logOpen = true
 	m.view = logsView
-	return wrapLog(m.logGen, m.logs.Init())
+	// The mouse goes off on the logs, so their lines can be selected and
+	// copied the way a terminal usually allows.
+	return tea.Batch(wrapLog(m.logGen, m.logs.Init()), tea.DisableMouse)
 }
 
 func wrapLog(gen int, cmd tea.Cmd) tea.Cmd {
@@ -1203,7 +1306,7 @@ func (m cockpit) logsKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.logOpen = false
 		m.logGen++
 		m.view = m.back
-		return m, nil
+		return m, tea.EnableMouseCellMotion
 	case "r":
 		if m.logs.ended {
 			return m, m.openLogs(m.logs.source)
@@ -1222,10 +1325,26 @@ func (m cockpit) deployKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc":
 		m.view = homeView
 		return m, m.kick()
+	case "up", "k", "down", "j", "home", "end", "g", "G":
+		m.moveAction(k.String())
+	case "enter":
+		return m.runAction()
 	case "o":
 		if r.liveURL != "" {
 			openBrowser(r.liveURL)
 			m.say("Opened "+r.liveURL, mint)
+		}
+	case "c":
+		m.copyAddress(r.liveURL)
+	case "d":
+		// A failed deploy can be tried again from here, the same way.
+		if r.done && r.err != nil {
+			p := pendingDeploy{project: r.project, dir: r.dir, target: r.target}
+			if p.target == "production" {
+				m.askProduction(p)
+				return m, nil
+			}
+			return m, m.beginDeploy(p)
 		}
 	case "l":
 		return m, m.openLogs(logSource{c: m.c, project: r.project, kind: "Build", deployment: r.deployment, limit: 500, follow: true})
