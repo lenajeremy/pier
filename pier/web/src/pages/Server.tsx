@@ -49,7 +49,8 @@ type Clean = 'previews' | 'cache' | 'docker-cache'
 
 // Server is I1: how full the machine is and how that's changed, what's
 // using the disk with what can be cleared, and the services Pier needs.
-export function Server() {
+// version is pierd's own, from the session; an older pierd doesn't say.
+export function Server({ version: pierd }: { version?: string }) {
   const { data, error, reload } = useData<Health>('/api/server', () => true, 15000)
   const [range, setRange] = useState<'24h' | '7d'>('24h')
   const history = useData<History>('/api/server/history?range=' + range, () => true, 60000)
@@ -249,6 +250,9 @@ export function Server() {
               const version = /^\d/.test(state)
               const down = state === 'Unavailable'
               const unused = state.startsWith('Unused')
+              // pierd says its release, v0.6.0, or the commit a build from
+              // source came from, dev-3f9a2c1.
+              const own = name === 'pierd' && pierd && !down ? `Running, version ${pierd.replace(/^v(?=\d)/, '')}` : ''
               return (
                 <div className="service-row" key={name}>
                   <i className={'swatch ' + (down ? 'failed' : unused ? '' : 'ready')} />
@@ -268,7 +272,9 @@ export function Server() {
                       )}
                     </span>
                   </div>
-                  <span className={'t-caption' + (down ? ' bad' : ' t-muted')}>{version ? `Running, version ${state}` : down ? 'Not running' : state}</span>
+                  <span className={'t-caption' + (down ? ' bad' : ' t-muted')}>
+                    {own || (version ? `Running, version ${state}` : down ? 'Not running' : state)}
+                  </span>
                 </div>
               )
             })}

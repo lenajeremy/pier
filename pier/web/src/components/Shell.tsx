@@ -6,6 +6,7 @@ import { Link } from '../lib/router'
 import { CommandMenu } from './CommandMenu'
 import * as I from './Icons'
 import { ProjectMark } from './ProjectMark'
+import { Spinner } from './Spinner'
 import type { Sample } from './ServerCharts'
 
 const globals = [
@@ -161,9 +162,12 @@ function Switcher({ session, projects, project }: { session: Session; projects: 
 
 function Account({ session }: { session: Session }) {
   const [open, setOpen] = useState(false)
+  const [leaving, setLeaving] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
   useClickAway(ref, () => setOpen(false))
+  const version = session.server.version
   const out = async () => {
+    setLeaving(true)
     try {
       await signOut()
     } finally {
@@ -188,9 +192,16 @@ function Account({ session }: { session: Session }) {
             Change password
           </Link>
           <div className="menu-sep" />
-          <button className="menu-item" role="menuitem" onClick={out}>
-            Sign out
+          <button className="menu-item" role="menuitem" disabled={leaving} onClick={out}>
+            {leaving && <Spinner />}
+            {leaving ? 'Signing out…' : 'Sign out'}
           </button>
+          {version && (
+            <>
+              <div className="menu-sep" />
+              <span className="menu-note t-note">Pier {version}</span>
+            </>
+          )}
         </div>
       )}
     </div>

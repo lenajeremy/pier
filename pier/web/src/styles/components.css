@@ -106,11 +106,26 @@
 .skeleton-row i {
   height: 8px;
   border-radius: 4px;
-  background: rgba(255, 255, 255, 0.07);
-  animation: pulse 1.6s ease-in-out infinite;
+  background-color: rgba(255, 255, 255, 0.07);
+  /* A faint light passes over the bars from left to right. It's fixed to
+     the window, so every bar on the page catches the same sweep, and it's
+     off screen for a moment between passes. */
+  background-image: linear-gradient(100deg, transparent 40%, rgba(255, 255, 255, 0.05) 50%, transparent 60%);
+  background-size: 200vw 100%;
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+  animation: shimmer 1.6s linear infinite;
 }
 .skeleton-row i + i {
-  background: rgba(255, 255, 255, 0.045);
+  background-color: rgba(255, 255, 255, 0.045);
+}
+@keyframes shimmer {
+  from {
+    background-position: -120vw 0;
+  }
+  to {
+    background-position: 20vw 0;
+  }
 }
 
 /* ---- Sidebar (Components 3) -------------------------------------------- */
@@ -438,6 +453,10 @@
   margin: 6px 4px;
   background: var(--d-line-soft);
 }
+/* A quiet fact at the foot of a menu, like the version of Pier. */
+.menu-note {
+  padding: 4px 10px 6px;
+}
 
 /* ---- Project header and tabs (Components 3) ---------------------------- */
 
@@ -713,6 +732,7 @@
 .badge {
   display: inline-flex;
   align-items: center;
+  gap: 6px;
   padding: 3px 9px;
   border-radius: 6px;
   font-size: 12.5px;
@@ -755,6 +775,16 @@
 }
 .alert .btn {
   align-self: center;
+}
+/* In place of the alert's icon while what it's about is under way. */
+.alert-spinner {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--d-red-text);
 }
 .alert.info {
   background: rgba(141, 178, 248, 0.07);
@@ -1403,12 +1433,44 @@ a.t-row:hover,
   line-height: 19px;
 }
 
-.spin {
+/* Spinner (Components 1): something under way. It turns at an even speed,
+   and only while a request or a build is running. */
+.spin,
+.spinner {
+  flex: none;
   animation: spin 1s linear infinite;
 }
 @keyframes spin {
   to {
     transform: rotate(360deg);
+  }
+}
+@keyframes breathe {
+  50% {
+    opacity: 0.45;
+  }
+}
+/* A spinner in a status colour, where a swatch would be. */
+.spinner.building {
+  color: var(--d-violet);
+}
+.spinner.warning {
+  color: var(--d-amber);
+}
+/* A spinner standing alone, with the words for what's under way. */
+.working-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .spin,
+  .spinner {
+    animation: breathe 2s ease-in-out infinite !important;
+  }
+  .skeleton-row i {
+    animation: none;
+    background-image: none;
   }
 }
 
@@ -1597,6 +1659,9 @@ select.input {
 }
 .reveal:hover {
   background: var(--d-active);
+}
+.reveal .spinner {
+  margin: 1.5px; /* the eye's 16px, so the row doesn't move */
 }
 
 .long-value {

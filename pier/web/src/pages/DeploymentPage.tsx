@@ -7,6 +7,7 @@ import { ago, plural, seconds, short, size } from '../lib/format'
 import { Link } from '../lib/router'
 import * as I from '../components/Icons'
 import { Menu, type MenuItem } from '../components/Menu'
+import { Spinner, useBusy } from '../components/Spinner'
 import { copy } from '../components/Toast'
 import { deploymentStatus, Problem, Skeleton, When } from '../components/ui'
 import { StatusFlaps } from '../flap/Flaps'
@@ -28,6 +29,7 @@ export function DeploymentPage({ project, id, now, host, current, branch }: {
     (d) => d.deployment.status === 'building' || d.container?.state === 'restarting',
     1500,
   )
+  const [busy, run] = useBusy<'restart'>()
   if (error) {
     return (
       <main className="main">
@@ -62,7 +64,7 @@ export function DeploymentPage({ project, id, now, host, current, branch }: {
           {
             label: stopped ? 'Start the container' : 'Restart the container',
             icon: <I.RollBack color="#A3ABBE" />,
-            onSelect: () => restart(project, d.id, reload, stopped),
+            onSelect: () => run('restart', () => restart(project, d.id, reload, stopped)),
           } as MenuItem,
         ]
       : []),
@@ -105,7 +107,10 @@ export function DeploymentPage({ project, id, now, host, current, branch }: {
                 <When at={d.created_at} now={now} />
               </Field>
               <Field label="Status">
-                <StatusFlaps status={st.swatch} word={st.word} />
+                <span className="line">
+                  <StatusFlaps status={st.swatch} word={st.word} />
+                  {building && <Spinner className="building" />}
+                </span>
               </Field>
               <Field label="Duration">
                 {building ? `${seconds(now - new Date(d.created_at).getTime())} so far` : seconds(d.build_ms)}
@@ -114,7 +119,12 @@ export function DeploymentPage({ project, id, now, host, current, branch }: {
             </div>
             {data.container && (
               <Field label="Container">
-                <ContainerSummary c={data.container} now={now} sleeps={d.role === 'kept' || d.role === 'preview'} />
+                <ContainerSummary
+                  c={data.container}
+                  now={now}
+                  sleeps={d.role === 'kept' || d.role === 'preview'}
+                  asked={busy === 'restart' ? (stopped ? 'Starting…' : 'Restarting…') : ''}
+                />
               </Field>
             )}
             <Field label="Domains">
@@ -169,7 +179,20 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   )
 }
 
-function ContainerSummary({ c, now, sleeps }: { c: ContainerStatus; now: number; sleeps: boolean }) {
+function ContainerSummary({ c, now, sleeps, asked }: {
+  c: ContainerStatus
+  now: number
+  sleeps: boolean
+  asked: string // a restart or start asked for from the menu, while pierd does it
+}) {
+  if (asked) {
+    return (
+      <span className="line">
+        <Spinner className="warning" />
+        <span>{asked}</span>
+      </span>
+    )
+  }
   // Pier puts a container to sleep when nothing serves its deployment any
   // more, or nobody has visited a preview for a while, to save memory. The
   // next visit wakes it. That's a rest, not a failure, so it doesn't read as one.
@@ -211,9 +234,11 @@ function ContainerSummary({ c, now, sleeps }: { c: ContainerStatus; now: number;
   if (c.restarts) parts.push(plural(c.restarts, 'restart'))
   if (c.oom_killed && c.state !== 'oom_killed') parts.push('OOM killed')
   if (c.state === 'running' && c.started_at) parts.push(`started ${ago(c.started_at, now).toLowerCase()}`)
+  // A container on its way up turns where its swatch would be.
+  const coming = c.state === 'restarting' || (c.state === 'running' && c.health === 'starting')
   return (
     <span className="line">
-      <i className={swatch ? 'swatch ' + swatch : 'swatch'} aria-hidden />
+      {coming ? <Spinner className="warning" /> : <i className={swatch ? 'swatch ' + swatch : 'swatch'} aria-hidden />}
       <span>{label}</span>
       {parts.length > 0 && <span className="t-muted">{parts.join(', ')}</span>}
     </span>

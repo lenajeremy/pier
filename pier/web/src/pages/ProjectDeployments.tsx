@@ -6,6 +6,7 @@ import { plural, seconds, short, size } from '../lib/format'
 import { Link, navigate } from '../lib/router'
 import { ArrowUp, Branch, Copy, Info, Redeploy, RollBack, Rows, SortDown, Terminal, Visit, Warning } from '../components/Icons'
 import { Menu, type MenuItem } from '../components/Menu'
+import { Spinner, useBusy } from '../components/Spinner'
 import { copy } from '../components/Toast'
 import { Badge, Empty, Paging, SearchField, usePaged, When } from '../components/ui'
 import { Flaps } from '../flap/Flaps'
@@ -24,6 +25,7 @@ export function ProjectDeployments({ project, session, now, reload }: {
   const [filter, setFilter] = useState<Filter>('all')
   const [query, setQuery] = useState('')
   const [oldest, setOldest] = useState(false)
+  const [busy, run] = useBusy<'undo' | 'restart'>()
 
   const prodBranch = project.production_branch || session.server.production_branch
   const live = project.production?.deployment
@@ -79,14 +81,21 @@ export function ProjectDeployments({ project, session, now, reload }: {
                 undo to go back to <span className="mono">{project.rolled_back_from}</span>.
               </span>
             </div>
-            <button className="btn quiet" onClick={() => undoRollBack(project.name, reload)}>
-              Undo rollback
+            <button className="btn quiet" disabled={busy === 'undo'} onClick={() => run('undo', () => undoRollBack(project.name, reload))}>
+              {busy === 'undo' && <Spinner />}
+              {busy === 'undo' ? 'Undoing…' : 'Undo rollback'}
             </button>
           </div>
         )}
         {container && live && (
           <div className="alert error" role="alert">
-            <Warning size={20} />
+            {container.state === 'restarting' ? (
+              <span className="alert-spinner">
+                <Spinner large />
+              </span>
+            ) : (
+              <Warning size={20} />
+            )}
             <div>
               <span className="t-small t-strong">
                 {container.state === 'oom_killed' || container.oom_killed
@@ -101,8 +110,13 @@ export function ProjectDeployments({ project, session, now, reload }: {
                   : `It's ${container.state.replace('_', ' ')}${container.restarts ? `, after ${plural(container.restarts, 'restart')}` : ''}.`}
               </span>
             </div>
-            <button className="btn quiet" onClick={() => restart(project.name, live.id, reload)}>
-              Restart
+            <button
+              className="btn quiet"
+              disabled={busy === 'restart'}
+              onClick={() => run('restart', () => restart(project.name, live.id, reload))}
+            >
+              {busy === 'restart' && <Spinner />}
+              {busy === 'restart' ? 'Restarting…' : 'Restart'}
             </button>
           </div>
         )}

@@ -3,6 +3,7 @@ import { api } from '../lib/api'
 import { useData } from '../lib/data'
 import { Info } from '../components/Icons'
 import { confirm } from '../components/Dialog'
+import { Spinner } from '../components/Spinner'
 import { toast } from '../components/Toast'
 import { PageHeading, Problem, Skeleton } from '../components/ui'
 
@@ -150,9 +151,11 @@ export function Settings() {
                     : 'Set the server’s IP with pierd init to check DNS from here.'}
               </span>
               <button className="btn quiet" type="button" disabled={!!busy || dirty} onClick={check}>
+                {busy === 'dns' && <Spinner />}
                 {busy === 'dns' ? 'Checking…' : 'Check DNS'}
               </button>
               <button className="btn primary" type="submit" disabled={!!busy || !dirty}>
+                {busy === 'save' && <Spinner />}
                 {busy === 'save' ? 'Saving…' : 'Save addresses'}
               </button>
             </div>

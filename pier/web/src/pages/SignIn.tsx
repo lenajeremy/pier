@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { ApiError, signIn, type Session } from '../lib/api'
 import { Mark } from '../components/Icons'
+import { Spinner } from '../components/Spinner'
 
 // SignIn is B1: the owner's email and password. Pier never sends email, so
 // a forgotten password is reset on the server.
@@ -78,6 +79,7 @@ export function SignIn({ address, onSignedIn }: { address: string; onSignedIn: (
           </label>
         </div>
         <button className="btn primary large" type="submit" disabled={busy}>
+          {busy && <Spinner />}
           {busy ? 'Signing in…' : 'Sign in'}
         </button>
         <p className="forgot">

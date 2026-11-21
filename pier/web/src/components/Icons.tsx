@@ -175,9 +175,12 @@ export const FailedMark = ({ size = 16 }: P) => (
   </svg>
 )
 
+// Working is the spinner (see Spinner.tsx) drawn as a status icon, the size
+// of Done and FailedMark: a faint ring with its top quarter turning.
 export const Working = ({ size = 16 }: P) => (
   <svg {...line(size, '#BCAEF8', 1.6)} className="spin">
-    <path d="M12 4A8 8 0 1 1 4 12" />
+    <circle cx="12" cy="12" r="8" strokeOpacity="0.35" />
+    <path d="M6.34 6.34A8 8 0 0 1 17.66 6.34" />
   </svg>
 )
 

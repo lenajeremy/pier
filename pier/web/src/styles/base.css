@@ -110,6 +110,7 @@ svg {
   *::before,
   *::after {
     animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important; /* or a looping one flickers */
     transition-duration: 0.01ms !important;
   }
 }

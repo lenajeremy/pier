@@ -4,6 +4,7 @@ import { ago, exact, plural } from '../lib/format'
 import { Link } from '../lib/router'
 import { ChevronLeft, ChevronRight, Search, Visit, Warning } from './Icons'
 import { ProjectMark } from './ProjectMark'
+import { Spinner } from './Spinner'
 
 const roleWord: Record<Role, string> = {
   production: 'Production',
@@ -13,7 +14,13 @@ const roleWord: Record<Role, string> = {
   kept: 'Kept',
 }
 
-export const Badge = ({ role }: { role: Role }) => <span className={'badge ' + role}>{roleWord[role]}</span>
+// A building deployment's badge turns while it builds.
+export const Badge = ({ role }: { role: Role }) => (
+  <span className={'badge ' + role}>
+    {role === 'building' && <Spinner />}
+    {roleWord[role]}
+  </span>
+)
 
 export const statusWord: Record<Status, string> = {
   live: 'Live',

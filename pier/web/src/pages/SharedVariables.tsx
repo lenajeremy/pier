@@ -7,6 +7,7 @@ import { confirm, Dialog } from '../components/Dialog'
 import { Menu } from '../components/Menu'
 import { toast } from '../components/Toast'
 import { Badge, PageHeading, Paging, Problem, SearchField, Skeleton, usePaged } from '../components/ui'
+import { Spinner } from '../components/Spinner'
 import { LongValue, ScopePicker, type Scope } from './Variables'
 
 type Shared = { name: string; projects: string[]; production: boolean; preview: boolean }
@@ -216,6 +217,7 @@ function SharedDialog({ variable, projects, onClose, onDone }: {
             Cancel
           </button>
           <button className="btn primary medium" type="submit" disabled={busy || !name.trim()}>
+            {busy && <Spinner />}
             {busy ? 'Saving…' : adding ? 'Add variable' : 'Save changes'}
           </button>
         </>
