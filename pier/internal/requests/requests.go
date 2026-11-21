@@ -73,6 +73,7 @@ type Log struct {
 
 	mu      sync.Mutex
 	pending []Line
+	seen    map[string]int64 // deployment -> its latest request, ms since the epoch
 }
 
 // Open opens (and if needed creates) the requests database. project maps a
@@ -197,7 +198,27 @@ func (l *Log) flushLoop(ctx context.Context) {
 func (l *Log) Add(lines ...Line) {
 	l.mu.Lock()
 	l.pending = append(l.pending, lines...)
+	if l.seen == nil {
+		l.seen = map[string]int64{}
+	}
+	for _, line := range lines {
+		if line.At > l.seen[line.Deployment] {
+			l.seen[line.Deployment] = line.At
+		}
+	}
 	l.mu.Unlock()
+}
+
+// LastSeen is when a deployment last answered a request since pierd
+// started, or the zero time. It tells an idle preview from one in use.
+func (l *Log) LastSeen(deployment string) time.Time {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	at, ok := l.seen[deployment]
+	if !ok {
+		return time.Time{}
+	}
+	return time.UnixMilli(at)
 }
 
 // Flush writes the requests waiting in memory.

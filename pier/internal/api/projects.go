@@ -455,7 +455,7 @@ func (a *API) deploymentRestart(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Application runtime is unavailable."})
 		return
 	}
-	if err := a.Deployer.Apps.Restart(r.Context(), d.Runtime); err != nil {
+	if err := a.Deployer.Restart(r.Context(), d.ID, d.Runtime); err != nil {
 		if errors.Is(err, apphost.ErrNotFound) {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "The container for deployment " + id + " is no longer present."})
 			return

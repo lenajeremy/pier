@@ -78,6 +78,7 @@ func TestProxiesKeepStreamsOpenAcrossReloads(t *testing.T) {
 		{Host: "chat.pier.localhost", Upstream: "127.0.0.1:40001", DeploymentID: "c19e77"},
 		{Host: "pier.localhost", Upstream: "127.0.0.1:7777"},
 		{Host: "blog.pier.localhost", Root: "/data/deployments/8f3a2c", DeploymentID: "8f3a2c"},
+		{Host: "feat--chat.pier.localhost", Wake: "127.0.0.1:41234", DeploymentID: "d00001"},
 	})
 	proxies := 0
 	for _, r := range cfg.Apps.HTTP.Servers["pier"].Routes {
@@ -91,8 +92,49 @@ func TestProxiesKeepStreamsOpenAcrossReloads(t *testing.T) {
 			}
 		}
 	}
-	if proxies != 2 {
-		t.Fatalf("want the application's and the dashboard's proxies, got %d", proxies)
+	if proxies != 3 {
+		t.Fatalf("want the application's, the waker's and the dashboard's proxies, got %d", proxies)
+	}
+}
+
+// A sleeping application's address goes to pierd's waker, naming the
+// deployment to wake in a header a visitor can't set for it.
+func TestSleepingApplicationsGoToTheWaker(t *testing.T) {
+	c := Caddy{Listen: []string{":8088"}, Storage: t.TempDir()}
+	build(t, c, []Route{{Host: "feat--chat.pier.localhost", Wake: "127.0.0.1:41234", DeploymentID: "d00001"}})
+	raw, err := c.Config([]Route{{Host: "feat--chat.pier.localhost", Wake: "127.0.0.1:41234", DeploymentID: "d00001"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg struct {
+		Apps struct {
+			HTTP struct {
+				Servers map[string]struct {
+					Routes []struct {
+						Handle []struct {
+							Upstreams []struct{ Dial string } `json:"upstreams"`
+							Headers   struct {
+								Request  struct{ Set map[string][]string } `json:"request"`
+								Response struct{ Set map[string][]string } `json:"response"`
+							} `json:"headers"`
+						} `json:"handle"`
+					} `json:"routes"`
+				} `json:"servers"`
+			} `json:"http"`
+		} `json:"apps"`
+	}
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	h := cfg.Apps.HTTP.Servers["pier"].Routes[0].Handle[0]
+	if len(h.Upstreams) != 1 || h.Upstreams[0].Dial != "127.0.0.1:41234" {
+		t.Fatalf("upstreams = %+v", h.Upstreams)
+	}
+	if got := h.Headers.Request.Set[WakeHeader]; !slices.Equal(got, []string{"d00001"}) {
+		t.Fatalf("%s = %v", WakeHeader, got)
+	}
+	if got := h.Headers.Response.Set["X-Pier-Deployment"]; !slices.Equal(got, []string{"d00001"}) {
+		t.Fatalf("the request log can't tell which deployment answered: %v", got)
 	}
 }
 

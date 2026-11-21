@@ -28,8 +28,13 @@ type Route struct {
 	Unavailable  bool
 	DeploymentID string
 	Upstream     string // host:port to proxy to instead of serving files
+	Wake         string // pierd's waker, host:port, for an application that is asleep
 	Fallback     string // what a path that isn't a file gets: FallbackSPA, FallbackPage, or a plain 404
 }
+
+// WakeHeader names the deployment a request to the waker is for. Caddy sets
+// it, replacing any a visitor sent.
+const WakeHeader = "X-Pier-Wake"
 
 // Fallbacks for a path that isn't a file.
 const (
@@ -91,6 +96,14 @@ func (c Caddy) Config(routes []Route) ([]byte, error) {
 				"headers": map[string][]string{"Location": {r.Redirect + "{http.request.uri}"}}}
 		} else if r.Unavailable {
 			h = map[string]any{"handler": "static_response", "status_code": 503, "body": "Application unavailable.\n", "headers": map[string][]string{"X-Pier-Deployment": {r.DeploymentID}}}
+		} else if r.Wake != "" {
+			// The waker starts the application, answers this request
+			// through it, and moves the address back to it.
+			h = map[string]any{"handler": "reverse_proxy", "upstreams": []any{map[string]any{"dial": r.Wake}}, "stream_close_delay": streamCloseDelay,
+				"headers": map[string]any{
+					"request":  map[string]any{"set": map[string][]string{WakeHeader: {r.DeploymentID}}},
+					"response": map[string]any{"set": map[string][]string{"X-Pier-Deployment": {r.DeploymentID}}},
+				}}
 		} else if r.Upstream != "" {
 			h = map[string]any{"handler": "reverse_proxy", "upstreams": []any{map[string]any{"dial": r.Upstream}}, "stream_close_delay": streamCloseDelay}
 			if r.DeploymentID != "" {

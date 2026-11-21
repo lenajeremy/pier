@@ -14,6 +14,7 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -51,6 +52,17 @@ type Deployer struct {
 	URL              func(host string) string // how an address is reached, for the log
 	Log              *slog.Logger
 	BuildTimeout     time.Duration
+	// Waker is pierd's loopback listener for WakeHandler. An application that
+	// is asleep is routed there, so the next visit starts it. Empty answers
+	// "unavailable" instead.
+	Waker string
+	// SleepAfter is how long a preview's application runs without a visit
+	// before it sleeps, and how long one that was woken stays up. Zero keeps
+	// previews awake.
+	SleepAfter time.Duration
+	// Visited reports the last request a deployment answered, from the
+	// request log. Nil counts none.
+	Visited func(deployment string) time.Time
 
 	mu         sync.Mutex
 	locks      map[string]*sync.Mutex
@@ -61,7 +73,13 @@ type Deployer struct {
 
 	endpointMu    sync.Mutex
 	lastEndpoints map[string]string // where each application listened when Docker last answered
+	stopping      map[string]bool   // applications going to sleep, routed to the waker already
 	stopsBehind   atomic.Bool       // stopping superseded applications failed and is retried
+
+	wakeMu    sync.Mutex
+	woken     map[string]time.Time // deployment -> when it was last woken or restarted
+	wakeFails map[string]time.Time // application -> when it last failed to start for a visit
+	boot      time.Time            // when the first sweep ran, which stands for pierd's start
 }
 
 // RepoPath is where a project's bare repository lives.
@@ -660,10 +678,13 @@ func (d *Deployer) Routes(ctx context.Context) ([]router.Route, error) {
 			if !probed {
 				endpoints, probed = d.endpoints(ctx), true
 			}
-			// A stopped or missing container has no endpoint, and its
-			// addresses say the application is unavailable.
+			// A stopped container has no endpoint, and its addresses wake
+			// it. Without a waker they say the application is unavailable.
 			r.Upstream = endpoints[dep.Runtime]
-			r.Unavailable = r.Upstream == ""
+			if r.Upstream == "" && d.Waker != "" {
+				r.Wake = d.Waker
+			}
+			r.Unavailable = r.Upstream == "" && r.Wake == ""
 		} else {
 			r.Root = filepath.Join(d.Deployments, dep.ID)
 			r.Fallback = fallbackFor(r.Root, dep.Framework)
@@ -729,10 +750,17 @@ func (d *Deployer) endpoints(ctx context.Context) map[string]string {
 	defer d.endpointMu.Unlock()
 	if err != nil {
 		d.Log.Warn("application endpoints unavailable; keeping the last known ones", "err", err)
+	} else {
+		d.lastEndpoints = current
+	}
+	if len(d.stopping) == 0 {
 		return d.lastEndpoints
 	}
-	d.lastEndpoints = current
-	return current
+	out := maps.Clone(d.lastEndpoints)
+	for name := range d.stopping {
+		delete(out, name)
+	}
+	return out
 }
 
 // fallbackFor decides what a path that isn't a file gets: the site's own
@@ -756,7 +784,9 @@ func (d *Deployer) syncRoutes(ctx context.Context, force bool) error {
 	defer d.routeMu.Unlock()
 	routes, err := d.Routes(ctx)
 	if err == nil {
-		d.hasApps = slices.ContainsFunc(routes, func(r router.Route) bool { return r.DeploymentID != "" && (r.Upstream != "" || r.Unavailable) })
+		d.hasApps = slices.ContainsFunc(routes, func(r router.Route) bool {
+			return r.DeploymentID != "" && (r.Upstream != "" || r.Wake != "" || r.Unavailable)
+		})
 		if force || d.dirty || !slices.Equal(routes, d.lastRoutes) {
 			err = d.Router.Apply(ctx, routes)
 			if err == nil {
@@ -811,12 +841,12 @@ func (d *Deployer) CleanupApps(ctx context.Context) error {
 	return nil
 }
 
-// StopSuperseded stops the containers of deployments that nothing needs
-// running any more, in one project or, with project empty, in all of them.
-// Each one keeps its image and its own address, which answers "unavailable"
-// until a rollback or a promote starts it again. Without this every server
-// deployment ever built would stay in memory. store.IdleApps says what is
-// still needed.
+// StopSuperseded puts to sleep the containers that nothing needs running,
+// in one project or, with project empty, in all of them: a superseded
+// deployment's at once, and a preview's once nobody has visited it for
+// SleepAfter. Each keeps its image and its own address, and the next visit
+// there wakes it (see WakeHandler). Without this every server deployment
+// ever built would stay in memory. store.Sleepers says what may sleep.
 func (d *Deployer) StopSuperseded(ctx context.Context, project string) error {
 	err := d.stopSuperseded(ctx, project)
 	if err != nil {
@@ -829,25 +859,38 @@ func (d *Deployer) stopSuperseded(ctx context.Context, project string) error {
 	if d.Apps == nil {
 		return nil
 	}
-	idle, err := d.Store.IdleApps(ctx, project)
-	if err != nil || len(idle) == 0 {
+	sleepers, err := d.Store.Sleepers(ctx, project)
+	if err != nil {
 		return err
+	}
+	now := time.Now()
+	var due []store.Sleeper
+	for _, z := range sleepers {
+		if d.restful(z, now) {
+			due = append(due, z)
+		}
+	}
+	if len(due) == 0 {
+		return nil
+	}
+	// Most of them are asleep already, and a sweep that finds nothing to do
+	// shouldn't reload the router.
+	running, err := d.Apps.Running(ctx)
+	if err != nil {
+		return err
+	}
+	due = slices.DeleteFunc(due, func(z store.Sleeper) bool { return !running[z.Name] })
+	if len(due) == 0 {
+		return nil
 	}
 	// The router must have left a deployment before its container goes: an
 	// alias that has moved here but not yet in Caddy still reaches the old one.
 	if err := d.syncRoutes(ctx, false); err != nil {
 		return err
 	}
-	running, err := d.Apps.Running(ctx)
-	if err != nil {
-		return err
-	}
 	stopped := false
-	for _, name := range idle {
-		if !running[name] {
-			continue
-		}
-		did, err := d.stopIfIdle(ctx, project, name)
+	for _, z := range due {
+		did, err := d.stopIfIdle(ctx, project, z.Name)
 		if err != nil {
 			return err
 		}
@@ -860,17 +903,42 @@ func (d *Deployer) stopSuperseded(ctx context.Context, project string) error {
 }
 
 // stopIfIdle stops one container unless something came to need it since it
-// was listed, like a rollback that is starting it right now.
+// was listed, like a rollback that is starting it right now or a visit. Its
+// addresses move to the waker first, so a visit while it stops wakes it
+// again instead of failing.
 func (d *Deployer) stopIfIdle(ctx context.Context, project, name string) (bool, error) {
 	defer d.lockApp(name)()
-	idle, err := d.Store.IdleApps(ctx, project)
-	if err != nil || !slices.Contains(idle, name) {
+	sleepers, err := d.Store.Sleepers(ctx, project)
+	if err != nil {
+		return false, err
+	}
+	i := slices.IndexFunc(sleepers, func(z store.Sleeper) bool { return z.Name == name })
+	if i < 0 || !d.restful(sleepers[i], time.Now()) {
+		return false, nil
+	}
+	d.endpointMu.Lock()
+	if d.stopping == nil {
+		d.stopping = map[string]bool{}
+	}
+	d.stopping[name] = true
+	d.endpointMu.Unlock()
+	defer func() {
+		d.endpointMu.Lock()
+		delete(d.stopping, name)
+		d.endpointMu.Unlock()
+	}()
+	if err := d.syncRoutes(ctx, false); err != nil {
 		return false, err
 	}
 	if err := d.Apps.Stop(ctx, name); err != nil {
 		return false, err
 	}
-	d.Log.Info("stopped a superseded application", "container", name)
+	d.slept(sleepers[i].Deployment)
+	if sleepers[i].Superseded {
+		d.Log.Info("stopped a superseded application", "container", name)
+	} else {
+		d.Log.Info("put a preview to sleep", "container", name, "idle", d.SleepAfter)
+	}
 	return true, nil
 }
 

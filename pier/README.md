@@ -66,6 +66,8 @@ blog-c19e77.pier.example.com          one deployment, forever
 
 A failed build changes nothing: the address keeps serving what it served.
 
+A server app's container keeps running while production, a custom domain or a rollback needs it. A preview's sleeps after 30 minutes without a visit, and an older deployment's sleeps once nothing serves it. The next visit to any of their addresses starts it again: that visit waits as long as the app takes to boot, up to a minute. Change the idle time with `pierd serve -sleep-after 2h`, or keep previews awake with `-sleep-after 0`.
+
 ## Custom domains
 
 Open a project’s **Domains** tab and enter the hostname. Copy the records shown into your DNS provider. For a registrable apex, Pier also checks the www CNAME and redirects that hostname to the apex. The page shows the current DNS answers and rechecks pending domains every ten seconds.

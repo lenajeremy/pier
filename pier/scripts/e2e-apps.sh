@@ -79,4 +79,27 @@ PIERD_PID=
 start_pierd
 [[ $(fetch clock.$DOMAIN /time) == "production "* ]] || fail "server production did not recover"
 [[ $(fetch "$preview" /time) == "Dockerfile preview 3210" ]] || fail "immutable process preview did not recover"
+
+step "an idle preview's server sleeps, and the next visit wakes it"
+kill "$PIERD_PID"
+wait "$PIERD_PID"
+PIERD_PID=
+export PIER_SLEEP_AFTER=3s
+start_pierd
+unset PIER_SLEEP_AFTER
+sed '$d' Dockerfile > healthy.Dockerfile
+mv healthy.Dockerfile Dockerfile
+"$PIER" deploy > "$WORK/clock-sleep.log" || { cat "$WORK/clock-sleep.log"; fail "preview to put to sleep failed"; }
+sleepy=$(sed -n 's/.*application \([0-9a-f]*\) passed.*/\1/p' "$WORK/clock-sleep.log")
+[[ -n $sleepy ]] || fail "missing preview deployment ID"
+[[ $(fetch "clock-$sleepy.$DOMAIN" /time) == "Dockerfile preview 3210" ]] || fail "new preview didn't serve"
+container=$(curl -fsS -b "$JAR" "$API/api/projects/clock/deployments/$sleepy" | sed -n 's/.*"runtime":"\(pier-app-[a-z0-9]*\)".*/\1/p')
+for _ in $(seq 80); do [[ $(docker inspect -f '{{.State.Running}}' "$container") == false ]] && break; sleep 0.5; done
+[[ $(docker inspect -f '{{.State.Running}}' "$container") == false ]] || fail "an idle preview's container kept running"
+[[ $(fetch clock.$DOMAIN /time) == "production "* ]] || fail "production stopped serving while a preview slept"
+[[ $(curl -fsS --max-time 30 --resolve "clock-$sleepy.$DOMAIN:$HTTP_PORT:127.0.0.1" "http://clock-$sleepy.$DOMAIN:$HTTP_PORT/time") == "Dockerfile preview 3210" ]] || fail "a visit didn't wake the sleeping preview"
+[[ $(docker inspect -f '{{.State.Running}}' "$container") == true ]] || fail "the woken preview isn't running"
+header=$(curl -fsS -D - -o /dev/null --resolve "clock-$sleepy.$DOMAIN:$HTTP_PORT:127.0.0.1" "http://clock-$sleepy.$DOMAIN:$HTTP_PORT/time" | tr -d '\r')
+echo "$header" | grep -iq "^x-pier-deployment: $sleepy$" || fail "the woken preview lost the deployment header"
+grep -q "put a preview to sleep" "$WORK/pierd.log" || fail "pierd didn't log the preview going to sleep"
 cd "$WORK"

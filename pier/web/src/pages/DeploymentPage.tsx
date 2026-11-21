@@ -52,12 +52,19 @@ export function DeploymentPage({ project, id, now, host, current, branch }: {
   const live = data.addresses.find((a) => a.kind !== 'deployment')
   const visit = (live ?? data.addresses[0])?.url
   const target = { project, host, current, branch }
+  const stopped = data.container?.state === 'exited'
   const more: MenuItem[] = [
     ...(!building
       ? [{ label: 'Redeploy', icon: <I.Redeploy color="#A3ABBE" />, onSelect: () => redeploy(target, d) } as MenuItem]
       : []),
     ...(ready && d.runtime
-      ? [{ label: 'Restart the container', icon: <I.RollBack color="#A3ABBE" />, onSelect: () => restart(project, d.id, reload) } as MenuItem]
+      ? [
+          {
+            label: stopped ? 'Start the container' : 'Restart the container',
+            icon: <I.RollBack color="#A3ABBE" />,
+            onSelect: () => restart(project, d.id, reload, stopped),
+          } as MenuItem,
+        ]
       : []),
     ...(visit ? [{ label: 'Copy address', icon: <I.Copy />, onSelect: () => copy(visit) } as MenuItem] : []),
   ]
@@ -107,7 +114,7 @@ export function DeploymentPage({ project, id, now, host, current, branch }: {
             </div>
             {data.container && (
               <Field label="Container">
-                <ContainerSummary c={data.container} now={now} superseded={d.role === 'kept'} />
+                <ContainerSummary c={data.container} now={now} sleeps={d.role === 'kept' || d.role === 'preview'} />
               </Field>
             )}
             <Field label="Domains">
@@ -162,10 +169,11 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   )
 }
 
-function ContainerSummary({ c, now, superseded }: { c: ContainerStatus; now: number; superseded: boolean }) {
-  // Pier stops the containers of deployments nothing serves any more, to save
-  // memory. That's a rest, not a failure, so it doesn't read as one.
-  const resting = superseded && c.state === 'exited' && !c.oom_killed
+function ContainerSummary({ c, now, sleeps }: { c: ContainerStatus; now: number; sleeps: boolean }) {
+  // Pier puts a container to sleep when nothing serves its deployment any
+  // more, or nobody has visited a preview for a while, to save memory. The
+  // next visit wakes it. That's a rest, not a failure, so it doesn't read as one.
+  const resting = sleeps && c.state === 'exited' && !c.oom_killed
   const swatch =
     c.state === 'running' && c.health !== 'unhealthy'
       ? 'done'
@@ -178,8 +186,8 @@ function ContainerSummary({ c, now, superseded }: { c: ContainerStatus; now: num
     return (
       <span className="line">
         <i className="swatch" aria-hidden />
-        <span>Stopped, since nothing serves it now</span>
-        <span className="t-muted">Promoting it or rolling back to it starts it again.</span>
+        <span>Asleep</span>
+        <span className="t-muted">The next visit to its address starts it again.</span>
       </span>
     )
   }

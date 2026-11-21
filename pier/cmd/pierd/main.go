@@ -100,6 +100,11 @@ func serve(args []string) int {
 	builder := fs.String("builder", env("PIER_BUILDER", "railpack-preview"), "railpack-preview, docker, or local (host builds without isolation)")
 	image := fs.String("image", env("PIER_IMAGE", build.DefaultNodeImage), "the image builds run in")
 	prod := fs.String("production-branch", env("PIER_PRODUCTION_BRANCH", "main"), "the branch that deploys to production")
+	sleepDefault := 30 * time.Minute
+	if v, err := time.ParseDuration(env("PIER_SLEEP_AFTER", "")); err == nil {
+		sleepDefault = v
+	}
+	sleepAfter := fs.Duration("sleep-after", sleepDefault, "how long a preview's server runs without a visit before it sleeps until the next one (0 keeps previews awake)")
 	fs.Parse(args)
 
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
@@ -205,7 +210,16 @@ func serve(args []string) int {
 			caddyCfg.WildcardReady = wild.ready.Load
 		}
 	}
+	// Caddy sends visits to an application that is asleep here, and pierd
+	// wakes it. Only Caddy should reach it, so it listens on loopback.
+	wakeLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		log.Error("listen for visits to sleeping applications", "err", err)
+		return 1
+	}
+	defer wakeLn.Close()
 	dep := &deploy.Deployer{
+		Waker: wakeLn.Addr().String(), SleepAfter: *sleepAfter,
 		Store: st, Repos: paths.repos, Deployments: paths.deployments, Logs: paths.logs, Sources: paths.sources, Tmp: paths.tmp,
 		Secrets: box,
 		Domain:  *domain, ProductionBranch: *prod, Runner: runner, PreviewRailpack: preview, Apps: apphost.New(*data), Log: log, BuildTimeout: 15 * time.Minute,
@@ -253,6 +267,10 @@ func serve(args []string) int {
 		return 1
 	}
 	defer reqs.Close()
+	dep.Visited = reqs.LastSeen
+	waker := &http.Server{Handler: dep.WakeHandler(), ReadHeaderTimeout: 5 * time.Second}
+	go waker.Serve(wakeLn)
+	defer waker.Close()
 	go func() {
 		if err := reqs.Listen(ctx, paths.accessSock); err != nil {
 			log.Error("request log socket", "err", err)
@@ -346,6 +364,7 @@ func serve(args []string) int {
 	}()
 
 	go dep.KeepSynced(ctx, 5*time.Second)
+	go dep.SleepIdle(ctx, sweepEvery(*sleepAfter))
 	go func() {
 		t := time.NewTicker(time.Minute)
 		defer t.Stop()
@@ -391,6 +410,12 @@ pierd is running
 	internal.Shutdown(shut)
 	os.Remove(paths.socket)
 	return 0
+}
+
+// sweepEvery is how often pierd looks for applications to put to sleep: a
+// quarter of the idle time, between five seconds and a minute.
+func sweepEvery(sleepAfter time.Duration) time.Duration {
+	return min(max(sleepAfter/4, 5*time.Second), time.Minute)
 }
 
 type paths struct {

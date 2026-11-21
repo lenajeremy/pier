@@ -96,6 +96,7 @@ func (e *Engine) Add(c Container) string {
 		if probed != nil {
 			probed(a.Name)
 		}
+		w.Write([]byte("hello from " + a.Name))
 	}))
 	a.port = a.server.Listener.Addr().(*net.TCPAddr).Port
 	e.mu.Lock()
@@ -179,6 +180,8 @@ func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		e.change(w, a, "start", !a.Running, !a.Crashes)
 	case "POST stop":
 		e.change(w, a, "stop", a.Running, false)
+	case "POST restart":
+		e.change(w, a, "restart", true, !a.Crashes)
 	case "POST update":
 		var cfg container.UpdateConfig
 		if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {

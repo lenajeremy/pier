@@ -132,13 +132,15 @@ export async function redeploy(t: Target, d: Deployment) {
   })
 }
 
-export async function restart(project: string, id: string, done: () => void) {
+// restart restarts a deployment's container, or starts it when it was
+// stopped or asleep. One started this way stays up while it is visited.
+export async function restart(project: string, id: string, done: () => void, stopped = false) {
   try {
     await post(project, `deployments/${encodeURIComponent(id)}/restart`)
     done()
     toast(
       <>
-        Restarted the container for <Id>{id}</Id>
+        {stopped ? 'Started' : 'Restarted'} the container for <Id>{id}</Id>
       </>,
     )
   } catch (e) {

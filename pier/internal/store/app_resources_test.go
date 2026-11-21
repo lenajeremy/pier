@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -70,6 +71,36 @@ func TestIdleAppsAreTheSupersededOnes(t *testing.T) {
 	idle("shop", "app-a00001", "app-a00002", "app-b00001", "app-c00001")
 	idle("docs")
 	idle("", "app-a00001", "app-a00002", "app-b00001", "app-c00001")
+
+	// What may sleep: the superseded at once, and the previews that only a
+	// branch's address or their own serves once nobody visits them.
+	sleepers := func(project string, want ...string) {
+		t.Helper()
+		list, err := s.Sleepers(ctx, project)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		for _, z := range list {
+			kind := "preview"
+			if z.Superseded {
+				kind = "superseded"
+			}
+			got = append(got, z.Name+" "+kind)
+			if z.Deployment != strings.TrimPrefix(z.Name, "app-") || z.Ready.Before(start.Add(-time.Second)) || z.Ready.After(time.Now()) {
+				t.Errorf("sleeper %+v", z)
+			}
+		}
+		if !slices.Equal(got, want) {
+			t.Fatalf("sleepers in %q = %v, want %v", project, got, want)
+		}
+	}
+	sleepers("shop", "app-a00001 superseded", "app-a00002 superseded", "app-b00001 superseded", "app-b00002 preview", "app-c00001 superseded", "app-c00002 preview")
+	sleepers("docs")
+	// A preview production was promoted to is production's.
+	add("d00002", "docs", "try", TargetPreview, Ready, 2)
+	point(KindProduction, "docs.localhost", "docs", "d00002")
+	sleepers("docs")
 
 	// Rolled back to a00002: it serves, a00004 is where undo goes, and
 	// a00001 is where the next rollback would go.
