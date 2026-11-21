@@ -193,6 +193,14 @@ The design is the source of truth. It's on the Screenshotter board **"Pier websi
 14. Server (I1) shows current resource usage, 24-hour and 7-day charts, service status, disk usage by category, and controls for clearing the package cache and inactive previews.
 15. Settings (K4) manages dashboard and base addresses, checks DNS, links to the GitHub App and sessions, and lets the owner change their password. Address changes take effect on restart. Password changes revoke the owner’s browser and CLI sessions.
 16. `make pier-release ARCH=amd64` and `ARCH=arm64` produce Linux bundles with checksums and a systemd installer. See `pier/README.md` for setup.
+17. Fixes from the 2026-11-20 review, on branch `dashboard-ui`. Behaviour worth knowing:
+    - **Server apps:** only containers something may need keep running: what an alias points at (production, branch previews; custom domains follow production), the rollback target, the deployment a rollback came from, anything building, and the newest ready build of each branch. The rest stop after a deploy goes live, after promote, rollback or undo, and at startup; their images stay. Promoting or rolling back to a stopped one starts it and waits until it answers (up to 60 s) before moving production, and fails with a clear error if it won't start. Containers use `unless-stopped`.
+    - **Routes:** each host gets one route (dashboard, then aliases, then deployment addresses, then custom domains), so a collision can't stop Caddy from loading. A failed Docker probe keeps the last known app endpoints. Proxies keep WebSockets open for 5 minutes across reloads.
+    - **Wildcard certificates:** dropped only after 5 failed checks in a row, and never while an unexpired wildcard certificate is in storage. On Ubuntu, the DNS responder binds every non-loopback interface address.
+    - **GitHub:** `DELETE /api/github` disconnects the App, and `POST /api/github/jobs/{id}/dismiss` dismisses a waiting build (both in Integrations). A restart mid-build rebuilds the commit. Events follow the repo's current installation. Temporary GitHub errors retry three times. Closing a pull request or deleting a branch retires its preview address. One preview comment per pull request. Links inside a repo are recreated, if they stay inside it.
+    - **Logs:** chart days start at the viewer's midnight (`tz`, minutes east of UTC, on the chart request).
+    - **Dashboard data:** a hidden tab doesn't poll. A project page polls every 3 s while something builds, otherwise every 15 s. A reload no longer stops a page's polling.
+    - **Housekeeping:** activity older than a year is deleted; the build cache is measured in the background at most every 5 minutes; preview clean-up removes files even when Docker is down.
 
 ## 6. Running and testing
 
