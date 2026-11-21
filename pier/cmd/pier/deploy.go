@@ -85,8 +85,7 @@ func deploy(args []string) error {
 		target = "production"
 	}
 	if useTUI {
-		_, err := openDeployView(c, project, dir, target, g, notes)
-		return err
+		return openCockpit(c, deployView, project, projectsPane, &pendingDeploy{project: project, dir: dir, target: target, g: g, notes: notes})
 	}
 	for _, n := range notes {
 		fmt.Println(n)

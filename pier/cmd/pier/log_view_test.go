@@ -23,7 +23,7 @@ func TestLiveViewKeepsPausedTextAndWraps(t *testing.T) {
 	update(tea.KeyMsg{Type: tea.KeySpace})
 	update(logBatch{rows: []logRow{runtimeRow(apphost.LogLine{Text: "next entry"})}})
 	view := m.View()
-	if strings.Contains(view, "next entry") || !strings.Contains(view, "1 new") || !strings.Contains(view, "STDERR") || strings.Contains(view, "\x1b") {
+	if strings.Contains(view, "next entry") || !strings.Contains(view, "1 new") || !strings.Contains(view, "stderr") || strings.Contains(view, "\x1b") {
 		t.Fatal(view)
 	}
 	for _, line := range strings.Split(view, "\n") {

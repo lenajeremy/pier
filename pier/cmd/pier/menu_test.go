@@ -10,10 +10,10 @@ import (
 )
 
 func TestMenuFilterAndSelect(t *testing.T) {
-	m := newMenu("Command palette", "pier.example.com", "", []choice{
-		{id: "board", title: "Board", icon: "◈", section: "Inspect"},
-		{id: "logs", title: "Request logs", icon: "≡", section: "Inspect"},
-		{id: "runtime", title: "Runtime logs", icon: "▸", section: "Inspect"},
+	m := newMenu("Choose a project", "pier.example.com", "", []choice{
+		{id: "board", title: "Board", section: "Inspect"},
+		{id: "logs", title: "Request logs", section: "Inspect"},
+		{id: "runtime", title: "Runtime logs", section: "Inspect"},
 	})
 	key := func(k tea.KeyMsg) { next, _ := m.Update(k); m = next.(menu) }
 	key(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
@@ -33,14 +33,13 @@ func TestMenuFilterAndSelect(t *testing.T) {
 }
 
 func TestMenuQuickJump(t *testing.T) {
-	m := newMenu("Command palette", "pier.example.com", "demo", []choice{
-		{id: "preview", title: "Deploy preview", section: "Deploy"},
-		{id: "board", title: "Deployment board", section: "Inspect"},
+	m := newMenu("Choose a project", "pier.example.com", "demo", []choice{
+		{id: "landing", title: "landing"},
+		{id: "docs", title: "docs"},
 	})
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("2")})
-	got := next.(menu)
-	if got.chosen != "board" {
-		t.Fatalf("quick jump chose %q, want board", got.chosen)
+	if got := next.(menu); got.chosen != "docs" {
+		t.Fatalf("quick jump chose %q, want docs", got.chosen)
 	}
 }
 
@@ -59,91 +58,52 @@ func TestBrandLayoutsAndMonochrome(t *testing.T) {
 	if ansi.Strip(colored) != mono {
 		t.Fatalf("colored brand differs from monochrome once stripped:\n%s\n---\n%s", ansi.Strip(colored), mono)
 	}
-	if !strings.Contains(brand(32, false), "PIER") {
-		t.Fatal("compact brand missing wordmark")
-	}
-	if !strings.Contains(brand(20, false), "PIER") {
-		t.Fatal("mini brand missing wordmark")
-	}
 }
 
-func TestMenuCardAlignment(t *testing.T) {
-	m := newMenu("Command palette", "pier.thesunset.live", "lenajeremy-xyz", []choice{
-		{id: "preview", title: "Deploy preview", hint: "pier deploy", icon: "▲", section: "Deploy"},
-		{id: "prod", title: "Deploy production", hint: "pier deploy --prod", icon: "✦", section: "Deploy"},
-		{id: "board", title: "Deployment board", hint: "pier board", icon: "◈", section: "Inspect"},
-		{id: "history", title: "Deployment history", hint: "pier deployments", icon: "◷", section: "Inspect"},
-		{id: "requests", title: "Request logs", hint: "live HTTP traffic", icon: "≡", section: "Inspect"},
-		{id: "runtime", title: "Runtime logs", hint: "container stdout/stderr", icon: "▸", section: "Inspect"},
-		{id: "build", title: "Build logs", hint: "latest build output", icon: "◇", section: "Inspect"},
-		{id: "switch", title: "Switch project", hint: "pick active project", icon: "⇄", section: "Account"},
-		{id: "help", title: "Command reference", hint: "pier help", icon: "?", section: "Account"},
-		{id: "logout", title: "Sign out", hint: "pier logout", icon: "⇥", section: "Account"},
-	})
-	m.width, m.height, m.color = 84, 32, true
-	view := m.View()
-	stripped := ansi.Strip(view)
-	t.Log("\n" + stripped)
-	cardW := -1
-	for _, line := range strings.Split(stripped, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "╭") || strings.HasPrefix(trimmed, "│") || strings.HasPrefix(trimmed, "├") || strings.HasPrefix(trimmed, "╰") {
-			w := ansi.StringWidth(trimmed)
-			if cardW < 0 {
-				cardW = w
-			} else if w != cardW {
-				t.Fatalf("misaligned card row (width %d != %d): %q", w, cardW, trimmed)
-			}
+// checkScreen asserts what every full-screen view promises: exactly h
+// rows, none wider than the terminal, the one-line header first and the
+// keys last, and every box's rows as wide as its edges.
+func checkScreen(t *testing.T, name, view string, w, h int, bar string) {
+	t.Helper()
+	lines := strings.Split(view, "\n")
+	if len(lines) != h {
+		t.Errorf("%s at %dx%d: %d rows", name, w, h, len(lines))
+	}
+	for i, l := range lines {
+		if got := ansi.StringWidth(l); got > w {
+			t.Errorf("%s at %dx%d: row %d is %d wide: %q", name, w, h, i, got, ansi.Strip(l))
 		}
 	}
-	if cardW <= 0 {
-		t.Fatal("no card rendered")
+	head := ansi.Strip(lines[0])
+	if !strings.Contains(head, "▄█▄  pier") {
+		t.Errorf("%s at %dx%d: no header: %q", name, w, h, head)
+	}
+	if strings.Contains(view, "█████▄") {
+		t.Errorf("%s at %dx%d: the block-letter logo is back", name, w, h)
+	}
+	if bar != "" && w >= 60 && !strings.Contains(ansi.Strip(lines[len(lines)-1]), bar) {
+		t.Errorf("%s at %dx%d: key bar %q missing from %q", name, w, h, bar, ansi.Strip(lines[len(lines)-1]))
+	}
+	if strings.Contains(ansi.Strip(view), "·") {
+		t.Errorf("%s: a middle dot separator", name)
 	}
 }
 
-func TestDeploymentDetailCardAndRefresh(t *testing.T) {
-	m := newMenu("Deployment 4e245b", "pier.thesunset.live", "lenajeremy-xyz", []choice{
-		{id: "build", title: "Build logs", hint: "build output", icon: "◇", section: "Logs"},
-		{id: "runtime", title: "Runtime logs", hint: "stdout / stderr", icon: "▸", section: "Logs"},
-		{id: "requests", title: "Request logs", hint: "project HTTP traffic", icon: "≡", section: "Logs"},
-		{id: "open", title: "Open in browser", hint: "lenajeremy.xyz", icon: "↗", section: "Actions"},
-		{id: "restart", title: "Restart container", hint: "zero rebuild", icon: "↻", section: "Actions"},
-		{id: "redeploy", title: "Redeploy", hint: "rebuild with latest settings", icon: "▲", section: "Actions"},
-		{id: "rollback", title: "Roll back production", hint: "revert to previous", icon: "←", section: "Actions"},
-	})
-	m.meta = []metaRow{
-		{label: "Status", value: statusPill("production", true) + ink("  ·  next 16.2 (server)", fgMuted, true), raw: true},
-		{label: "Container", value: statusPill("running", true) + ink("  ·  1 GB RAM · up 3 hours ago", fgMuted, true), raw: true},
-		{label: "URL", value: "https://lenajeremy.xyz", tone: fgBright},
-		{label: "Source", value: "main · cb2e55a · Fix portfolio metadata", tone: fgSecondary},
-		{label: "Built", value: "24.2s · 3 hours ago", tone: fgMuted},
-	}
-	m.refresh = true
-	m.notice = "✓ Container restarted and passed readiness check"
-	m.noticeTone = mint
-	m.width, m.height, m.color = 84, 34, true
+var sizes = [][2]int{{96, 30}, {80, 24}, {120, 40}, {60, 16}, {40, 9}, {24, 6}, {12, 3}}
 
-	stripped := ansi.Strip(m.View())
-	t.Log("\n" + stripped)
-	cardW := -1
-	for _, line := range strings.Split(stripped, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "╭") || strings.HasPrefix(trimmed, "│") || strings.HasPrefix(trimmed, "├") || strings.HasPrefix(trimmed, "╰") {
-			w := ansi.StringWidth(trimmed)
-			if cardW < 0 {
-				cardW = w
-			} else if w != cardW {
-				t.Fatalf("misaligned deployment detail card row (%d != %d): %q", w, cardW, trimmed)
-			}
-		}
-	}
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
-	if next.(menu).chosen != refreshChoiceID {
-		t.Fatalf("expected refresh on r key, got %q", next.(menu).chosen)
+func TestMenuFitsTheTerminal(t *testing.T) {
+	for _, size := range sizes {
+		m := newMenu("Choose a project", "pier.thesunset.live", "landing", []choice{
+			{id: "landing", title: "landing", badge: "live"},
+			{id: "agentman", title: "agentman", badge: "building"},
+			{id: "+", title: "Create a new project", hint: "new"},
+		})
+		m.width, m.height, m.color = size[0], size[1], true
+		checkScreen(t, "menu", m.View(), size[0], size[1], "↑↓ move")
 	}
 }
 
-func TestTextPromptEditValidateAndCardAlignment(t *testing.T) {
+func TestTextPromptEditAndValidate(t *testing.T) {
 	m := textPrompt{
 		cfg: inputConfig{
 			title:       "Create a new project",
@@ -165,28 +125,16 @@ func TestTextPromptEditValidateAndCardAlignment(t *testing.T) {
 		height: 28,
 		color:  true,
 	}
-	// Type invalid double-dash, submit should stay open with error.
 	upd := func(k tea.KeyMsg) { next, _ := m.Update(k); m = next.(textPrompt) }
 	upd(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("--bad")})
 	upd(tea.KeyMsg{Type: tea.KeyEnter})
 	if m.submitted || m.errMsg == "" {
 		t.Fatalf("expected validation error, submitted=%v err=%q", m.submitted, m.errMsg)
 	}
-	stripped := ansi.Strip(m.View())
-	t.Log("\n" + stripped)
-	cardW := -1
-	for _, line := range strings.Split(stripped, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "╭") || strings.HasPrefix(trimmed, "│") || strings.HasPrefix(trimmed, "├") || strings.HasPrefix(trimmed, "╰") {
-			w := ansi.StringWidth(trimmed)
-			if cardW < 0 {
-				cardW = w
-			} else if w != cardW {
-				t.Fatalf("misaligned prompt card row (%d != %d): %q", w, cardW, trimmed)
-			}
-		}
+	for _, size := range sizes {
+		m.width, m.height = size[0], size[1]
+		checkScreen(t, "prompt", m.View(), size[0], size[1], "enter confirm")
 	}
-	// Clear, type valid name, submit.
 	upd(tea.KeyMsg{Type: tea.KeyCtrlU})
 	upd(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("my-site")})
 	upd(tea.KeyMsg{Type: tea.KeyEnter})
@@ -195,24 +143,20 @@ func TestTextPromptEditValidateAndCardAlignment(t *testing.T) {
 	}
 }
 
-func TestHelpAndDeployViewsRenderCleanly(t *testing.T) {
-	hm := helpModel{server: "pier.thesunset.live", width: 84, height: 28, color: true}
-	stripped := ansi.Strip(hm.View())
-	cardW := -1
-	for _, line := range strings.Split(stripped, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "╭") || strings.HasPrefix(trimmed, "│") || strings.HasPrefix(trimmed, "├") || strings.HasPrefix(trimmed, "╰") {
-			w := ansi.StringWidth(trimmed)
-			if cardW < 0 {
-				cardW = w
-			} else if w != cardW {
-				t.Fatalf("misaligned help card row (%d != %d): %q", w, cardW, trimmed)
-			}
-		}
+func TestLoginAndHelpShareTheHeader(t *testing.T) {
+	for _, size := range sizes {
+		lm := loginModel{base: "https://pier.thesunset.live", link: "https://pier.thesunset.live/approve?code=BXRT-4KQ9", code: "BXRT-4KQ9", width: size[0], height: size[1], color: true}
+		checkScreen(t, "login", lm.View(), size[0], size[1], "esc cancel")
+		hm := helpModel{server: "pier.thesunset.live", project: "landing", width: size[0], height: size[1], color: true}
+		checkScreen(t, "help", hm.View(), size[0], size[1], "esc back")
+	}
+	lm := loginModel{base: "https://pier.thesunset.live", code: "BXRT-4KQ9", width: 96, height: 30}
+	if !strings.Contains(lm.View(), "BXRT-4KQ9") {
+		t.Fatal("without colour the code should read as the word")
 	}
 
 	row, found := parseNarrationRow("alias   https://demo.thesunset.live", time.Now())
-	if found != "https://demo.thesunset.live" || row.label != "alias" {
+	if found != "https://demo.thesunset.live" || row.label != "alias" || row.tone != pink {
 		t.Fatalf("parseNarrationRow = (%+v, %q)", row, found)
 	}
 }

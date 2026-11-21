@@ -133,7 +133,7 @@ type commandGroup struct {
 func commandReferenceGroups() []commandGroup {
 	return []commandGroup{
 		{"Interactive", [][2]string{
-			{"pier", "Open the interactive command palette"},
+			{"pier", "Your projects, their deployments and the board"},
 		}},
 		{"Deploy", [][2]string{
 			{"pier deploy [FOLDER] [--prod]", "Build a preview or deploy to production"},
@@ -142,8 +142,8 @@ func commandReferenceGroups() []commandGroup {
 			{"pier restart [PROJECT]", "Restart a server container without rebuilding"},
 		}},
 		{"Inspect", [][2]string{
-			{"pier board [--plain]", "Interactive address board (or plain table)"},
-			{"pier deployments [PROJECT]", "Interactive deployment history & inspector"},
+			{"pier board [--plain]", "Every address on the server (or a plain table)"},
+			{"pier deployments [PROJECT]", "A project's deployments, newest first"},
 			{"pier logs [PROJECT]", "Follow requests (one snapshot when piped)"},
 			{"pier logs [PROJECT] --runtime", "Follow container stdout and stderr"},
 			{"pier logs [PROJECT] --build", "Follow a build (--deployment ID to choose)"},
@@ -446,7 +446,7 @@ func showBoard(args []string) error {
 		return err
 	}
 	if interactive() && !*plain {
-		return browseBoard(c)
+		return openCockpit(c, boardView, "", projectsPane, nil)
 	}
 	var b struct {
 		Domain string
@@ -492,7 +492,7 @@ func showDeployments(args []string) error {
 		return err
 	}
 	if interactive() && !*plain {
-		return browseDeployments(c, project)
+		return openCockpit(c, homeView, project, projectPane, nil)
 	}
 	var res struct {
 		Deployments []struct {

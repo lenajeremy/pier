@@ -41,7 +41,6 @@ func rollback(args []string) error {
 				id:      "__undo__",
 				title:   "Undo rollback (restore " + proj.RolledBackFrom + ")",
 				hint:    "resume automatic deploys",
-				icon:    "✦",
 				section: "Rollback",
 			})
 		}
@@ -61,7 +60,6 @@ func rollback(args []string) error {
 				id:      d.ID,
 				title:   title,
 				hint:    hint,
-				icon:    "←",
 				badge:   d.Role,
 				section: "Ready deployments",
 			})
@@ -134,7 +132,6 @@ func promote(args []string) error {
 				id:    d.ID,
 				title: title,
 				hint:  ago(d.CreatedAt),
-				icon:  "✦",
 				badge: d.Role,
 			})
 		}
