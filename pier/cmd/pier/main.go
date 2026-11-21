@@ -12,10 +12,12 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	terminal "golang.org/x/term"
 	"io"
 	"net"
 	"net/http"
@@ -70,6 +72,13 @@ func saveConfig(c config) error {
 
 func main() {
 	if len(os.Args) < 2 {
+		if interactive() {
+			if err := home(); err != nil {
+				fmt.Fprintln(os.Stderr, "pier:", err)
+				os.Exit(1)
+			}
+			return
+		}
 		usage()
 		os.Exit(2)
 	}
@@ -87,8 +96,10 @@ func main() {
 		err = rollback(os.Args[2:])
 	case "promote":
 		err = promote(os.Args[2:])
+	case "restart":
+		err = restart(os.Args[2:])
 	case "board":
-		err = showBoard()
+		err = showBoard(os.Args[2:])
 	case "deployments", "ls":
 		err = showDeployments(os.Args[2:])
 	case "help", "-h", "--help":
@@ -98,23 +109,67 @@ func main() {
 		err = fmt.Errorf("unknown command %q; run pier help", os.Args[1])
 	}
 	if err != nil {
+		if errors.Is(err, errCancelled) {
+			return
+		}
 		fmt.Fprintln(os.Stderr, "pier:", err)
 		os.Exit(1)
 	}
 }
 
-func usage() {
-	fmt.Fprint(os.Stderr, `pier is the CLI for Pier, a deploy platform on your own server.
+type commandGroup struct {
+	title string
+	rows  [][2]string
+}
 
-  pier login ADDRESS              sign this computer in; you approve it in the dashboard
-  pier deploy [FOLDER] [--prod]   upload a folder and build it: a preview, or production
-  pier logs [PROJECT] [--follow]  request logs; filter with --status, --path, or --since
-  pier rollback [DEPLOYMENT]      production goes back to the deployment before it (--undo to undo)
-  pier promote DEPLOYMENT         production serves a deployment that already built
-  pier board                      every address on the server, and what it serves
-  pier deployments [PROJECT]      a project's deployments, newest first
-  pier logout                     forget this computer's sign-in
-`)
+func commandReferenceGroups() []commandGroup {
+	return []commandGroup{
+		{"Interactive", [][2]string{
+			{"pier", "Open the interactive command palette"},
+		}},
+		{"Deploy", [][2]string{
+			{"pier deploy [FOLDER] [--prod]", "Build a preview or deploy to production"},
+			{"pier promote [DEPLOYMENT]", "Move production to a ready deployment"},
+			{"pier rollback [ID] [--undo]", "Roll back production or undo a rollback"},
+			{"pier restart [PROJECT]", "Restart a server container without rebuilding"},
+		}},
+		{"Inspect", [][2]string{
+			{"pier board [--plain]", "Interactive address board (or plain table)"},
+			{"pier deployments [PROJECT]", "Interactive deployment history & inspector"},
+			{"pier logs [PROJECT]", "Follow requests (one snapshot when piped)"},
+			{"pier logs [PROJECT] --runtime", "Follow container stdout and stderr"},
+			{"pier logs [PROJECT] --build", "Follow a build (--deployment ID to choose)"},
+			{"pier logs --once | --follow", "Choose a snapshot or continuous output"},
+		}},
+		{"Account", [][2]string{
+			{"pier login [ADDRESS]", "Sign in through your dashboard"},
+			{"pier logout", "Sign this computer out"},
+		}},
+	}
+}
+
+func usage() {
+	tty := terminal.IsTerminal(int(os.Stderr.Fd())) && os.Getenv("TERM") != "dumb"
+	color := tty && os.Getenv("NO_COLOR") == ""
+	if tty {
+		w, _, _ := terminal.GetSize(int(os.Stderr.Fd()))
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, brand(w, color))
+		fmt.Fprintln(os.Stderr)
+	}
+	groups := commandReferenceGroups()
+	if !tty {
+		fmt.Fprintln(os.Stderr, "Pier CLI")
+	}
+	for _, g := range groups {
+		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(os.Stderr, "  "+boldInk(strings.ToUpper(g.title), fgDim, color))
+		for _, r := range g.rows {
+			cmd := fmt.Sprintf("%-32s", r[0])
+			fmt.Fprintf(os.Stderr, "  %s  %s\n", boldInk(cmd, fgBright, color), ink(r[1], fgMuted, color))
+		}
+	}
+	fmt.Fprintln(os.Stderr)
 }
 
 // serverURL turns what the owner typed into Pier's address: HTTPS for a
@@ -151,14 +206,30 @@ var client = &http.Client{Transport: &http.Transport{
 
 // call sends a JSON request and decodes a JSON answer.
 func call(c config, method, path string, body, into any) error {
+	return callContext(context.Background(), c, method, path, body, into)
+}
+
+func callContext(ctx context.Context, c config, method, path string, body, into any) error {
 	var r io.Reader
 	if body != nil {
 		b, _ := json.Marshal(body)
 		r = strings.NewReader(string(b))
 	}
-	req, err := http.NewRequest(method, c.Server+path, r)
+	resp, err := request(ctx, c, method, path, r)
 	if err != nil {
 		return err
+	}
+	defer resp.Body.Close()
+	if into == nil {
+		return nil
+	}
+	return json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(into)
+}
+
+func request(ctx context.Context, c config, method, path string, r io.Reader) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, method, c.Server+path, r)
+	if err != nil {
+		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if c.Token != "" {
@@ -168,26 +239,23 @@ func call(c config, method, path string, body, into any) error {
 	if err != nil {
 		var uerr *url.Error
 		if errors.As(err, &uerr) {
-			return fmt.Errorf("can't reach Pier at %s; is the address right, and is pierd running?", c.Server)
+			return nil, fmt.Errorf("can't reach Pier at %s; is the address right, and is pierd running?", c.Server)
 		}
-		return err
+		return nil, err
 	}
-	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if resp.StatusCode >= 300 {
+		defer resp.Body.Close()
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		var e struct{ Error string }
 		if json.Unmarshal(raw, &e) == nil && e.Error != "" {
 			if resp.StatusCode == http.StatusUnauthorized {
-				return fmt.Errorf("%s (pier login %s)", e.Error, strings.TrimPrefix(strings.TrimPrefix(c.Server, "https://"), "http://"))
+				return nil, fmt.Errorf("%s (pier login %s)", e.Error, strings.TrimPrefix(strings.TrimPrefix(c.Server, "https://"), "http://"))
 			}
-			return errors.New(e.Error)
+			return nil, errors.New(e.Error)
 		}
-		return fmt.Errorf("Pier answered %s", resp.Status)
+		return nil, fmt.Errorf("Pier answered %s", resp.Status)
 	}
-	if into == nil {
-		return nil
-	}
-	return json.Unmarshal(raw, into)
+	return resp, nil
 }
 
 func signedIn() (config, error) {
@@ -209,6 +277,25 @@ func login(args []string) error {
 	if addr == "" && fs.NArg() > 0 {
 		addr = fs.Arg(0)
 	}
+	if addr == "" && interactive() {
+		entered, ok, err := promptInput(inputConfig{
+			title:       "Sign in to Pier",
+			label:       "Pier server address",
+			placeholder: "pier.example.com",
+			hint:        "Enter your Pier dashboard domain or URL",
+			validate: func(v string) error {
+				_, err := serverURL(v)
+				return err
+			},
+		})
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return errCancelled
+		}
+		addr = entered
+	}
 	base, err := serverURL(addr)
 	if err != nil {
 		return err
@@ -223,6 +310,14 @@ func login(args []string) error {
 			return err
 		}
 		fmt.Printf("Signed in to %s with the server's token.\n", host(base))
+		return nil
+	}
+	if interactive() {
+		cfg, err := openLoginView(base)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("%s Signed in to %s as %s.\n", tick(), host(cfg.Server), cfg.Email)
 		return nil
 	}
 
@@ -322,23 +417,25 @@ func colour(status string) string {
 }
 
 func paint(rgb, s string) string {
-	if rgb == "" || os.Getenv("NO_COLOR") != "" || !term() {
-		return s
-	}
-	return "\x1b[38;2;" + rgb + "m" + s + "\x1b[0m"
+	return ink(s, rgb, os.Getenv("NO_COLOR") == "" && term())
 }
 
 func tick() string { return paint("98;216;198", "✓") }
 
 func term() bool {
-	fi, err := os.Stdout.Stat()
-	return err == nil && fi.Mode()&os.ModeCharDevice != 0
+	return terminal.IsTerminal(int(os.Stdout.Fd())) && os.Getenv("TERM") != "dumb"
 }
 
-func showBoard() error {
+func showBoard(args []string) error {
+	fs := flag.NewFlagSet("board", flag.ExitOnError)
+	plain := fs.Bool("plain", false, "print a static list instead of the interactive board")
+	fs.Parse(args)
 	c, err := signedIn()
 	if err != nil {
 		return err
+	}
+	if interactive() && !*plain {
+		return browseBoard(c)
 	}
 	var b struct {
 		Domain string
@@ -347,8 +444,17 @@ func showBoard() error {
 	if err := call(c, http.MethodGet, "/api/board", nil, &b); err != nil {
 		return err
 	}
+	if term() {
+		heading("Deployment board", b.Domain)
+	}
 	if len(b.Rows) == 0 {
 		fmt.Printf("Nothing on %s yet. Deploy a folder to put it on the board:  pier deploy\n", b.Domain)
+		return nil
+	}
+	if term() {
+		for _, r := range b.Rows {
+			resultRow(r.Address, r.Status, orDash(r.Branch)+"  ·  "+orDash(r.Deployment))
+		}
 		return nil
 	}
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
@@ -360,17 +466,22 @@ func showBoard() error {
 }
 
 func showDeployments(args []string) error {
-	c, err := signedIn()
+	fs := flag.NewFlagSet("deployments", flag.ExitOnError)
+	plain := fs.Bool("plain", false, "print a static list instead of the interactive browser")
+	projectFlag := fs.String("project", "", "the project (default: linked folder or picker)")
+	fs.Parse(reorder(args, map[string]bool{"project": true}))
+	if fs.NArg() > 1 || (fs.NArg() == 1 && *projectFlag != "") {
+		return errors.New("specify one project")
+	}
+	if fs.NArg() == 1 {
+		*projectFlag = fs.Arg(0)
+	}
+	c, project, err := projectFor(*projectFlag)
 	if err != nil {
 		return err
 	}
-	project := ""
-	if len(args) > 0 {
-		project = args[0]
-	} else if l, err := readLink("."); err == nil {
-		project = l.Project
-	} else {
-		return errors.New("say which project: pier deployments PROJECT")
+	if interactive() && !*plain {
+		return browseDeployments(c, project)
 	}
 	var res struct {
 		Deployments []struct {
@@ -382,8 +493,21 @@ func showDeployments(args []string) error {
 	if err := call(c, http.MethodGet, "/api/projects/"+url.PathEscape(project)+"/deployments", nil, &res); err != nil {
 		return err
 	}
+	if term() {
+		heading("Deployment history", project)
+	}
 	if len(res.Deployments) == 0 {
 		fmt.Printf("%s has no deployments yet. Deploy it:  pier deploy\n", project)
+		return nil
+	}
+	if term() {
+		for _, d := range res.Deployments {
+			detail := orDash(d.Branch) + "  ·  " + ago(d.CreatedAt)
+			if d.BuildMS > 0 {
+				detail += fmt.Sprintf("  ·  %.1fs build", float64(d.BuildMS)/1000)
+			}
+			resultRow(d.ID+"  "+d.Message, d.Role, detail)
+		}
 		return nil
 	}
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
@@ -441,8 +565,11 @@ func reorder(args []string, valued map[string]bool) []string {
 }
 
 // ask reads one line from the terminal.
-func ask(prompt string) string {
+func ask(prompt string) (string, error) {
 	fmt.Print(prompt)
-	s, _ := bufio.NewReader(os.Stdin).ReadString('\n')
-	return strings.TrimSpace(s)
+	s, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	if err != nil {
+		return "", errors.New("input cancelled")
+	}
+	return strings.TrimSpace(s), nil
 }

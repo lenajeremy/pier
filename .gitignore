@@ -25,3 +25,4 @@ design/
 # The dashboard's build, embedded into pierd. Built by `make pier`.
 pier/internal/web/dist/*
 !pier/internal/web/dist/.gitkeep
+.pier

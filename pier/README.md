@@ -32,6 +32,10 @@ And the start of the second slice:
     narrates its build: a preview at its own address, or production with
     `--prod`. The folder remembers its project in `.pier/project.json`.
 
+## Interactive CLI
+
+Run `pier` in a terminal to open the command menu. Use ↑ and ↓ to move, Enter to select, and / to filter commands or projects. Esc clears a filter or closes the picker. A linked folder opens its own deployment history and logs. Direct commands such as `pier board` still work in scripts. Set `NO_COLOR=1` for a monochrome display.
+
 ## Preview builds
 
 The default `pierd serve -builder railpack-preview` uses Railpack v0.43.0 and Docker Buildx for new previews from Git, GitHub, and the CLI. Docker pulls the pinned Railpack frontend on first use. HTML previews export their static files directly through BuildKit. Node builds use Node 22, and projects with explicit build commands, package-manager hints, or a custom Pier image use those settings in the Railpack plan.
@@ -46,7 +50,7 @@ Pier detects a `Dockerfile` in the selected project root and builds it directly.
 
 Use `pier deploy` for a preview or `pier deploy --prod` for production. Pier publishes one loopback port per container and forwards requests through Caddy. The startup probe accepts an HTTP response below 500 at `/` so an API can return 404 at its root. Set `PIER_HEALTH_PATH` to a readiness endpoint such as `/health` to require a 2xx or 3xx response. Pier also waits for any image-defined Docker health check. A failed startup leaves the previous deployment serving.
 
-Each retained server deployment runs its own container, including older versions with immutable URLs. Promotion and rollback point production at that deployment with the environment it received when it was built and started. Deploy with `--prod` to use production variables. Docker restarts the process on exit. Pier rediscovers current port bindings after a restart. Preview cleanup removes eligible containers, anonymous volumes and image tags. Treat container files as ephemeral across deployments. View process `stdout`/`stderr` in the deployment's **Runtime logs** panel or with `pier logs <project> --runtime` (`-f` to follow).
+Each retained server deployment runs its own container, including older versions with immutable URLs. Promotion and rollback point production at that deployment with the environment it received when it was built and started. Deploy with `--prod` to use production variables. Docker restarts the process on exit. Pier rediscovers current port bindings after a restart. Preview cleanup removes eligible containers, anonymous volumes and image tags. Treat container files as ephemeral across deployments. View process `stdout`/`stderr` in the deployment's **Runtime logs** panel or with `pier logs <project> --runtime` (`--once` for a snapshot).
 
 ## Deploy from GitHub
 
@@ -79,11 +83,17 @@ Once DNS matches, the hostname follows the project’s production deployment, in
 - **Server** samples CPU, memory and disk every minute, retains seven days of measurements, and shows service status and disk usage. Cleanup can clear the Pier package cache or remove inactive previews older than 30 days, including their build logs and saved uploads. Branch heads, production history and deployments from before cleanup tracking are protected.
 - **Settings** saves the dashboard hostname and project base domain, checks DNS, and changes the owner password. Restart pierd to apply saved addresses. Explicit `-address` and `-domain` flags take precedence. Changing the password signs the owner out on every browser and linked computer.
 
-Request logs default to the linked project and the last 24 hours. Use the project name to query another project.
+In a terminal, `pier logs` opens a live tail for the linked project. Request logs start with recent traffic from the last 24 hours. Runtime logs show the production container (or the latest ready server). Build logs open the latest deployment and end after its last line. Choose **Deployment history** in the menu to inspect an earlier deployment.
+
+Use **Space** to pause and resume. While paused, new lines keep arriving and the counter shows how many you missed. Use **↑/↓** or **Page Up/Page Down** to read wrapped lines, **End** to jump to the live tail, and **Esc** to close. The viewer keeps the latest 1,000 lines. Set `NO_COLOR=1` for monochrome.
+
+Pipes receive one plain snapshot by default. Use `--follow` to stream into another command or `--once` for a terminal snapshot. Upgrade `pierd` for the push-based log feeds. The CLI also follows older servers using their paginated endpoints.
 
 ```sh
 pier logs docs --since 1h --status 404 --path /guide
-pier logs docs --follow
+pier logs docs --runtime
+pier logs docs --build --deployment abc123
+pier logs docs --follow | tee requests.log
 ```
 
 ## Linux installer

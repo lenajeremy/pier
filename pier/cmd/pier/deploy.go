@@ -52,6 +52,7 @@ var projectName = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,37}[a-z0-9])?$`)
 func deploy(args []string) error {
 	fs := flag.NewFlagSet("deploy", flag.ExitOnError)
 	prod := fs.Bool("prod", false, "deploy to production instead of a preview")
+	plain := fs.Bool("plain", false, "stream plain build output instead of the interactive view")
 	projectFlag := fs.String("project", "", "the project to deploy to (remembered in .pier/project.json)")
 	fs.Parse(reorder(args, map[string]bool{"project": true}))
 	c, err := signedIn()
@@ -73,9 +74,22 @@ func deploy(args []string) error {
 	// Read git before chooseProject, which may add .pier to .gitignore and
 	// so make a clean checkout look changed.
 	g := gitInfo(dir)
-	project, err := chooseProject(c, dir, *projectFlag)
+	useTUI := interactive() && !*plain
+	project, notes, err := chooseProject(c, dir, *projectFlag, useTUI)
 	if err != nil {
 		return err
+	}
+
+	target := "preview"
+	if *prod {
+		target = "production"
+	}
+	if useTUI {
+		_, err := openDeployView(c, project, dir, target, g, notes)
+		return err
+	}
+	for _, n := range notes {
+		fmt.Println(n)
 	}
 
 	files, err := bundle.Files(dir)
@@ -101,14 +115,13 @@ func deploy(args []string) error {
 	}
 	defer tmp.Close()
 
-	target := "preview"
-	if *prod {
-		target = "production"
-	}
 	q := url.Values{
 		"target": {target}, "files": {strconv.Itoa(len(files))},
 		"branch": {g.branch}, "commit": {g.commit}, "message": {g.message},
 		"tools": {localTools(dir)},
+	}
+	if term() {
+		heading("Deploy "+target, project+"  ·  "+dir)
 	}
 	fmt.Printf("Uploading %s (%s, %s packed) to %s, for %s\n",
 		plural(len(files), "file"), human(size), human(packed), project, target)
@@ -160,77 +173,127 @@ func colourLine(s string) string {
 }
 
 // chooseProject finds the project this folder deploys to: the flag, then
-// .pier/project.json, then it asks and remembers the answer.
-func chooseProject(c config, dir, flagged string) (string, error) {
+// .pier/project.json, then it asks interactively and remembers the answer.
+func chooseProject(c config, dir, flagged string, useTUI bool) (string, []string, error) {
+	var notes []string
 	if flagged != "" {
-		if err := ensureProject(c, flagged, false); err != nil {
-			return "", err
+		note, err := ensureProject(c, flagged, false)
+		if err != nil {
+			return "", nil, err
 		}
-		return flagged, remember(c, dir, flagged)
+		if note != "" {
+			notes = append(notes, note)
+		}
+		if rnote, err := remember(c, dir, flagged); err != nil {
+			return "", nil, err
+		} else if rnote != "" {
+			notes = append(notes, rnote)
+		}
+		return flagged, notes, nil
 	}
-	if l, err := readLink(dir); err == nil {
-		return l.Project, nil
+	if l, err := readLink(dir); err == nil && (l.Server == "" || l.Server == c.Server) {
+		return l.Project, nil, nil
 	}
-	if !term() {
-		return "", errors.New("say which project this folder is: pier deploy --project NAME")
+	if !interactive() {
+		return "", nil, errors.New("say which project this folder is: pier deploy --project NAME")
 	}
-	var list struct {
-		Projects []struct{ Name string }
+	name, err := projectChoices(c, true)
+	if err != nil {
+		return "", nil, err
 	}
-	if err := call(c, http.MethodGet, "/api/projects", nil, &list); err != nil {
-		return "", err
+	if name == "" {
+		return "", nil, errCancelled
 	}
-	suggest := strings.Trim(regexp.MustCompile(`[^a-z0-9-]+`).ReplaceAllString(strings.ToLower(filepath.Base(dir)), "-"), "-")
-	fmt.Printf("Which project is %s?\n", filepath.Base(dir))
-	for i, p := range list.Projects {
-		fmt.Printf("  %d  %s\n", i+1, p.Name)
-	}
-	answer := ask(fmt.Sprintf("Type a number, or a new name to create one [%s]: ", suggest))
-	name := answer
-	if answer == "" {
-		name = suggest
-	} else if n, err := strconv.Atoi(answer); err == nil && n >= 1 && n <= len(list.Projects) {
-		name = list.Projects[n-1].Name
-	}
-	exists := false
-	for _, p := range list.Projects {
-		exists = exists || p.Name == name
-	}
-	if !exists {
-		if err := ensureProject(c, name, true); err != nil {
-			return "", err
+	if name == "+" {
+		suggest := strings.Trim(regexp.MustCompile(`[^a-z0-9-]+`).ReplaceAllString(strings.ToLower(filepath.Base(dir)), "-"), "-")
+		for strings.Contains(suggest, "--") {
+			suggest = strings.ReplaceAll(suggest, "--", "-")
+		}
+		if useTUI {
+			var createdNote string
+			entered, ok, err := promptInput(inputConfig{
+				title:       "Create a new project",
+				server:      host(c.Server),
+				label:       "Project name",
+				hint:        "Lowercase letters, numbers, and single dashes (e.g. my-app)",
+				initial:     suggest,
+				placeholder: suggest,
+				validate: func(v string) error {
+					if v == "" {
+						return errors.New("enter a project name")
+					}
+					if !projectName.MatchString(v) || strings.Contains(v, "--") {
+						return errors.New("use lowercase letters, numbers, and single dashes")
+					}
+					note, err := ensureProject(c, v, true)
+					if err != nil {
+						return err
+					}
+					createdNote = note
+					return nil
+				},
+			})
+			if err != nil {
+				return "", nil, err
+			}
+			if !ok {
+				return "", nil, errCancelled
+			}
+			name = entered
+			if createdNote != "" {
+				notes = append(notes, createdNote)
+			}
+		} else {
+			name, err = ask(fmt.Sprintf("New project name [%s]: ", suggest))
+			if err != nil {
+				return "", nil, err
+			}
+			if name == "" {
+				name = suggest
+			}
+			note, err := ensureProject(c, name, true)
+			if err != nil {
+				return "", nil, err
+			}
+			if note != "" {
+				notes = append(notes, note)
+			}
 		}
 	}
-	return name, remember(c, dir, name)
+	if rnote, err := remember(c, dir, name); err != nil {
+		return "", nil, err
+	} else if rnote != "" {
+		notes = append(notes, rnote)
+	}
+	return name, notes, nil
 }
 
 // ensureProject checks the project exists, creating it if asked to.
-func ensureProject(c config, name string, create bool) error {
+func ensureProject(c config, name string, create bool) (string, error) {
 	if !projectName.MatchString(name) || strings.Contains(name, "--") {
-		return fmt.Errorf("%q can't be a project name: use lowercase letters, numbers and single dashes", name)
+		return "", fmt.Errorf("%q can't be a project name: use lowercase letters, numbers and single dashes", name)
 	}
 	err := call(c, http.MethodGet, "/api/projects/"+url.PathEscape(name)+"/settings", nil, nil)
 	if err == nil {
-		return nil
+		return "", nil
 	}
 	if !create {
-		return fmt.Errorf("there's no project called %s; create it in the dashboard, or run pier deploy without --project", name)
+		return "", fmt.Errorf("there's no project called %s; create it in the dashboard, or run pier deploy without --project", name)
 	}
 	var made struct{ Address string }
 	if err := call(c, http.MethodPost, "/api/projects", map[string]string{"name": name}, &made); err != nil {
-		return err
+		return "", err
 	}
-	fmt.Printf("%s Created %s. Production will be at %s.\n", tick(), name, made.Address)
-	return nil
+	return fmt.Sprintf("Created %s. Production will be at %s.", name, made.Address), nil
 }
 
 // remember writes .pier/project.json, and keeps .pier out of git.
-func remember(c config, dir, name string) error {
+func remember(c config, dir, name string) (string, error) {
 	if l, err := readLink(dir); err == nil && l.Project == name {
-		return nil
+		return "", nil
 	}
 	if err := writeLink(dir, link{Project: name, Server: c.Server}); err != nil {
-		return err
+		return "", err
 	}
 	if exec.Command("git", "-C", dir, "rev-parse", "--is-inside-work-tree").Run() == nil {
 		ignore := filepath.Join(dir, ".gitignore")
@@ -246,8 +309,7 @@ func remember(c config, dir, name string) error {
 			}
 		}
 	}
-	fmt.Printf("This folder deploys to %s from now on (.pier/project.json).\n", name)
-	return nil
+	return fmt.Sprintf("Linked this folder to %s (.pier/project.json).", name), nil
 }
 
 // localTools says which package manager, at which version, this computer
