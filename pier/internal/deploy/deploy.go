@@ -53,6 +53,7 @@ type Deployer struct {
 
 	mu         sync.Mutex
 	locks      map[string]*sync.Mutex
+	logChanges map[string]chan struct{}
 	routeMu    sync.Mutex // serializes snapshots and loads across projects
 	lastRoutes []router.Route
 	hasApps    bool
@@ -243,6 +244,11 @@ func (d *Deployer) run(ctx context.Context, project string, src Source, out io.W
 		}
 		dep.ID = names.NewID()
 	}
+	finishLog, err := d.beginLog(dep.ID)
+	if err != nil {
+		return err
+	}
+	defer finishLog()
 	if src.GitHubJob != 0 {
 		err = d.Store.StartGitHubDeployment(ctx, src.GitHubJob, dep)
 	} else {
@@ -271,7 +277,7 @@ func (d *Deployer) run(ctx context.Context, project string, src Source, out io.W
 	if logFile, err := d.createLog(dep.ID); err != nil {
 		d.Log.Warn("build log can't be kept", "deployment", dep.ID, "err", err)
 	} else {
-		tl := &timedLog{w: logFile, start: start}
+		tl := &timedLog{w: logFile, start: start, changed: func() { d.signalLog(dep.ID, false) }}
 		defer func() { tl.Flush(); logFile.Close() }()
 		out = io.MultiWriter(out, tl)
 	}

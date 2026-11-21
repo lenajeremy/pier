@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"time"
@@ -46,7 +47,7 @@ func (a *API) requestLines(w http.ResponseWriter, r *http.Request) {
 	if _, ok := a.findProject(w, r, name); !ok {
 		return
 	}
-	if a.Requests == nil {
+	if a.Requests == nil && r.URL.Query().Get("follow") != "1" {
 		writeJSON(w, http.StatusOK, map[string]any{"lines": []requests.Line{}, "kept_days": 14})
 		return
 	}
@@ -57,9 +58,14 @@ func (a *API) requestLines(w http.ResponseWriter, r *http.Request) {
 	if limit < 1 || limit > 500 {
 		limit = 300
 	}
-	lines, err := a.Requests.Lines(r.Context(), name, requests.Filter{
+	filter := requests.Filter{
 		From: from, To: to, Status: statusFilter(q.Get("status")), Query: q.Get("q"), After: after, Forward: q.Has("after"), Limit: limit,
-	})
+	}
+	if q.Get("follow") == "1" {
+		a.followRequests(w, r, name, filter)
+		return
+	}
+	lines, err := a.Requests.Lines(r.Context(), name, filter)
 	if err != nil {
 		a.fail(w, err)
 		return
@@ -103,4 +109,60 @@ func (a *API) requestChart(w http.ResponseWriter, r *http.Request) {
 		"from": from, "to": to, "bucket_ms": step, "buckets": nonNil(buckets),
 		"requests": total, "errors": errs, "busiest": busiest, "e4xx": e4, "e5xx": e5,
 	})
+}
+
+// logStream writes newline-delimited JSON pages. An empty page flushes the
+// headers even when a quiet project has no recent lines.
+func logStream(w http.ResponseWriter) func(any) error {
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Accel-Buffering", "no")
+	encoder := json.NewEncoder(w)
+	return func(page any) error {
+		if err := encoder.Encode(page); err != nil {
+			return err
+		}
+		return http.NewResponseController(w).Flush()
+	}
+}
+
+func (a *API) followRequests(w http.ResponseWriter, r *http.Request, project string, filter requests.Filter) {
+	send := logStream(w)
+	if a.Requests == nil {
+		if send(map[string]any{"lines": []requests.Line{}}) == nil {
+			<-r.Context().Done()
+		}
+		return
+	}
+	// The initial snapshot and later pages share an ID cursor. Leave the
+	// upper time bound open to include requests committed during startup.
+	filter.To = 0
+	first := true
+	for {
+		changed := a.Requests.Changed()
+		lines, err := a.Requests.Lines(r.Context(), project, filter)
+		if err != nil {
+			_ = send(map[string]string{"error": err.Error()})
+			return
+		}
+		if len(lines) > 0 || first {
+			if send(map[string]any{"lines": nonNil(lines)}) != nil {
+				return
+			}
+		}
+		if len(lines) > 0 {
+			filter.After = lines[len(lines)-1].ID
+		}
+		first = false
+		full := len(lines) == filter.Limit
+		filter.Forward, filter.Limit = true, 500
+		if full {
+			continue
+		}
+		select {
+		case <-r.Context().Done():
+			return
+		case <-changed:
+		}
+	}
 }

@@ -2,6 +2,7 @@
 package apphost
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -426,29 +427,7 @@ const maxLogBytes = 512 << 10
 
 // Logs reads recent stdout and stderr lines from an owned application container.
 func (h *Host) Logs(ctx context.Context, name string, tail int, since string) ([]LogLine, error) {
-	if tail <= 0 {
-		tail = 200
-	}
-	if tail > 1000 {
-		tail = 1000
-	}
-	c, err := h.engine(ctx)
-	if err != nil {
-		return nil, err
-	}
-	res, err := c.ContainerInspect(ctx, name, client.ContainerInspectOptions{})
-	if err != nil {
-		if errdefs.IsNotFound(err) {
-			return nil, ErrNotFound
-		}
-		return nil, err
-	}
-	if res.Container.Config == nil || res.Container.Config.Labels[ownerLabel] != h.owner {
-		return nil, errors.New("application container ownership mismatch")
-	}
-	rc, err := c.ContainerLogs(ctx, res.Container.ID, client.ContainerLogsOptions{
-		ShowStdout: true, ShowStderr: true, Timestamps: true, Tail: strconv.Itoa(tail), Since: since,
-	})
+	rc, tty, err := h.OpenLogs(ctx, name, tail, since, false)
 	if err != nil {
 		return nil, err
 	}
@@ -457,7 +436,7 @@ func (h *Host) Logs(ctx context.Context, name string, tail int, since string) ([
 	if err != nil {
 		return nil, err
 	}
-	return parseContainerLogs(raw, res.Container.Config.Tty), nil
+	return parseContainerLogs(raw, tty), nil
 }
 
 // parseContainerLogs decodes Docker's multiplexed log stream (or raw TTY stream)
@@ -470,14 +449,7 @@ func parseContainerLogs(raw []byte, tty bool) []LogLine {
 			if len(line) == 0 {
 				continue
 			}
-			text := string(line)
-			at := ""
-			if ts, rest, ok := strings.Cut(text, " "); ok {
-				if _, err := time.Parse(time.RFC3339Nano, ts); err == nil {
-					at, text = ts, rest
-				}
-			}
-			lines = append(lines, LogLine{At: at, Stream: stream, Text: text})
+			lines = append(lines, containerLine(stream, line))
 		}
 	}
 	if tty {
@@ -503,4 +475,112 @@ func parseContainerLogs(raw []byte, tty bool) []LogLine {
 		raw = raw[n:]
 	}
 	return lines
+}
+
+// OpenLogs opens an owned container's Docker stream, optionally following it.
+func (h *Host) OpenLogs(ctx context.Context, name string, tail int, since string, follow bool) (io.ReadCloser, bool, error) {
+	if tail <= 0 {
+		tail = 200
+	}
+	if tail > 1000 {
+		tail = 1000
+	}
+	c, err := h.engine(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	res, err := c.ContainerInspect(ctx, name, client.ContainerInspectOptions{})
+	if err != nil {
+		if errdefs.IsNotFound(err) {
+			return nil, false, ErrNotFound
+		}
+		return nil, false, err
+	}
+	if res.Container.Config == nil || res.Container.Config.Labels[ownerLabel] != h.owner {
+		return nil, false, errors.New("application container ownership mismatch")
+	}
+	rc, err := c.ContainerLogs(ctx, res.Container.ID, client.ContainerLogsOptions{
+		ShowStdout: true, ShowStderr: true, Timestamps: true, Follow: follow, Tail: strconv.Itoa(tail), Since: since,
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	return rc, res.Container.Config.Tty, nil
+}
+
+// FollowLogLines preserves partial lines across Docker frames and keeps the
+// two output streams separate, even when their frames are interleaved.
+func FollowLogLines(r io.Reader, tty bool, emit func(LogLine) error) error {
+	var pending [2][]byte
+	chunk := func(index int, p []byte, final bool) error {
+		for len(p) > 0 || (final && len(pending[index]) > 0) {
+			part, rest, complete := bytes.Cut(p, []byte{'\n'})
+			if len(pending[index])+len(part) > maxLogBytes {
+				return errors.New("container log line exceeds 512 KiB")
+			}
+			pending[index] = append(pending[index], part...)
+			if complete || final {
+				stream := [2]string{"stdout", "stderr"}[index]
+				line := containerLine(stream, pending[index])
+				if err := emit(line); err != nil {
+					return err
+				}
+				pending[index] = pending[index][:0]
+			}
+			p = rest
+		}
+		return nil
+	}
+	if tty {
+		sc := bufio.NewScanner(r)
+		sc.Buffer(make([]byte, 4096), maxLogBytes)
+		for sc.Scan() {
+			if err := emit(containerLine("stdout", sc.Bytes())); err != nil {
+				return err
+			}
+		}
+		return sc.Err()
+	}
+	var header [8]byte
+	var buf [16384]byte
+	for {
+		_, err := io.ReadFull(r, header[:])
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		index := int(header[0]) - 1
+		if index < 0 || index > 1 {
+			return fmt.Errorf("unexpected Docker log stream %d", header[0])
+		}
+		remaining := int64(binary.BigEndian.Uint32(header[4:]))
+		for remaining > 0 {
+			n, err := io.ReadFull(r, buf[:min(remaining, int64(len(buf)))])
+			if err != nil {
+				return err
+			}
+			if err := chunk(index, buf[:n], false); err != nil {
+				return err
+			}
+			remaining -= int64(n)
+		}
+	}
+	for index := range pending {
+		if err := chunk(index, nil, true); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func containerLine(stream string, raw []byte) LogLine {
+	line := LogLine{Stream: stream, Text: strings.TrimSuffix(string(raw), "\r")}
+	if ts, rest, ok := strings.Cut(line.Text, " "); ok {
+		if _, err := time.Parse(time.RFC3339Nano, ts); err == nil {
+			line.At, line.Text = ts, rest
+		}
+	}
+	return line
 }

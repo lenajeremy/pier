@@ -72,6 +72,7 @@ type Log struct {
 
 	mu      sync.Mutex
 	pending []Line
+	changed chan struct{}
 }
 
 // Open opens (and if needed creates) the requests database. project maps a
@@ -86,7 +87,7 @@ func Open(path string, project func(string) string, log *slog.Logger) (*Log, err
 		db.Close()
 		return nil, fmt.Errorf("requests schema: %w", err)
 	}
-	return &Log{db: db, project: project, log: log}, nil
+	return &Log{db: db, project: project, log: log, changed: make(chan struct{})}, nil
 }
 
 func (l *Log) Close() error { return l.db.Close() }
@@ -250,7 +251,19 @@ func (l *Log) Flush(ctx context.Context) error {
 		requeue()
 		return err
 	}
+	l.mu.Lock()
+	close(l.changed)
+	l.changed = make(chan struct{})
+	l.mu.Unlock()
 	return nil
+}
+
+// Changed closes after the next committed batch. Subscribe before querying
+// so an insert between reading the last row and waiting cannot be missed.
+func (l *Log) Changed() <-chan struct{} {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.changed
 }
 
 func (l *Log) cleanUp(ctx context.Context) {

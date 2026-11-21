@@ -378,6 +378,20 @@ func (a *API) deploymentLog(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": name + " has no deployment " + id})
 		return
 	}
+	if r.URL.Query().Get("follow") == "1" {
+		tail, _ := strconv.Atoi(r.URL.Query().Get("tail"))
+		if tail <= 0 {
+			tail = 100
+		}
+		send := logStream(w)
+		err := a.Deployer.FollowLog(r.Context(), id, tail, func(lines []deploy.LogLine) error { return send(map[string]any{"lines": nonNil(lines)}) })
+		if err != nil {
+			_ = send(map[string]string{"error": err.Error()})
+			return
+		}
+		_ = send(map[string]bool{"done": true})
+		return
+	}
 	from, _ := strconv.Atoi(r.URL.Query().Get("from"))
 	lines, err := a.Deployer.ReadLog(id, max(from, 0))
 	if errors.Is(err, deploy.ErrNoLog) {
@@ -418,6 +432,29 @@ func (a *API) deploymentRuntimeLog(w http.ResponseWriter, r *http.Request) {
 	}
 	tail, _ := strconv.Atoi(r.URL.Query().Get("tail"))
 	since := strings.TrimSpace(r.URL.Query().Get("since"))
+	if r.URL.Query().Get("follow") == "1" {
+		rc, tty, err := a.Deployer.Apps.OpenLogs(r.Context(), d.Runtime, tail, since, true)
+		if errors.Is(err, apphost.ErrNotFound) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "The container for deployment " + id + " is no longer running."})
+			return
+		}
+		if err != nil {
+			a.fail(w, err)
+			return
+		}
+		defer rc.Close()
+		send := logStream(w)
+		if send(map[string]any{"lines": []apphost.LogLine{}}) != nil {
+			return
+		}
+		err = apphost.FollowLogLines(rc, tty, func(line apphost.LogLine) error { return send(map[string]any{"lines": []apphost.LogLine{line}}) })
+		if err != nil {
+			_ = send(map[string]string{"error": err.Error()})
+			return
+		}
+		_ = send(map[string]bool{"done": true})
+		return
+	}
 	lines, err := a.Deployer.Apps.Logs(r.Context(), d.Runtime, tail, since)
 	if errors.Is(err, apphost.ErrNotFound) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "The container for deployment " + id + " is no longer running."})

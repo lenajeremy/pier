@@ -3,6 +3,7 @@ package deploy
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -32,10 +33,11 @@ func (d *Deployer) createLog(id string) (*os.File, error) {
 // timedLog writes each complete line with its time since start. Write errors
 // are swallowed: a full disk mustn't stop the narration to the pusher.
 type timedLog struct {
-	mu    sync.Mutex
-	w     io.Writer
-	start time.Time
-	buf   []byte
+	mu      sync.Mutex
+	w       io.Writer
+	start   time.Time
+	buf     []byte
+	changed func()
 }
 
 func (t *timedLog) Write(p []byte) (int, error) {
@@ -56,6 +58,9 @@ func (t *timedLog) Write(p []byte) (int, error) {
 func (t *timedLog) line(l []byte) {
 	l = bytes.TrimRight(l, "\r")
 	fmt.Fprintf(t.w, "%d\t%s\n", time.Since(t.start).Milliseconds(), l)
+	if t.changed != nil {
+		t.changed()
+	}
 }
 
 func (t *timedLog) Flush() {
@@ -115,4 +120,113 @@ func parseLine(ms int64, s string) LogLine {
 		}
 	}
 	return LogLine{MS: ms, Text: s}
+}
+
+// Register before publishing the deployment, and retire after the final log
+// flush. A ready deployment can still be writing its routing and timing lines.
+func (d *Deployer) beginLog(id string) (func(), error) {
+	d.mu.Lock()
+	if d.logChanges == nil {
+		d.logChanges = make(map[string]chan struct{})
+	}
+	if _, exists := d.logChanges[id]; exists {
+		d.mu.Unlock()
+		return nil, errors.New("deployment ID already in use")
+	}
+	d.logChanges[id] = nil
+	d.mu.Unlock()
+	return func() { d.signalLog(id, true) }, nil
+}
+func (d *Deployer) signalLog(id string, finished bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if ch := d.logChanges[id]; ch != nil {
+		close(ch)
+	}
+	if finished {
+		delete(d.logChanges, id)
+	} else {
+		d.logChanges[id] = nil
+	}
+}
+
+// FollowLog sends the initial tail and advances by byte offset on subsequent
+// writes. A slow network reader never holds up a deployment.
+func (d *Deployer) FollowLog(ctx context.Context, id string, tail int, send func([]LogLine) error) error {
+	tail = max(1, min(500, tail))
+	var offset int64
+	first := true
+	for {
+		d.mu.Lock()
+		changed, active := d.logChanges[id]
+		if active && changed == nil {
+			changed = make(chan struct{})
+			d.logChanges[id] = changed
+		}
+		d.mu.Unlock()
+		f, err := os.Open(d.logPath(id))
+		var lines []LogLine
+		if err == nil {
+			lines, offset, err = readLogBatch(ctx, f, offset, tail, first, send)
+			f.Close()
+		}
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		if first || len(lines) > 0 {
+			if err := send(lines); err != nil {
+				return err
+			}
+		}
+		first = false
+		if changed == nil {
+			return nil
+		}
+		select {
+		case <-changed:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
+
+func readLogBatch(ctx context.Context, f *os.File, offset int64, tail int, first bool, send func([]LogLine) error) ([]LogLine, int64, error) {
+	if _, err := f.Seek(offset, io.SeekStart); err != nil {
+		return nil, offset, err
+	}
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 64*1024), 1024*1024)
+	sc.Split(func(b []byte, atEOF bool) (int, []byte, error) {
+		if i := bytes.IndexByte(b, '\n'); i >= 0 {
+			return i + 1, b[:i], nil
+		}
+		return 0, nil, nil // Leave a partial record at the current byte offset.
+	})
+	var lines []LogLine
+	for sc.Scan() {
+		if err := ctx.Err(); err != nil {
+			return nil, offset, err
+		}
+		offset += int64(len(sc.Bytes()) + 1)
+		ms, body, ok := strings.Cut(sc.Text(), "\t")
+		if !ok {
+			continue
+		}
+		n, _ := strconv.ParseInt(ms, 10, 64)
+		lines = append(lines, parseLine(n, body))
+		if first && len(lines) >= 2*tail {
+			copy(lines, lines[len(lines)-tail:])
+			lines = lines[:tail]
+		}
+		if !first && len(lines) == 100 {
+			if err := send(lines); err != nil {
+				return nil, offset, err
+			}
+			lines = nil
+		}
+	}
+	if first && len(lines) > tail {
+		lines = lines[len(lines)-tail:]
+	}
+	return lines, offset, sc.Err()
 }

@@ -80,3 +80,24 @@ func TestResolveResourcesAndHealthPath(t *testing.T) {
 		t.Fatalf("expected deduplicated env, got %v", env)
 	}
 }
+
+func TestFollowSplitDockerFrames(t *testing.T) {
+	var raw bytes.Buffer
+	frame := func(stream byte, s string) {
+		raw.Write([]byte{stream, 0, 0, 0})
+		var n [4]byte
+		binary.BigEndian.PutUint32(n[:], uint32(len(s)))
+		raw.Write(n[:])
+		raw.WriteString(s)
+	}
+	frame(1, "2026-11-20T15:00:01Z hel")
+	frame(2, "warning\n")
+	frame(1, "lo\nlast")
+	var lines []LogLine
+	if err := FollowLogLines(&raw, false, func(l LogLine) error { lines = append(lines, l); return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if len(lines) != 3 || lines[0].Stream != "stderr" || lines[1].At == "" || lines[1].Text != "hello" || lines[2].Text != "last" {
+		t.Fatalf("unexpected output %+v", lines)
+	}
+}
