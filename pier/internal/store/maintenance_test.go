@@ -51,9 +51,21 @@ func TestPreviewCleanupAndRetry(t *testing.T) {
 	if err := s.CreateDeployment(ctx, Deployment{ID: "aaaaaa", Project: "docs"}); err == nil {
 		t.Fatal("reused ID before cleanup finished")
 	}
+	// A build picks its ID with IDTaken, so it must see the pending cleanup
+	// as well as the deployments that exist.
+	taken := func(id string, want bool) {
+		t.Helper()
+		if got, err := s.IDTaken(ctx, id); got != want || err != nil {
+			t.Fatalf("IDTaken(%s) = %v, %v; want %v", id, got, err, want)
+		}
+	}
+	taken("aaaaaa", true)
+	taken("bbbbbb", true)
+	taken("999999", false)
 	if err := s.FinishCleanup(ctx, "aaaaaa"); err != nil {
 		t.Fatal(err)
 	}
+	taken("aaaaaa", false)
 	n, err := s.CleanupCount(ctx)
 	if n != 0 || err != nil {
 		t.Fatalf("count %d after cleanup, %v", n, err)

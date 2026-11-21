@@ -51,6 +51,15 @@ func (s *Store) FinishCleanup(ctx context.Context, id string) error {
 	return err
 }
 
+// IDTaken says whether a deployment ID is in use: by a deployment, or by a
+// removed one whose files are still waiting to be deleted. The database
+// refuses a new deployment with such an ID, so a build must not pick one.
+func (s *Store) IDTaken(ctx context.Context, id string) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM deployments WHERE id=?)+(SELECT count(*) FROM cleanup_files WHERE id=?)`, id, id).Scan(&n)
+	return n > 0, err
+}
+
 func (s *Store) SaveAddresses(ctx context.Context, address, base string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

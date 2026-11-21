@@ -8,6 +8,44 @@ import (
 	"github.com/miekg/dns"
 )
 
+// Where a local resolver holds port 53 on loopback, pierd binds each of the
+// machine's addresses instead, and every one of them has to answer.
+func TestListensOnSeveralAddresses(t *testing.T) {
+	s, err := Start("several.test", "ns.several.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	for range 2 {
+		if err := s.Listen("127.0.0.1:0"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := Start("several.test", "ns.several.test", "127.0.0.1:0"); err == nil {
+		t.Fatal("served one zone twice")
+	}
+	if len(s.servers) != 4 {
+		t.Fatalf("want TCP and UDP on two addresses, got %d listeners", len(s.servers))
+	}
+	for _, srv := range s.servers {
+		network, addr := "tcp", ""
+		if srv.Listener != nil {
+			addr = srv.Listener.Addr().String()
+		} else {
+			network, addr = "udp", srv.PacketConn.LocalAddr().String()
+		}
+		q := new(dns.Msg)
+		q.SetQuestion("_acme-challenge.several.test.", dns.TypeSOA)
+		r, _, err := (&dns.Client{Net: network}).Exchange(q, addr)
+		if err != nil || !r.Authoritative || len(r.Answer) != 1 {
+			t.Fatalf("%s %s: %v, %v", network, addr, r, err)
+		}
+	}
+	if err := s.Listen("203.0.113.7:0"); err == nil {
+		t.Fatal("bound an address this machine doesn't have")
+	}
+}
+
 func TestAuthoritativeChallenge(t *testing.T) {
 	s, err := Start("example.test", "ns.example.test", "127.0.0.1:0")
 	if err != nil {

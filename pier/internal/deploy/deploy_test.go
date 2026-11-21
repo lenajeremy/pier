@@ -151,6 +151,56 @@ func TestDeployBranchAndFailure(t *testing.T) {
 	}
 }
 
+// A project named blog-c19e77 has the address of deployment c19e77 of blog.
+// The router is given each host once, and production wins over one
+// deployment's own address, as the dashboard wins over everything.
+func TestRoutesGiveACollidingAddressToOneOwner(t *testing.T) {
+	caddy, last := fakeCaddy(t)
+	d := newDeployer(t, caddy)
+	d.PierHost, d.PierUpstream = "pier.pier.localhost", "127.0.0.1:7777"
+	ctx := context.Background()
+	for _, dep := range []store.Deployment{
+		{ID: "c19e77", Project: "blog"}, {ID: "8f3a2c", Project: "blog-c19e77"}, {ID: "0d0d0d", Project: "pier"},
+	} {
+		dep.Branch, dep.Target, dep.Status = "main", store.TargetProduction, store.Ready
+		if err := d.Store.EnsureProject(ctx, dep.Project); err != nil {
+			t.Fatal(err)
+		}
+		if err := d.Store.CreateDeployment(ctx, dep); err != nil {
+			t.Fatal(err)
+		}
+		alias := store.Alias{Host: dep.Project + ".pier.localhost", Project: dep.Project, Kind: store.KindProduction, DeploymentID: dep.ID}
+		if err := d.Store.SetAlias(ctx, alias); err != nil {
+			t.Fatal(err)
+		}
+	}
+	routes, err := d.Routes(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := map[string]router.Route{}
+	for _, r := range routes {
+		if _, seen := first[r.Host]; !seen {
+			first[r.Host] = r
+		}
+	}
+	if r := first["blog-c19e77.pier.localhost"]; r.DeploymentID != "8f3a2c" {
+		t.Errorf("the project's production lost its address to another project's deployment: %+v", r)
+	}
+	if r := first["pier.pier.localhost"]; r.Upstream != "127.0.0.1:7777" || r.DeploymentID != "" {
+		t.Errorf("the dashboard lost its address to a project: %+v", r)
+	}
+	if err := d.Sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+	cfg := last.Load().(string)
+	for _, host := range []string{"blog-c19e77.pier.localhost", "pier.pier.localhost"} {
+		if n := strings.Count(cfg, `"`+host+`"`); n != 1 {
+			t.Errorf("the router was given %s %d times", host, n)
+		}
+	}
+}
+
 func TestLineWriter(t *testing.T) {
 	var out bytes.Buffer
 	w := prefixed(&out, "build   ")

@@ -37,16 +37,19 @@ shift
 SSH_OPTS=("$@")
 
 # Reuse a single SSH connection so you only authenticate once.
+# ${SSH_OPTS[@]+...} expands to nothing when no ssh options were given. The
+# plain "${SSH_OPTS[@]}" is an unbound variable under set -u in bash 3.2,
+# which is the bash macOS ships.
 CTL_DIR=$(mktemp -d "${TMPDIR:-/tmp}/pier-vps.XXXXXX")
 CTL="$CTL_DIR/ssh.sock"
 cleanup() {
-  ssh -S "$CTL" -O exit "${SSH_OPTS[@]}" "$TARGET" >/dev/null 2>&1 || true
+  ssh -S "$CTL" -O exit ${SSH_OPTS[@]+"${SSH_OPTS[@]}"} "$TARGET" >/dev/null 2>&1 || true
   rm -rf "$CTL_DIR"
 }
 trap cleanup EXIT
 
 ssh_run() {
-  ssh -o ControlMaster=auto -o ControlPath="$CTL" -o ControlPersist=5m "${SSH_OPTS[@]}" "$TARGET" "$@"
+  ssh -o ControlMaster=auto -o ControlPath="$CTL" -o ControlPersist=5m ${SSH_OPTS[@]+"${SSH_OPTS[@]}"} "$TARGET" "$@"
 }
 
 echo "==> Connecting to $TARGET and detecting platform..."
@@ -76,7 +79,10 @@ fi
 
 echo "==> Uploading bundle to $TARGET..."
 REMOTE_TMP=$(ssh_run 'mktemp -d /tmp/pier-install.XXXXXX')
-scp -o ControlPath="$CTL" "${SSH_OPTS[@]}" "$BUNDLE" "$TARGET:$REMOTE_TMP/pier-linux-$ARCH.tar.gz"
+# The bundle goes over the ssh connection that is already open. scp reads the
+# same options differently: its -p means "preserve times", not the port, so
+# "-p 2222" would be taken as a file to copy.
+ssh_run "cat > '$REMOTE_TMP/pier-linux-$ARCH.tar.gz'" < "$BUNDLE"
 
 SUDO=""
 if [[ "$REMOTE_UID" != "0" ]]; then

@@ -154,3 +154,47 @@ func TestCustomDomainLifecycle(t *testing.T) {
 	fetch("example.com", "/", 404)
 	fetch("www.example.com", "/", 404)
 }
+
+// A base domain the owner saved applies at the next restart. A custom domain
+// under it would then be both a project's own address and a custom domain,
+// which the router can't serve twice.
+func TestCustomDomainCannotBeUnderASavedBaseDomain(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "pier.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	if err := st.EnsureProject(ctx, "blog"); err != nil {
+		t.Fatal(err)
+	}
+	dep := &deploy.Deployer{Store: st, Domain: "pier.localhost", PierHost: "pier.localhost"}
+	a := &API{Store: st, Token: "fixture", Deployer: dep, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	api := httptest.NewServer(a.Public())
+	defer api.Close()
+	add := func(host string, want int) {
+		t.Helper()
+		req, _ := http.NewRequest("POST", api.URL+"/api/projects/blog/domains", strings.NewReader(`{"host":"`+host+`"}`))
+		req.Header.Set("Authorization", "Bearer fixture")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if b, _ := io.ReadAll(resp.Body); resp.StatusCode != want {
+			t.Fatalf("adding %s: %d %s, want %d", host, resp.StatusCode, b, want)
+		}
+	}
+
+	add("blog.new.com", 201)
+	if err := st.RemoveDomain(ctx, "blog", "blog.new.com"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SaveAddresses(ctx, "dash.owner.example.org", "new.com"); err != nil {
+		t.Fatal(err)
+	}
+	for _, host := range []string{"blog.new.com", "new.com", "dash.owner.example.org", "blog.pier.localhost"} {
+		add(host, 400)
+	}
+	add("blog.example.com", 201)
+}

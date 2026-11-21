@@ -6,9 +6,177 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/caddyserver/caddy/v2"
 )
+
+// built is the part of a generated config these tests read.
+type built struct {
+	Apps struct {
+		HTTP struct {
+			Servers map[string]struct {
+				ConnPolicies []struct {
+					DefaultSNI string `json:"default_sni"`
+				} `json:"tls_connection_policies"`
+				Routes []struct {
+					Match []struct {
+						Host []string `json:"host"`
+					} `json:"match"`
+					Handle []struct {
+						Handler          string `json:"handler"`
+						StreamCloseDelay string `json:"stream_close_delay"`
+						Upstreams        []struct {
+							Dial string `json:"dial"`
+						} `json:"upstreams"`
+					} `json:"handle"`
+				} `json:"routes"`
+			} `json:"servers"`
+		} `json:"http"`
+		TLS struct {
+			Automation struct {
+				Policies []struct {
+					Subjects []string `json:"subjects"`
+				} `json:"policies"`
+			} `json:"automation"`
+		} `json:"tls"`
+	} `json:"apps"`
+}
+
+// build generates the config and has Caddy itself check it, as it does when
+// pierd loads one.
+func build(t *testing.T, c Caddy, routes []Route) built {
+	t.Helper()
+	raw, err := c.Config(routes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validate(raw); err != nil {
+		t.Fatalf("Caddy refuses the config: %v\n%s", err, raw)
+	}
+	var cfg built
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	return cfg
+}
+
+func validate(raw []byte) error {
+	var cfg caddy.Config
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return err
+	}
+	return caddy.Validate(&cfg)
+}
+
+// Pier loads a new config on every deploy of any project. Without a delay
+// that closes every WebSocket of every application and of the dashboard.
+func TestProxiesKeepStreamsOpenAcrossReloads(t *testing.T) {
+	cfg := build(t, Caddy{Listen: []string{":8088"}, Storage: t.TempDir()}, []Route{
+		{Host: "chat.pier.localhost", Upstream: "127.0.0.1:40001", DeploymentID: "c19e77"},
+		{Host: "pier.localhost", Upstream: "127.0.0.1:7777"},
+		{Host: "blog.pier.localhost", Root: "/data/deployments/8f3a2c", DeploymentID: "8f3a2c"},
+	})
+	proxies := 0
+	for _, r := range cfg.Apps.HTTP.Servers["pier"].Routes {
+		for _, h := range r.Handle {
+			if h.Handler != "reverse_proxy" {
+				continue
+			}
+			proxies++
+			if h.StreamCloseDelay != "5m" {
+				t.Errorf("the proxy for %v closes its streams on reload: stream_close_delay = %q", r.Match[0].Host, h.StreamCloseDelay)
+			}
+		}
+	}
+	if proxies != 2 {
+		t.Fatalf("want the application's and the dashboard's proxies, got %d", proxies)
+	}
+}
+
+// Two things can claim one address: a custom domain under a base domain
+// that was saved later, or a project named like another's deployment. Caddy
+// refuses a config that names a host twice, and at startup pierd would exit
+// with every site down, so the first route given for a host is the one kept.
+func TestDuplicateHostsKeepTheFirstRoute(t *testing.T) {
+	c := Caddy{HTTPS: true, Listen: []string{":443"}, Storage: t.TempDir(), BaseDomain: "new.com"}
+	routes := []Route{
+		{Host: "blog.new.com", Upstream: "127.0.0.1:40001", DeploymentID: "aaaaaa"},
+		{Host: "blog-c19e77.new.com", Upstream: "127.0.0.1:40002", DeploymentID: "bbbbbb"},
+		{Host: "docs.owner.example.org", Upstream: "127.0.0.1:40003", DeploymentID: "cccccc"},
+		// The same addresses again, as a custom domain and a deployment's own.
+		{Host: "blog.new.com", Upstream: "127.0.0.1:40004", DeploymentID: "dddddd"},
+		{Host: "Blog-C19E77.new.com", Upstream: "127.0.0.1:40005", DeploymentID: "c19e77"},
+		{Host: "docs.owner.example.org", Redirect: "https://elsewhere.example.org"},
+	}
+	if err := validate(mustConfig(t, c, routes[:3])); err != nil {
+		t.Fatalf("Caddy refuses distinct hosts: %v", err)
+	}
+	twice, _ := json.Marshal(map[string]any{"apps": map[string]any{"tls": c.tlsConfig(routes)}})
+	if err := validate(twice); err == nil || !strings.Contains(err.Error(), "more than one automation policy to host") {
+		t.Fatalf("Caddy no longer refuses a host named twice, which is why Config drops duplicates: %v", err)
+	}
+
+	cfg := build(t, c, routes)
+	dial := map[string]string{}
+	for _, r := range cfg.Apps.HTTP.Servers["pier"].Routes {
+		if len(r.Match) == 0 {
+			continue
+		}
+		host := r.Match[0].Host[0]
+		if _, dup := dial[host]; dup || len(r.Handle[0].Upstreams) != 1 {
+			t.Fatalf("%s has a second route, or one that isn't the first given: %+v", host, r)
+		}
+		dial[host] = r.Handle[0].Upstreams[0].Dial
+	}
+	want := map[string]string{"blog.new.com": "127.0.0.1:40001", "blog-c19e77.new.com": "127.0.0.1:40002", "docs.owner.example.org": "127.0.0.1:40003"}
+	if len(dial) != len(want) {
+		t.Fatalf("routes = %v, want %v", dial, want)
+	}
+	for host, upstream := range want {
+		if dial[host] != upstream {
+			t.Errorf("%s goes to %q, want the first route's %s", host, dial[host], upstream)
+		}
+	}
+	var subjects []string
+	for _, p := range cfg.Apps.TLS.Automation.Policies {
+		subjects = append(subjects, p.Subjects...)
+	}
+	slices.Sort(subjects)
+	if !slices.Equal(subjects, []string{"blog-c19e77.new.com", "blog.new.com", "docs.owner.example.org"}) {
+		t.Fatalf("certificate subjects = %v", subjects)
+	}
+}
+
+func mustConfig(t *testing.T, c Caddy, routes []Route) []byte {
+	t.Helper()
+	raw, err := c.Config(routes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
+// A browser sends no server name for https://203.0.113.10, and behind NAT
+// the address the connection arrives on is private, so no certificate would
+// match without a default name.
+func TestIPDashboardNamesItsCertificate(t *testing.T) {
+	c := Caddy{HTTPS: true, Listen: []string{":443"}, Storage: t.TempDir(), BaseDomain: "pier.example.com"}
+	site := Route{Host: "blog.pier.example.com", Root: "/data/deployments/8f3a2c", DeploymentID: "8f3a2c"}
+	cfg := build(t, c, []Route{site, {Host: "203.0.113.10", Upstream: "127.0.0.1:7777"}})
+	policies := cfg.Apps.HTTP.Servers["pier"].ConnPolicies
+	if len(policies) != 1 || policies[0].DefaultSNI != "203.0.113.10" {
+		t.Fatalf("connection policies = %+v, want the public IP as the default server name", policies)
+	}
+
+	// A dashboard reached by name is asked for by name.
+	cfg = build(t, c, []Route{site, {Host: "pier.example.com", Upstream: "127.0.0.1:7777"}})
+	if policies := cfg.Apps.HTTP.Servers["pier"].ConnPolicies; len(policies) != 0 {
+		t.Fatalf("connection policies for a named dashboard = %+v", policies)
+	}
+}
 
 func TestConfig(t *testing.T) {
 	c := Caddy{Admin: "http://127.0.0.1:2019", Listen: []string{":8088"}}

@@ -20,6 +20,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"pier/internal/apphost"
@@ -57,20 +58,31 @@ type Deployer struct {
 	lastRoutes []router.Route
 	hasApps    bool
 	dirty      bool // protected by routeMu
+
+	endpointMu    sync.Mutex
+	lastEndpoints map[string]string // where each application listened when Docker last answered
+	stopsBehind   atomic.Bool       // stopping superseded applications failed and is retried
 }
 
 // RepoPath is where a project's bare repository lives.
 func (d *Deployer) RepoPath(project string) string { return filepath.Join(d.Repos, project+".git") }
 
-func (d *Deployer) lock(project string) func() {
+// lock makes a project's builds run one at a time.
+func (d *Deployer) lock(project string) func() { return d.lockKey("project " + project) }
+
+// lockApp holds one container still while it is stopped, or while it is
+// started and production is pointed at it, so neither undoes the other.
+func (d *Deployer) lockApp(name string) func() { return d.lockKey("app " + name) }
+
+func (d *Deployer) lockKey(key string) func() {
 	d.mu.Lock()
 	if d.locks == nil {
 		d.locks = map[string]*sync.Mutex{}
 	}
-	l, ok := d.locks[project]
+	l, ok := d.locks[key]
 	if !ok {
 		l = &sync.Mutex{}
-		d.locks[project] = l
+		d.locks[key] = l
 	}
 	d.mu.Unlock()
 	l.Lock()
@@ -238,7 +250,7 @@ func (d *Deployer) run(ctx context.Context, project string, src Source, out io.W
 		Message: src.Message, Status: store.Building, CreatedAt: start, Target: src.Target, Source: src.Kind,
 	}
 	for range 5 { // six hex characters can collide, rarely
-		if _, err := d.Store.Deployment(ctx, dep.ID); errors.Is(err, store.ErrNotFound) {
+		if taken, err := d.Store.IDTaken(ctx, dep.ID); err == nil && !taken {
 			break
 		}
 		dep.ID = names.NewID()
@@ -357,6 +369,8 @@ func (d *Deployer) run(ctx context.Context, project string, src Source, out io.W
 	}
 	say(out, "alias", "%s", d.URL(names.Deployment(project, dep.ID, d.Domain)))
 	say(out, "pier", "%s ready in %s", src.Target, seconds(time.Since(start)))
+	// Only now that the new deployment serves is the one it replaced stopped.
+	d.StopSupersededLater(project)
 	return nil
 }
 
@@ -556,33 +570,46 @@ func (d *Deployer) commitMessage(commit, project string) string {
 // to another project, or didn't build.
 var ErrNotServable = errors.New("that deployment can't serve")
 
+// ErrNotRunning means a deployment's application couldn't be started, so
+// production stayed where it was.
+var ErrNotRunning = errors.New("the application didn't start")
+
 // SetProduction points production at a deployment that already built, for
 // a promote, a rollback or an undo. Nothing is rebuilt, and it doesn't wait
-// for a build in progress: production must move the moment it's asked.
+// for a build in progress: production must move the moment it's asked. The
+// caller stops what this leaves superseded, once it has recorded the move.
 func (d *Deployer) SetProduction(ctx context.Context, project, id string) error {
 	dep, err := d.Store.Deployment(ctx, id)
 	if err != nil || dep.Project != project || dep.Status != store.Ready {
 		return ErrNotServable
 	}
-	if dep.Runtime != "" {
-		if d.Apps == nil {
-			return ErrNotServable
-		}
-		if err := d.Apps.Ready(ctx, dep.Runtime); err != nil {
-			return fmt.Errorf("%w: %v", ErrNotServable, err)
-		}
-	}
-	err = d.Store.SetAlias(ctx, store.Alias{
-		Host: names.Production(project, d.Domain), Project: project, Kind: store.KindProduction,
-		Branch: dep.Branch, DeploymentID: id,
-	})
-	if err != nil {
+	if err := d.pointProduction(ctx, dep); err != nil {
 		return err
 	}
 	if err := d.Sync(ctx); err != nil {
 		d.Log.Warn("router behind after moving production; it will retry", "err", err)
 	}
 	return nil
+}
+
+// pointProduction moves production's alias to dep. An application that was
+// superseded is stopped, so its container is started and answering before
+// the alias moves, and nothing may stop it in between. That takes as long as
+// the application takes to boot, and fails after a minute.
+func (d *Deployer) pointProduction(ctx context.Context, dep store.Deployment) error {
+	if dep.Runtime != "" {
+		if d.Apps == nil {
+			return ErrNotServable
+		}
+		defer d.lockApp(dep.Runtime)()
+		if err := d.Apps.Resume(ctx, dep.Runtime); err != nil {
+			return fmt.Errorf("%w: %v", ErrNotRunning, err)
+		}
+	}
+	return d.Store.SetAlias(ctx, store.Alias{
+		Host: names.Production(dep.Project, d.Domain), Project: dep.Project, Kind: store.KindProduction,
+		Branch: dep.Branch, DeploymentID: dep.ID,
+	})
 }
 
 // addressFor is the address a source moves when it builds: production's,
@@ -625,23 +652,16 @@ func (d *Deployer) Routes(ctx context.Context) ([]router.Route, error) {
 	}
 	byID := map[string]router.Route{}
 	var endpoints map[string]string
-	var routes []router.Route
+	probed := false
+	var own []router.Route
 	for _, dep := range ready {
 		r := router.Route{DeploymentID: dep.ID, Host: names.Deployment(dep.Project, dep.ID, d.Domain)}
 		if dep.Runtime != "" {
-			if endpoints == nil {
-				endpoints = map[string]string{}
-				if d.Apps != nil {
-					probe, cancel := context.WithTimeout(ctx, 3*time.Second)
-					current, err := d.Apps.Endpoints(probe)
-					cancel()
-					if err != nil {
-						d.Log.Warn("application endpoints unavailable", "err", err)
-					} else {
-						endpoints = current
-					}
-				}
+			if !probed {
+				endpoints, probed = d.endpoints(ctx), true
 			}
+			// A stopped or missing container has no endpoint, and its
+			// addresses say the application is unavailable.
 			r.Upstream = endpoints[dep.Runtime]
 			r.Unavailable = r.Upstream == ""
 		} else {
@@ -649,7 +669,17 @@ func (d *Deployer) Routes(ctx context.Context) ([]router.Route, error) {
 			r.Fallback = fallbackFor(r.Root, dep.Framework)
 		}
 		byID[dep.ID] = r
-		routes = append(routes, r)
+		own = append(own, r)
+	}
+	// Two things can claim one address: a project named blog-c19e77 and
+	// deployment c19e77 of blog, or a custom domain under a base domain saved
+	// later. The router keeps the first route for a host, so this order says
+	// who wins: the dashboard, which the owner must always reach, then
+	// production and branches, then deployments' own addresses, then custom
+	// domains.
+	var routes []router.Route
+	if d.PierHost != "" && d.PierUpstream != "" {
+		routes = append(routes, router.Route{Host: d.PierHost, Upstream: d.PierUpstream})
 	}
 	appendHost := func(id, host string) {
 		if r, ok := byID[id]; ok {
@@ -665,6 +695,7 @@ func (d *Deployer) Routes(ctx context.Context) ([]router.Route, error) {
 		}
 		appendHost(a.DeploymentID, a.Host)
 	}
+	routes = append(routes, own...)
 	domains, err := d.Store.Domains(ctx, "")
 	if err != nil {
 		return nil, err
@@ -679,10 +710,29 @@ func (d *Deployer) Routes(ctx context.Context) ([]router.Route, error) {
 			routes = append(routes, router.Route{Host: domain.Redirect, Redirect: d.URL(domain.Host)})
 		}
 	}
-	if d.PierHost != "" && d.PierUpstream != "" {
-		routes = append(routes, router.Route{Host: d.PierHost, Upstream: d.PierUpstream})
-	}
 	return routes, nil
+}
+
+// endpoints asks Docker where each running application listens. When Docker
+// doesn't answer in time, because it is busy with builds or restarting, the
+// last answer stands: a config with every application unavailable would turn
+// one slow probe into an outage. Applications keep their loopback ports
+// across a Docker restart, so the last answer stays right.
+func (d *Deployer) endpoints(ctx context.Context) map[string]string {
+	if d.Apps == nil {
+		return nil
+	}
+	probe, cancel := context.WithTimeout(ctx, 3*time.Second)
+	current, err := d.Apps.Endpoints(probe)
+	cancel()
+	d.endpointMu.Lock()
+	defer d.endpointMu.Unlock()
+	if err != nil {
+		d.Log.Warn("application endpoints unavailable; keeping the last known ones", "err", err)
+		return d.lastEndpoints
+	}
+	d.lastEndpoints = current
+	return current
 }
 
 // fallbackFor decides what a path that isn't a file gets: the site's own
@@ -759,6 +809,94 @@ func (d *Deployer) CleanupApps(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// StopSuperseded stops the containers of deployments that nothing needs
+// running any more, in one project or, with project empty, in all of them.
+// Each one keeps its image and its own address, which answers "unavailable"
+// until a rollback or a promote starts it again. Without this every server
+// deployment ever built would stay in memory. store.IdleApps says what is
+// still needed.
+func (d *Deployer) StopSuperseded(ctx context.Context, project string) error {
+	err := d.stopSuperseded(ctx, project)
+	if err != nil {
+		d.stopsBehind.Store(true)
+	}
+	return err
+}
+
+func (d *Deployer) stopSuperseded(ctx context.Context, project string) error {
+	if d.Apps == nil {
+		return nil
+	}
+	idle, err := d.Store.IdleApps(ctx, project)
+	if err != nil || len(idle) == 0 {
+		return err
+	}
+	// The router must have left a deployment before its container goes: an
+	// alias that has moved here but not yet in Caddy still reaches the old one.
+	if err := d.syncRoutes(ctx, false); err != nil {
+		return err
+	}
+	running, err := d.Apps.Running(ctx)
+	if err != nil {
+		return err
+	}
+	stopped := false
+	for _, name := range idle {
+		if !running[name] {
+			continue
+		}
+		did, err := d.stopIfIdle(ctx, project, name)
+		if err != nil {
+			return err
+		}
+		stopped = stopped || did
+	}
+	if !stopped {
+		return nil
+	}
+	return d.syncRoutes(ctx, false)
+}
+
+// stopIfIdle stops one container unless something came to need it since it
+// was listed, like a rollback that is starting it right now.
+func (d *Deployer) stopIfIdle(ctx context.Context, project, name string) (bool, error) {
+	defer d.lockApp(name)()
+	idle, err := d.Store.IdleApps(ctx, project)
+	if err != nil || !slices.Contains(idle, name) {
+		return false, err
+	}
+	if err := d.Apps.Stop(ctx, name); err != nil {
+		return false, err
+	}
+	d.Log.Info("stopped a superseded application", "container", name)
+	return true, nil
+}
+
+// StopSupersededLater stops superseded applications in the background. A
+// container can take ten seconds to exit, and nobody waiting for a deploy or
+// a rollback should wait for that too.
+func (d *Deployer) StopSupersededLater(project string) {
+	if d.Apps == nil {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		if err := d.StopSuperseded(ctx, project); err != nil {
+			d.Log.Warn("superseded applications not stopped yet; pierd will retry", "err", err)
+		}
+	}()
+}
+
+// RetryStops stops superseded applications again if the last attempt failed,
+// for example because Docker was restarting.
+func (d *Deployer) RetryStops(ctx context.Context) error {
+	if !d.stopsBehind.Swap(false) {
+		return nil
+	}
+	return d.StopSuperseded(ctx, "")
 }
 
 func count(dir string) (files int, bytes int64, err error) {

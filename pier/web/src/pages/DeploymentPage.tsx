@@ -107,7 +107,7 @@ export function DeploymentPage({ project, id, now, host, current, branch }: {
             </div>
             {data.container && (
               <Field label="Container">
-                <ContainerSummary c={data.container} now={now} />
+                <ContainerSummary c={data.container} now={now} superseded={d.role === 'kept'} />
               </Field>
             )}
             <Field label="Domains">
@@ -162,15 +162,27 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   )
 }
 
-function ContainerSummary({ c, now }: { c: ContainerStatus; now: number }) {
+function ContainerSummary({ c, now, superseded }: { c: ContainerStatus; now: number; superseded: boolean }) {
+  // Pier stops the containers of deployments nothing serves any more, to save
+  // memory. That's a rest, not a failure, so it doesn't read as one.
+  const resting = superseded && c.state === 'exited' && !c.oom_killed
   const swatch =
     c.state === 'running' && c.health !== 'unhealthy'
       ? 'done'
       : c.state === 'restarting' || c.health === 'starting'
         ? 'warning'
-        : c.state === 'not_found'
+        : c.state === 'not_found' || resting
           ? ''
           : 'failed'
+  if (resting) {
+    return (
+      <span className="line">
+        <i className="swatch" aria-hidden />
+        <span>Stopped, since nothing serves it now</span>
+        <span className="t-muted">Promoting it or rolling back to it starts it again.</span>
+      </span>
+    )
+  }
   const label =
     c.state === 'oom_killed'
       ? 'Out of memory (OOM killed)'

@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -55,9 +56,31 @@ type Caddy struct {
 	Client        *http.Client
 }
 
+// streamCloseDelay keeps proxied WebSockets and other streams open when a
+// config is replaced. Pier loads a new config on every deploy of any project,
+// and without the delay Caddy closes every application's streams each time.
+const streamCloseDelay = "5m"
+
+// unique keeps the first route for each host. Caddy refuses a whole config
+// in which two certificate policies name one host, and at startup that would
+// take every site down, so an address that two things claim goes to the
+// earlier route: callers list routes in the order that should win.
+func unique(routes []Route) []Route {
+	seen := map[string]bool{}
+	var out []Route
+	for _, r := range routes {
+		host := strings.ToLower(r.Host)
+		if !seen[host] {
+			seen[host] = true
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
 // Config builds Caddy's complete JSON config for these routes.
 func (c Caddy) Config(routes []Route) ([]byte, error) {
-	sorted := append([]Route(nil), routes...)
+	sorted := unique(routes)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Host < sorted[j].Host })
 
 	var handlers []any
@@ -69,7 +92,7 @@ func (c Caddy) Config(routes []Route) ([]byte, error) {
 		} else if r.Unavailable {
 			h = map[string]any{"handler": "static_response", "status_code": 503, "body": "Application unavailable.\n", "headers": map[string][]string{"X-Pier-Deployment": {r.DeploymentID}}}
 		} else if r.Upstream != "" {
-			h = map[string]any{"handler": "reverse_proxy", "upstreams": []any{map[string]any{"dial": r.Upstream}}}
+			h = map[string]any{"handler": "reverse_proxy", "upstreams": []any{map[string]any{"dial": r.Upstream}}, "stream_close_delay": streamCloseDelay}
 			if r.DeploymentID != "" {
 				h["headers"] = map[string]any{"response": map[string]any{"set": map[string][]string{"X-Pier-Deployment": {r.DeploymentID}}}}
 			}
@@ -100,6 +123,9 @@ func (c Caddy) Config(routes []Route) ([]byte, error) {
 	}
 	if c.Admin == "" && c.HTTPS {
 		cfg["apps"].(map[string]any)["tls"] = c.tlsConfig(sorted)
+		if ip := dashboardIP(sorted); ip != "" {
+			server["tls_connection_policies"] = []any{map[string]any{"default_sni": ip}}
+		}
 	}
 	if c.Admin != "" {
 		u, err := url.Parse(c.Admin)

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 
 	"pier/internal/deploy"
 	"pier/internal/store"
@@ -48,6 +49,7 @@ func (a *API) promote(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, err)
 		return
 	}
+	a.Deployer.StopSupersededLater(name)
 	a.event(r.Context(), name, "Promoted to production", "", id)
 	a.Log.Info("promoted", "project", name, "deployment", id)
 	a.project(w, r)
@@ -89,6 +91,7 @@ func (a *API) rollback(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	a.Deployer.StopSupersededLater(name)
 	a.event(r.Context(), name, "Rolled back production", "", id)
 	a.Log.Info("rolled back", "project", name, "from", current, "to", id)
 	a.project(w, r)
@@ -116,15 +119,26 @@ func (a *API) undoRollback(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, err)
 		return
 	}
+	a.Deployer.StopSupersededLater(name)
 	a.event(r.Context(), name, "Undid rollback", "", p.RolledBackFrom)
 	a.Log.Info("rollback undone", "project", name, "deployment", p.RolledBackFrom)
 	a.project(w, r)
 }
 
+// moveProduction points production at a deployment. The callers stop what
+// that leaves superseded only after recording the move, so the deployment a
+// rollback came from is known to be needed by then. A server deployment that
+// was stopped is started first, which can take as long as it takes to boot.
 func (a *API) moveProduction(w http.ResponseWriter, r *http.Request, name, id string) bool {
 	err := a.Deployer.SetProduction(r.Context(), name, id)
 	if errors.Is(err, deploy.ErrNotServable) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": name + " has no deployment " + id + " that built, so it can't serve production."})
+		return false
+	}
+	if errors.Is(err, deploy.ErrNotRunning) {
+		a.Log.Warn("production not moved", "project", name, "deployment", id, "err", err)
+		reason := strings.TrimPrefix(err.Error(), deploy.ErrNotRunning.Error()+": ")
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "Deployment " + id + " couldn't be started, so production stays where it is: " + reason + "."})
 		return false
 	}
 	if err != nil {
