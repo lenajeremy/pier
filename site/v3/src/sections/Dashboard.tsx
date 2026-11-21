@@ -68,10 +68,10 @@ export function Dashboard() {
           </div>
           <div className={s.tabs}>
             <span className={s.tabOn}>Deployments</span>
-            <span>Functions</span>
-            <span>Environment</span>
             <span>Domains</span>
+            <span>Variables</span>
             <span>Logs</span>
+            <span>Settings</span>
           </div>
         </div>
         <div className={s.aliases} aria-hidden="true">

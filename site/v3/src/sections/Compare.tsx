@@ -27,7 +27,7 @@ const groups: { name: string; rows: Row[] }[] = [
   {
     name: 'Running',
     rows: [
-      { feature: 'Functions that sleep when idle', note: "Small APIs don't hold memory while nobody calls.", cells: ['yes', 'yes', 'no', 'no'] },
+      { feature: 'Previews that sleep when idle', note: "A preview's server holds no memory while nobody visits.", cells: ['yes', 'yes', 'no', 'no'] },
       { feature: 'Long-running Docker services', note: 'Workers, bots and anything with a Dockerfile.', cells: ['yes', 'no', 'yes', 'yes'] },
       { feature: 'Custom domains with HTTPS', note: 'Certificates issued and renewed for you.', cells: ['yes', 'yes', 'yes', 'With a plugin'] },
     ],
@@ -65,15 +65,15 @@ export function Compare() {
             <Flaps size="sm" columns={[{ width: 4 }]} values={['pier']} play={seen} delay={200} stagger={70} label="Pier" />
           </span>
           <span className={s.cell} role="columnheader">
-            <img src="/v3/logos/vercel.svg" alt="" width={16} height={16} />
+            <img src="/logos/vercel.svg" alt="" width={16} height={16} />
             Vercel
           </span>
           <span className={s.cell} role="columnheader">
-            <img src="/v3/logos/coolify.svg" alt="" width={16} height={16} />
+            <img src="/logos/coolify.svg" alt="" width={16} height={16} />
             Coolify
           </span>
           <span className={s.cell} role="columnheader">
-            <img src="/v3/logos/dokku.png" alt="" width={22} height={22} />
+            <img src="/logos/dokku.png" alt="" width={22} height={22} />
             Dokku
           </span>
         </div>

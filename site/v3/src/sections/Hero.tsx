@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Flaps } from '../flap/Flaps'
 import { gsap, motionOn, useInView, useMedia } from '../lib/motion'
-import { WaitlistForm } from '../components/WaitlistForm'
+import { InstallCommand, commands } from '../components/InstallCommand'
 import { Logo } from '../components/Logo'
 import { Fit } from '../components/Fit'
 import { board, COLS, INK, type BoardRow } from '../story'
@@ -28,8 +28,8 @@ export function Nav() {
           </a>
         ))}
       </nav>
-      <a href="#join" className={s.cta}>
-        Join the waitlist
+      <a href="#install" className={s.cta}>
+        Install
       </a>
     </header>
   )
@@ -37,7 +37,7 @@ export function Nav() {
 
 /** The hero board: every address on the server, and what it serves. It boots
  * row by row, then keeps working while it's on screen: a build finishes, a
- * function wakes for a request and goes back to sleep. */
+ * preview wakes for a request and goes back to sleep. */
 function LiveBoard({ phone }: { phone: boolean }) {
   const [rows, setRows] = useState<BoardRow[]>(board)
   const [booted, setBooted] = useState(false)
@@ -154,7 +154,11 @@ export function Hero() {
           Pier is a deploy platform for the server you already have. Every git push gets its own address, and the board
           flips the moment it changes.
         </p>
-        <WaitlistForm className={s.form} />
+        <InstallCommand cmd={commands.server} label="Install Pier on your server" className={s.form} />
+        <p className={s.note}>
+          Run it on a Linux server with Docker. It sets up Pier, then asks you to create the owner's account.{' '}
+          <a href="https://github.com/lenajeremy/pier/tree/main/pier#readme">Read the guide</a>
+        </p>
       </div>
       <LiveBoard key={phone ? 'p' : 'd'} phone={phone} />
     </section>

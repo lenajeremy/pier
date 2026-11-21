@@ -26,9 +26,6 @@ import (
 	"piersite/internal/waitlist"
 )
 
-//go:embed all:dist
-var distFS embed.FS
-
 //go:embed all:dist-v3
 var distV3FS embed.FS
 
@@ -55,11 +52,6 @@ func main() {
 		return
 	}
 
-	site, err := fs.Sub(distFS, "dist")
-	if err != nil {
-		log.Error("embedded site", "err", err)
-		os.Exit(1)
-	}
 	siteV3, err := fs.Sub(distV3FS, "dist-v3")
 	if err != nil {
 		log.Error("embedded v3 site", "err", err)
@@ -82,9 +74,12 @@ func main() {
 		}
 		fmt.Fprintln(w, "ok")
 	})
-	mux.Handle("GET /", staticHandler(site))
-	mux.Handle("GET /v3/", http.StripPrefix("/v3", staticHandler(siteV3)))
-	mux.Handle("GET /v3", http.RedirectHandler("/v3/", http.StatusMovedPermanently))
+	// The install commands on the page are short because these send curl on
+	// to the installers in the repository, which fetch the latest release.
+	for path, script := range map[string]string{"/install": "get.sh", "/cli": "cli.sh"} {
+		mux.Handle("GET "+path, http.RedirectHandler(installers+script, http.StatusFound))
+	}
+	mux.Handle("GET /", staticHandler(siteV3))
 
 	srv := &http.Server{
 		Addr:              *addr,
@@ -113,6 +108,9 @@ func main() {
 
 // staticHandler serves the built site. Hashed files under /assets/ never
 // change, so they're cached for a year; everything else is revalidated.
+// installers is where the install scripts live, on the main branch.
+const installers = "https://raw.githubusercontent.com/lenajeremy/pier/main/pier/install/"
+
 func staticHandler(site fs.FS) http.Handler {
 	files := http.FileServerFS(site)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

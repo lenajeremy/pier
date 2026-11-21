@@ -7,7 +7,7 @@ import s from './Architecture.module.css'
 const parts = [
   { name: 'pierd', part: 'pierd', color: 'var(--blue)', role: 'The daemon', text: 'The daemon on your server. It takes pushes, runs builds, keeps every deployment in SQLite and serves the API and the dashboard.' },
   { name: 'caddy', part: 'caddy', color: 'var(--pink)', role: 'Routing and HTTPS', text: 'Routes every address to the right deployment and gets a certificate the first time a new domain is visited.' },
-  { name: 'docker', part: 'docker', color: 'var(--teal)', role: 'Builds and containers', text: 'Each build runs in a throwaway container. Functions sleep when idle; services run for good, health-checked.' },
+  { name: 'docker', part: 'docker', color: 'var(--teal)', role: 'Builds and containers', text: 'Each build runs in a throwaway container. Previews sleep when idle; production runs for good, health-checked.' },
   { name: 'dashboard', part: 'pierd', color: 'var(--blue)', role: 'Built into pierd', text: "A web app served by pierd itself, so there's nothing extra to host. It uses the same API as the CLI." },
   { name: 'pier', part: 'laptop', color: 'var(--violet)', role: 'The CLI on your laptop', text: 'Logs, rollbacks, variables and domains from your terminal. Deploys themselves are a plain git push.' },
 ]

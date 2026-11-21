@@ -1,42 +1,30 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Flaps } from '../flap/Flaps'
 import { Fit } from '../components/Fit'
-import { WaitlistForm } from '../components/WaitlistForm'
+import { InstallCommand, commands, origin } from '../components/InstallCommand'
 import { useInView, useMedia } from '../lib/motion'
-import { useWaitlistOutcome } from '../lib/waitlist'
 import { INK } from '../story'
 import s from './Ending.module.css'
 
-/** A deployment-style ID for the visitor's row, so joining "deploys" them. */
+/** A deployment-style ID for the visitor's row. */
 function shortId(text: string) {
   let h = 2166136261
   for (const c of text) h = Math.imul(h ^ c.charCodeAt(0), 16777619)
   return (h >>> 0).toString(16).padStart(8, '0').slice(0, 6)
 }
 
-/** The board comes back with one empty row. As you type your email, the row
- * flips to your own domain; when you join, it gets an ID and says JOINED. */
+/** The board comes back with one empty row, next in line. Copying the server
+ * command gives it an ID and flips it to COPIED: the visitor's server is the
+ * next thing on the board. */
 export function Ending() {
   const phone = useMedia('(max-width: 899px)')
-  const outcome = useWaitlistOutcome()
   const { ref, seen } = useInView<HTMLDivElement>()
-  const [email, setEmail] = useState('')
-  const [domain, setDomain] = useState('')
+  const [copied, setCopied] = useState(false)
 
-  // Flip once the typing pauses, not on every key.
-  useEffect(() => {
-    const t = setTimeout(() => {
-      const at = email.lastIndexOf('@')
-      const d = at >= 0 ? email.slice(at + 1).trim().toLowerCase() : ''
-      setDomain(/^[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}$/.test(d) ? d : '')
-    }, 380)
-    return () => clearTimeout(t)
-  }, [email])
-
-  // Phones drop the deployment column and the pier. prefix to keep tiles readable.
-  const address = domain ? (phone ? domain : `pier.${domain}`) : outcome ? (phone ? 'your.server' : 'your.server.here') : ''
-  const id = outcome ? shortId(email || 'pier') : ''
-  const status = outcome === 'joined' ? 'joined' : outcome === 'already' ? 'listed' : 'next'
+  // Phones drop the deployment column to keep tiles readable.
+  const address = phone ? 'your.server' : 'your.server.here'
+  const id = copied ? shortId(origin) : ''
+  const status = copied ? 'copied' : 'next'
   const addrCols = phone ? 11 : 23
   const columns = phone ? [{ width: addrCols }, { width: 7 }] : [{ width: addrCols }, { width: 6 }, { width: 7 }]
   const pick = (a: string, d: string, st: string) => (phone ? [a, st] : [a, d, st])
@@ -47,7 +35,7 @@ export function Ending() {
   ]
 
   return (
-    <section id="join" className={s.section} aria-labelledby="join-title">
+    <section id="install" className={s.section} aria-labelledby="install-title">
       <div ref={ref} className={s.board}>
         <Fit>
           <div className="housing" key={phone ? 'p' : 'd'}>
@@ -66,21 +54,38 @@ export function Ending() {
             <Flaps
               size={phone ? 'xs' : 'lg'}
               columns={columns}
-              values={pick(address.slice(0, addrCols), id, status)}
-              inks={phone ? [undefined, outcome ? INK.teal : undefined] : [undefined, undefined, outcome ? INK.teal : undefined]}
+              values={pick(address, id, status)}
+              inks={phone ? [undefined, copied ? INK.teal : undefined] : [undefined, undefined, copied ? INK.teal : undefined]}
               play={seen}
               delay={300}
               stagger={22}
-              label={outcome ? `Your row: ${status}` : 'An empty row, next on the board'}
+              label={copied ? 'Your server, next on the board' : 'An empty row, next on the board'}
             />
           </div>
         </Fit>
       </div>
-      <h2 id="join-title" className={s.title}>
+      <h2 id="install-title" className={s.title}>
         Your server is next on the board.
       </h2>
-      <p className={s.lede}>One email when the first release is ready to install. Nothing else.</p>
-      <WaitlistForm className={s.form} onEmail={setEmail} />
+      <p className={s.lede}>Install Pier on your server, then deploy from your computer.</p>
+      <ol className={s.steps}>
+        <li>
+          <span className={s.step}>
+            On your server <span>Linux, with Docker</span>
+          </span>
+          <InstallCommand cmd={commands.server} label="Install Pier on your server" onCopy={() => setCopied(true)} />
+        </li>
+        <li>
+          <span className={s.step}>
+            On your computer <span>macOS or Linux</span>
+          </span>
+          <InstallCommand cmd={commands.cli} label="Install the pier command on your computer" />
+        </li>
+      </ol>
+      <p className={s.after}>
+        Then run <code>pier deploy</code> in a project, or connect GitHub from the dashboard.{' '}
+        <a href="https://github.com/lenajeremy/pier/releases">Release notes</a>
+      </p>
     </section>
   )
 }

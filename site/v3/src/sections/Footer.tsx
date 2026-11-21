@@ -5,7 +5,14 @@ import s from './Footer.module.css'
 
 const cols = [
   { title: 'Product', links: [['How it works', '#push'], ['Rollbacks', '#rollback'], ['Architecture', '#architecture'], ['Compare', '#compare']] },
-  { title: 'Project', links: [['GitHub', '#'], ['Changelog', '#'], ['Docs', '#']] },
+  {
+    title: 'Project',
+    links: [
+      ['GitHub', 'https://github.com/lenajeremy/pier'],
+      ['Releases', 'https://github.com/lenajeremy/pier/releases'],
+      ['Docs', 'https://github.com/lenajeremy/pier/tree/main/pier#readme'],
+    ],
+  },
   { title: 'About', links: [['Contact', '#'], ['Privacy', '#']] },
 ]
 

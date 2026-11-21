@@ -17,7 +17,7 @@ export const board: BoardRow[] = [
   { address: 'docs.pier.example.com', sub: 'docs', deployment: '2b71e0', branch: 'main', status: 'live', ink: INK.pink },
   { address: 'status.pier.example.com', sub: 'status', deployment: '3d9c04', branch: 'main', status: 'healthy', ink: INK.teal },
   { address: 'shop.pier.example.com', sub: 'shop', deployment: '7b44d2', branch: 'main', status: 'rollback', ink: INK.pink },
-  { address: 'api.pier.example.com', sub: 'api', deployment: '9a0f31', branch: 'main', status: 'asleep', ink: INK.asleep },
+  { address: 'feat-cart--shop', sub: 'feat-cart', deployment: '9a0f31', branch: 'feat-cart', status: 'asleep', ink: INK.asleep },
   { address: 'fix-rss--blog', sub: 'fix-rss', deployment: '41d0e9', branch: 'fix-rss', status: 'preview', ink: INK.violet },
 ]
 

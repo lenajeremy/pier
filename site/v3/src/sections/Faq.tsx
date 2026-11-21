@@ -10,23 +10,23 @@ const items = [
   },
   {
     q: 'How close is it to Vercel?',
-    a: "Close in workflow: git push deploys, a URL for every deployment and branch, functions under /api, and instant rollbacks. It isn't a global network. Everything runs on your one server, so there's no CDN, no regions and no edge middleware.",
+    a: "Close in workflow: git push deploys, a URL for every deployment and branch, server apps whose previews sleep when idle, and instant rollbacks. It isn't a global network. Everything runs on your one server, so there's no CDN, no regions and no edge middleware.",
   },
   {
     q: 'What happens to old deployments?',
     a: "They stay on disk with their own URL until you delete them, which is what makes rollbacks instant. You can delete previews older than a date, or have them removed after a merge. Production's history is never deleted for you.",
   },
   {
-    q: 'Do sleeping functions use any memory?',
-    a: "No. When a function hasn't been called for a while (5 minutes by default) Pier stops its container. The next request starts it again, so that one request waits while it wakes.",
+    q: 'Do sleeping apps use any memory?',
+    a: "No. When a preview of a server app has had no visits for 30 minutes (you can change it), Pier stops its container. The next visit starts it again, so that one request waits while it boots. Production never sleeps.",
   },
   {
     q: 'How are environment variables stored?',
     a: "Encrypted in pierd's database on your server. Each variable is available to production, to previews, or to both, and reaches builds and containers as an ordinary environment variable.",
   },
   {
-    q: 'When can I use it?',
-    a: "Pier is still being built. Join the waitlist and you'll get one email when the first release is ready to install. Nothing else.",
+    q: 'How do I install it?',
+    a: "Run the install command at the top of this page on a Linux server with Docker. It sets up Pier, then asks you to create the owner's account. On your computer, install the pier command with the second command under Install, then run pier deploy in a project. Every release is on GitHub.",
   },
 ]
 

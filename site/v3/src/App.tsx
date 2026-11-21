@@ -36,8 +36,8 @@ export function App() {
 
   return (
     <>
-      <a className="skip-link" href="#join">
-        Skip to the waitlist
+      <a className="skip-link" href="#install">
+        Skip to installing Pier
       </a>
       <Hero />
       <main>

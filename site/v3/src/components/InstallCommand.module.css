@@ -1,0 +1,119 @@
+/* The waitlist's pill, holding a command instead of a field: the same
+   surface, edge and button, so the page keeps one action in one shape. */
+.field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  max-width: 660px;
+  padding: 5px 5px 5px 20px;
+  border-radius: var(--radius-pill);
+  background: rgba(14, 18, 28, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  text-align: left;
+}
+
+.prompt {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 15px;
+  color: var(--faint);
+  user-select: none;
+}
+
+/* A long command scrolls inside the pill rather than wrapping, and fades at
+   the end so the cut reads as more to see. */
+.code {
+  flex: 1;
+  min-width: 0;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  padding-right: 12px;
+  overflow-x: auto;
+  white-space: nowrap;
+  scrollbar-width: none;
+  font-family: var(--mono);
+  font-size: 15px;
+  color: var(--text);
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
+}
+
+/* One line on wide screens; the split version only on phones. */
+.lines {
+  display: none;
+}
+
+.code::-webkit-scrollbar {
+  display: none;
+}
+
+.button {
+  flex: none;
+  min-width: 88px;
+  height: 44px;
+  padding: 0 20px;
+  border-radius: var(--radius-pill);
+  background: var(--text);
+  color: var(--ground);
+  font-size: 15px;
+  font-weight: 500;
+  white-space: nowrap;
+  transition:
+    background-color 160ms ease,
+    transform 160ms var(--ease-out);
+}
+
+.button:hover {
+  background: #ffffff;
+}
+
+.button:active {
+  transform: scale(0.97);
+}
+
+/* A phone can't show the whole command on one line, and a command you can't
+   read is one you shouldn't run: it wraps in a card instead, with the button
+   under it. The button's corners follow the card's, less the gap. */
+@media (max-width: 520px) {
+  .field {
+    flex-wrap: wrap;
+    align-items: flex-start;
+    row-gap: 12px;
+    padding: 14px 6px 6px 16px;
+    border-radius: 16px;
+  }
+  .prompt,
+  .code {
+    font-size: 13.5px;
+    line-height: 22px;
+  }
+  .code {
+    flex: 1 1 0;
+    height: auto;
+    padding-right: 10px;
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+  .line {
+    display: none;
+  }
+  .lines {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .lines > span {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .cont {
+    padding-left: 2ch;
+  }
+  .button {
+    flex: 1 0 100%;
+    border-radius: 10px;
+  }
+}

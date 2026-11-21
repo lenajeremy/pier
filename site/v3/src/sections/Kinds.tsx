@@ -59,25 +59,25 @@ export function Kinds() {
           figure="functions"
           status="asleep"
           ink={INK.asleep}
-          title="Functions"
-          text="Files in api/ answer at /api/*. Their container sleeps when nobody calls and wakes on the next request."
+          title="Server apps"
+          text="Next.js, Express, Go, Python and more, built by Railpack. A preview's container sleeps when nobody visits and wakes on the next request."
         >
           <p className={s.mono}>
-            <span className={s.dim}>14:02:19 </span> api/og.go asleep after 5m idle
+            <span className={s.dim}>14:02:19 </span> feat-cart--shop asleep after 30m idle
           </p>
           <p className={s.mono}>
-            <span className={s.dim}>14:03:02 </span> GET /api/og?slug=search
+            <span className={s.dim}>14:31:02 </span> GET /cart
           </p>
           <p className={`${s.mono} ${s.teal}`}>
-            <span className={s.dim}>14:03:02 </span> woke in 160ms, 200 OK
+            <span className={s.dim}>14:31:03 </span> woke in 1.4s, 200 OK
           </p>
         </Card>
         <Card
           figure="services"
           status="healthy"
           ink={INK.teal}
-          title="Services"
-          text="A Dockerfile at the root runs for good, with health checks, restarts after a crash and updates with no downtime."
+          title="Dockerfiles"
+          text="A Dockerfile at the root builds as written. In production it runs for good, with health checks, restarts after a crash and updates with no downtime."
         >
           <dl className={s.facts}>
             <div>

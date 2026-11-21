@@ -34,6 +34,61 @@
   color: var(--muted);
 }
 
-.form {
-  margin-top: 6px;
+/* The two commands, in the order they're run, each named by where it
+   runs. */
+.steps {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  width: 100%;
+  max-width: 660px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.steps li {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.step {
+  padding-left: 20px;
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+/* What the machine needs, quieter than where it runs. */
+.step span {
+  margin-left: 6px;
+  font-weight: 400;
+  color: var(--dim);
+}
+
+.after {
+  max-width: 560px;
+  font-size: 14px;
+  line-height: 22px;
+  color: var(--dim);
+}
+
+.after code {
+  font-family: var(--mono);
+  color: var(--muted);
+}
+
+.after a {
+  white-space: nowrap;
+  color: var(--muted);
+  text-decoration: underline;
+  text-decoration-color: var(--faint);
+  text-underline-offset: 3px;
+}
+
+.after a:hover {
+  color: var(--text);
 }

@@ -1,10 +1,10 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
-// V3 is served by the Go server at /v3/, next to V2 at /. The server embeds
-// this build, so the whole site still ships as one binary.
+// The Go server embeds this build and serves it at /, so the whole site
+// ships as one binary.
 export default defineConfig({
-  base: '/v3/',
+  base: '/',
   plugins: [react()],
   build: {
     outDir: '../server/dist-v3',
