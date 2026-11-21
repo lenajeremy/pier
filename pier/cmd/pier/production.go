@@ -55,7 +55,7 @@ func rollback(args []string) error {
 			}
 			hint := ago(d.CreatedAt)
 			if d.ID == proj.RollbackTo {
-				hint = "previous · " + hint
+				hint = "previous, " + hint
 			}
 			items = append(items, choice{
 				id:      d.ID,
@@ -84,7 +84,11 @@ func rollback(args []string) error {
 		}
 	}
 	var res productionState
-	if err := call(c, http.MethodPost, path, body, &res); err != nil {
+	label := "Rolling back " + project
+	if *undo {
+		label = "Undoing the rollback of " + project
+	}
+	if err := callWith(label, c, http.MethodPost, path, body, &res); err != nil {
 		return err
 	}
 	if *undo {
@@ -149,7 +153,7 @@ func promote(args []string) error {
 		return errors.New("say which deployment: pier promote DEPLOYMENT (pier deployments lists them)")
 	}
 	var res productionState
-	if err := call(c, http.MethodPost, "/api/projects/"+url.PathEscape(project)+"/promote", map[string]string{"id": id}, &res); err != nil {
+	if err := callWith("Moving production to "+id, c, http.MethodPost, "/api/projects/"+url.PathEscape(project)+"/promote", map[string]string{"id": id}, &res); err != nil {
 		return err
 	}
 	fmt.Printf("%s %s serves %s now.\n", tick(), res.Address, res.serving())
@@ -191,7 +195,7 @@ func restart(args []string) error {
 		id = proj.Production.Deployment.ID
 	}
 	path := "/api/projects/" + url.PathEscape(project) + "/deployments/" + url.PathEscape(id) + "/restart"
-	if err := call(c, http.MethodPost, path, map[string]string{}, nil); err != nil {
+	if err := callWith("Restarting "+project+" and waiting for it to answer", c, http.MethodPost, path, map[string]string{}, nil); err != nil {
 		return err
 	}
 	fmt.Printf("%s Restarted %s (%s).\n", tick(), project, id)

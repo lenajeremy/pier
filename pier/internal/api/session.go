@@ -11,6 +11,7 @@ import (
 
 	"pier/internal/auth"
 	"pier/internal/store"
+	"pier/internal/version"
 )
 
 const (
@@ -162,8 +163,15 @@ func (a *API) session(w http.ResponseWriter, r *http.Request) {
 			"base_domain":       base,
 			"domain":            a.Deployer.Domain,
 			"production_branch": a.Deployer.ProductionBranch,
+			"version":           version.String(),
 		},
 	})
+}
+
+// versionInfo tells a signed-in client, such as pier version, which release
+// of pierd it's talking to.
+func (a *API) versionInfo(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]string{"version": version.String()})
 }
 
 // browserName turns a User-Agent into "Chrome on macOS", for the list of

@@ -8,6 +8,8 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 	terminal "golang.org/x/term"
+
+	"pier/internal/version"
 )
 
 // Pier's terminal palette, taken directly from pier/web/src/styles/tokens.css.
@@ -58,6 +60,7 @@ func brand(width int, color bool) string {
 	if width < 24 {
 		return "  " + ink("▄█▄", pink, color) + " " + boldInk("PIER", fgBright, color)
 	}
+	release := version.String()
 	var lines []string
 	for i, row := range markLines {
 		left := ink(row, markTones[i], color)
@@ -65,10 +68,18 @@ func brand(width int, color bool) string {
 			right := wordmarkLines[i]
 			if i < 4 {
 				right = boldInk(right, fgBright, color)
-			} else {
-				right = ink(strings.TrimSpace(right), fgMuted, color)
+				lines = append(lines, "  "+left+"   "+right)
+				continue
 			}
-			lines = append(lines, "  "+left+"   "+right)
+			// The release sits on the tagline's row, ending where the
+			// commands in the card below end.
+			tag := strings.TrimSpace(right)
+			line := "  " + left + "   " + ink(tag, fgMuted, color)
+			edge := min(width, 80)
+			if gap := edge - ansi.StringWidth(line) - len(release); gap >= 3 {
+				line += strings.Repeat(" ", gap) + ink(release, fgDim, color)
+			}
+			lines = append(lines, line)
 		} else {
 			if i == 2 {
 				lines = append(lines, "  "+left+"  "+boldInk("PIER", fgBright, color))

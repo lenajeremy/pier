@@ -8,6 +8,7 @@
 //	pier board                      every address and what it serves
 //	pier deployments [PROJECT]      a project's deployments, newest first
 //	pier logout                     forget this computer's sign-in
+//	pier version                    this pier's release, and its server's
 package main
 
 import (
@@ -29,6 +30,8 @@ import (
 	"strings"
 	"text/tabwriter"
 	"time"
+
+	"pier/internal/version"
 )
 
 type config struct {
@@ -102,6 +105,11 @@ func main() {
 		err = showBoard(os.Args[2:])
 	case "deployments", "ls":
 		err = showDeployments(os.Args[2:])
+	case "version":
+		err = showVersion(os.Args[2:])
+	case "--version", "-v":
+		fmt.Println("pier " + version.String())
+		return
 	case "help", "-h", "--help":
 		usage()
 		return
@@ -144,6 +152,7 @@ func commandReferenceGroups() []commandGroup {
 		{"Account", [][2]string{
 			{"pier login [ADDRESS]", "Sign in through your dashboard"},
 			{"pier logout", "Sign this computer out"},
+			{"pier version", "Show pier's and pierd's versions"},
 		}},
 	}
 }
@@ -154,7 +163,9 @@ func usage() {
 	if tty {
 		w, _, _ := terminal.GetSize(int(os.Stderr.Fd()))
 		fmt.Fprintln(os.Stderr)
-		fmt.Fprintln(os.Stderr, brand(w, color))
+		// Without a card under it, the brand's release ends where the
+		// descriptions below do.
+		fmt.Fprintln(os.Stderr, brand(min(w, 76), color))
 		fmt.Fprintln(os.Stderr)
 	}
 	groups := commandReferenceGroups()
@@ -441,7 +452,7 @@ func showBoard(args []string) error {
 		Domain string
 		Rows   []struct{ Address, Deployment, Branch, Status, URL string }
 	}
-	if err := call(c, http.MethodGet, "/api/board", nil, &b); err != nil {
+	if err := callWith("Loading the board", c, http.MethodGet, "/api/board", nil, &b); err != nil {
 		return err
 	}
 	if term() {
@@ -453,7 +464,7 @@ func showBoard(args []string) error {
 	}
 	if term() {
 		for _, r := range b.Rows {
-			resultRow(r.Address, r.Status, orDash(r.Branch)+"  ·  "+orDash(r.Deployment))
+			resultRow(r.Address, r.Status, orDash(r.Branch)+", "+orDash(r.Deployment))
 		}
 		return nil
 	}
@@ -490,7 +501,7 @@ func showDeployments(args []string) error {
 			CreatedAt                         time.Time `json:"created_at"`
 		}
 	}
-	if err := call(c, http.MethodGet, "/api/projects/"+url.PathEscape(project)+"/deployments", nil, &res); err != nil {
+	if err := callWith("Loading "+project+"'s deployments", c, http.MethodGet, "/api/projects/"+url.PathEscape(project)+"/deployments", nil, &res); err != nil {
 		return err
 	}
 	if term() {
@@ -502,9 +513,9 @@ func showDeployments(args []string) error {
 	}
 	if term() {
 		for _, d := range res.Deployments {
-			detail := orDash(d.Branch) + "  ·  " + ago(d.CreatedAt)
+			detail := orDash(d.Branch) + ", " + ago(d.CreatedAt)
 			if d.BuildMS > 0 {
-				detail += fmt.Sprintf("  ·  %.1fs build", float64(d.BuildMS)/1000)
+				detail += fmt.Sprintf(", built in %.1fs", float64(d.BuildMS)/1000)
 			}
 			resultRow(d.ID+"  "+d.Message, d.Role, detail)
 		}

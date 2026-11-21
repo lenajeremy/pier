@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"pier/internal/apphost"
 	"pier/internal/board"
+	"pier/internal/version"
 	"strings"
 	"time"
 
@@ -172,7 +173,7 @@ func (m menu) View() string {
 	if m.height >= minHeroHeight && inner >= 46 {
 		out = append(out, "", brand(inner+4, c), "")
 	} else {
-		out = append(out, "", "  "+miniMark(c)+"  "+boldInk("PIER", fgBright, c))
+		out = append(out, "", "  "+miniMark(c)+"  "+boldInk("PIER", fgBright, c)+"  "+ink(version.String(), fgDim, c))
 	}
 
 	// Card frame top + title / live server-context or filter bar.
@@ -314,7 +315,7 @@ func (m menu) View() string {
 	out = append(out, cardBottom(inner, c))
 
 	// Styled footer keycap strip — automatically drops optional hints before truncating.
-	sep := ink("  ·  ", fgBorder, c)
+	sep := "    "
 	if inner < 46 {
 		sep = "  "
 	}
@@ -356,26 +357,34 @@ func (m menu) renderItem(idx, inner int) string {
 	selected := idx == m.cursor
 	c := m.color
 
-	glyph := item.icon
-	if glyph == "" {
-		glyph = "•"
-	}
+	// Where number keys jump to an item, the number is its marker. A glyph
+	// beside it as well says the same thing twice.
+	numbered := m.showKeys && !m.search && inner >= 52
 	var prefix string
 	if selected {
-		prefix = ink("▌ ", pink, c) + ink(glyph, pink, c) + " "
+		prefix = ink("▌ ", pink, c)
 	} else {
-		prefix = "  " + ink(glyph, fgDim, c) + " "
+		prefix = "  "
 	}
-	if m.showKeys && !m.search && inner >= 52 {
+	if numbered {
+		num := "  "
 		if idx < 9 {
-			num := fmt.Sprintf("%d ", idx+1)
-			if selected {
-				prefix += ink(num, fgMuted, c)
-			} else {
-				prefix += ink(num, fgDim, c)
-			}
+			num = fmt.Sprintf("%d ", idx+1)
+		}
+		if selected {
+			prefix += boldInk(num, pink, c)
 		} else {
-			prefix += "  "
+			prefix += ink(num, fgDim, c)
+		}
+	} else {
+		glyph := item.icon
+		if glyph == "" {
+			glyph = "•"
+		}
+		if selected {
+			prefix += ink(glyph, pink, c) + " "
+		} else {
+			prefix += ink(glyph, fgDim, c) + " "
 		}
 	}
 
@@ -469,7 +478,7 @@ func projectChoices(c config, create bool) (string, error) {
 			Status string
 		}
 	}
-	if err := call(c, http.MethodGet, "/api/projects", nil, &list); err != nil {
+	if err := callWith("Loading your projects", c, http.MethodGet, "/api/projects", nil, &list); err != nil {
 		return "", err
 	}
 	var items []choice
@@ -510,10 +519,10 @@ func home() error {
 				{id: "prod", title: "Deploy production", hint: "pier deploy --prod", icon: "✦", section: "Deploy"},
 				{id: "board", title: "Deployment board", hint: "pier board", icon: "◈", section: "Inspect"},
 				{id: "history", title: "Deployment history", hint: "pier deployments", icon: "◷", section: "Inspect"},
-				{id: "requests", title: "Request logs", hint: "live HTTP traffic", icon: "≡", section: "Inspect"},
-				{id: "runtime", title: "Runtime logs", hint: "container stdout/stderr", icon: "▸", section: "Inspect"},
-				{id: "build", title: "Build logs", hint: "latest build output", icon: "◇", section: "Inspect"},
-				{id: "switch", title: "Switch project", hint: "pick active project", icon: "⇄", section: "Account"},
+				{id: "requests", title: "Request logs", hint: "pier logs", icon: "≡", section: "Inspect"},
+				{id: "runtime", title: "Runtime logs", hint: "pier logs --runtime", icon: "▸", section: "Inspect"},
+				{id: "build", title: "Build logs", hint: "pier logs --build", icon: "◇", section: "Inspect"},
+				{id: "switch", title: "Switch project", hint: "", icon: "⇄", section: "Account"},
 				{id: "help", title: "Command reference", hint: "pier help", icon: "?", section: "Account"},
 				{id: "logout", title: "Sign out", hint: "pier logout", icon: "⇥", section: "Account"},
 			}
@@ -739,7 +748,7 @@ func browseDeployments(c config, project string) error {
 		var res struct {
 			Deployments []deploymentSummary
 		}
-		if err := call(c, http.MethodGet, "/api/projects/"+url.PathEscape(project)+"/deployments", nil, &res); err != nil {
+		if err := callWith("Loading "+project+"'s deployments", c, http.MethodGet, "/api/projects/"+url.PathEscape(project)+"/deployments", nil, &res); err != nil {
 			return err
 		}
 		items := make([]choice, 0, len(res.Deployments))
@@ -759,7 +768,7 @@ func browseDeployments(c config, project string) error {
 			items = append(items, choice{
 				id:    d.ID,
 				title: title,
-				hint:  strings.Join(hintParts, " · "),
+				hint:  strings.Join(hintParts, ", "),
 				icon:  "◷",
 				badge: d.Role,
 			})
@@ -799,7 +808,7 @@ func inspectDeployment(c config, project, id string) error {
 			Container *apphost.ContainerStatus
 		}
 		path := "/api/projects/" + url.PathEscape(project) + "/deployments/" + url.PathEscape(id)
-		if err := call(c, http.MethodGet, path, nil, &detail); err != nil {
+		if err := callWith("Loading the deployment", c, http.MethodGet, path, nil, &detail); err != nil {
 			return err
 		}
 		d := detail.Deployment
@@ -816,7 +825,7 @@ func inspectDeployment(c config, project, id string) error {
 			if hasRuntime {
 				kind += " (server)"
 			}
-			statusText += ink("  ·  "+kind, fgMuted, color)
+			statusText += ink("  "+kind, fgMuted, color)
 		}
 		meta := []metaRow{
 			{label: "Status", value: statusText, raw: true},
@@ -845,7 +854,7 @@ func inspectDeployment(c config, project, id string) error {
 			srcParts = append(srcParts, cleanLog(d.Message))
 		}
 		if len(srcParts) > 0 {
-			meta = append(meta, metaRow{label: "Source", value: strings.Join(srcParts, " · "), tone: fgSecondary})
+			meta = append(meta, metaRow{label: "Source", value: strings.Join(srcParts, ", "), tone: fgSecondary})
 		}
 		var builtParts []string
 		if d.BuildMS > 0 {
@@ -855,7 +864,7 @@ func inspectDeployment(c config, project, id string) error {
 			builtParts = append(builtParts, ago(d.CreatedAt))
 		}
 		if len(builtParts) > 0 {
-			meta = append(meta, metaRow{label: "Built", value: strings.Join(builtParts, " · "), tone: fgMuted})
+			meta = append(meta, metaRow{label: "Built", value: strings.Join(builtParts, ", "), tone: fgMuted})
 		}
 
 		actions := []choice{
@@ -902,14 +911,14 @@ func inspectDeployment(c config, project, id string) error {
 			notice, noticeTone = "Opened "+liveURL, mint
 		case "promote":
 			var res productionState
-			if err := call(c, http.MethodPost, "/api/projects/"+url.PathEscape(project)+"/promote", map[string]string{"id": id}, &res); err != nil {
+			if err := callWith("Moving production to "+id, c, http.MethodPost, "/api/projects/"+url.PathEscape(project)+"/promote", map[string]string{"id": id}, &res); err != nil {
 				notice, noticeTone = err.Error(), coralTxt
 				continue
 			}
 			notice, noticeTone = "✓ "+res.Address+" now serves "+res.serving(), mint
 		case "restart":
 			restartPath := "/api/projects/" + url.PathEscape(project) + "/deployments/" + url.PathEscape(id) + "/restart"
-			if err := call(c, http.MethodPost, restartPath, map[string]string{}, nil); err != nil {
+			if err := callWith("Restarting the container", c, http.MethodPost, restartPath, map[string]string{}, nil); err != nil {
 				notice, noticeTone = err.Error(), coralTxt
 				continue
 			}
@@ -923,14 +932,14 @@ func inspectDeployment(c config, project, id string) error {
 				continue
 			}
 			var res productionState
-			if err := call(c, http.MethodPost, "/api/projects/"+url.PathEscape(project)+"/rollback", map[string]string{}, &res); err != nil {
+			if err := callWith("Rolling back "+project, c, http.MethodPost, "/api/projects/"+url.PathEscape(project)+"/rollback", map[string]string{}, &res); err != nil {
 				notice, noticeTone = err.Error(), coralTxt
 				continue
 			}
 			notice, noticeTone = "✓ Rolled back "+res.Address+" to "+res.serving(), mint
 		case "redeploy":
 			var res struct{ ID string }
-			if err := call(c, http.MethodPost, "/api/projects/"+url.PathEscape(project)+"/redeploy", map[string]string{"id": id}, &res); err != nil {
+			if err := callWith("Starting a new build of "+id, c, http.MethodPost, "/api/projects/"+url.PathEscape(project)+"/redeploy", map[string]string{"id": id}, &res); err != nil {
 				notice, noticeTone = err.Error(), coralTxt
 				continue
 			}
@@ -978,7 +987,7 @@ func formatContainerMeta(st *apphost.ContainerStatus, color bool) string {
 		details = append(details, "up "+ago(st.StartedAt))
 	}
 	if len(details) > 0 {
-		parts = append(parts, ink("  ·  "+strings.Join(details, " · "), fgMuted, color))
+		parts = append(parts, ink("  "+strings.Join(details, ", "), fgMuted, color))
 	}
 	return strings.Join(parts, "")
 }
@@ -990,14 +999,14 @@ func browseBoard(c config) error {
 			Domain string
 			Rows   []board.Row
 		}
-		if err := call(c, http.MethodGet, "/api/board", nil, &res); err != nil {
+		if err := callWith("Loading the board", c, http.MethodGet, "/api/board", nil, &res); err != nil {
 			return err
 		}
 		var items []choice
 		for _, r := range res.Rows {
 			hint := cleanLog(r.Deployment)
 			if r.Branch != "" {
-				hint = cleanLog(r.Branch) + " · " + hint
+				hint = cleanLog(r.Branch) + ", " + hint
 			}
 			items = append(items, choice{
 				id:    r.Address,

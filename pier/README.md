@@ -36,6 +36,10 @@ And the start of the second slice:
 
 Run `pier` in a terminal to open the command menu. Use ↑ and ↓ to move, Enter to select, and / to filter commands or projects. Esc clears a filter or closes the picker. A linked folder opens its own deployment history and logs. Direct commands such as `pier board` still work in scripts. Set `NO_COLOR=1` for a monochrome display.
 
+## Versions
+
+`pier version` shows the CLI's release and, when you're signed in, the release of the `pierd` it talks to. When one is behind, it prints the command that updates it. `pier --version` prints only the CLI's, without asking the server. On the server, `pierd version` prints its release, and the dashboard shows it in the account menu and on the Server page. A build from source reports the commit it came from, like `dev-3f9a2c1`.
+
 ## Preview builds
 
 The default `pierd serve -builder railpack-preview` uses Railpack v0.43.0 and Docker Buildx for new previews from Git, GitHub, and the CLI. Docker pulls the pinned Railpack frontend on first use. HTML previews export their static files directly through BuildKit. Node builds use Node 22, and projects with explicit build commands, package-manager hints, or a custom Pier image use those settings in the Railpack plan.

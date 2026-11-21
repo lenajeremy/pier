@@ -136,6 +136,13 @@ fetch docs.$DOMAIN / | grep -q "Pier docs" || fail "docs went down after a faile
 step "pier board"
 PIER_SERVER=http://127.0.0.1:$API_PORT PIER_TOKEN=$("$PIERD" token -data "$DATA") "$PIER" board
 
+step "pier and pierd say which release they are, and pier asks pierd for its own"
+"$PIERD" version | grep -q '^pierd ' || fail "pierd version printed nothing"
+"$PIER" --version | grep -q '^pier ' || fail "pier --version printed nothing"
+versions=$(PIER_SERVER=http://127.0.0.1:$API_PORT PIER_TOKEN=$("$PIERD" token -data "$DATA") "$PIER" version)
+echo "$versions"
+echo "$versions" | grep -q "pierd  *$("$PIERD" version | cut -d' ' -f2)" || fail "pier version didn't get pierd's version from the server"
+
 step "pierd init creates the owner, and the dashboard signs them in"
 echo "correct horse battery" | "$PIERD" init -data "$DATA" -email owner@example.com -password-stdin \
 	-address pier.localhost -base-domain pier.localhost -ip 127.0.0.1 > "$WORK/init.log" 2>&1 || { cat "$WORK/init.log"; fail "pierd init failed"; }

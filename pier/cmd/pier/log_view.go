@@ -241,7 +241,7 @@ func (m logView) View() string {
 	case m.paused:
 		state, tone = "Paused", amber
 		if m.unseen > 0 {
-			state += fmt.Sprintf(" · %d new", m.unseen)
+			state += fmt.Sprintf(", %d new", m.unseen)
 		}
 	case m.ended:
 		state, tone = "Ended", lavender
@@ -297,12 +297,12 @@ func (m logView) View() string {
 	}
 	if m.paused && m.err == nil {
 		noteTone = amber
-		note = "Reading paused · collecting new lines"
+		note = "Reading paused, still collecting new lines"
 		if m.ended {
-			note = "Reading paused · stream ended"
+			note = "Reading paused. The stream has ended."
 		}
 	}
-	sep := ink("  ·  ", fgBorder, c)
+	sep := "    "
 	var hints []string
 	if m.ended {
 		hints = []string{keyHint("r", "reopen", c), keyHint("↑↓", "scroll", c), keyHint("esc", "back", c)}

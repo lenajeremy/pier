@@ -42,16 +42,20 @@ import (
 	"pier/internal/router"
 	"pier/internal/secrets"
 	"pier/internal/store"
+	"pier/internal/version"
 	"pier/internal/web"
 )
 
 func main() {
 	args := os.Args[1:]
 	cmd := "serve"
-	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+	if len(args) > 0 && (!strings.HasPrefix(args[0], "-") || args[0] == "--version" || args[0] == "-v") {
 		cmd, args = args[0], args[1:]
 	}
 	switch cmd {
+	case "version", "--version", "-v":
+		fmt.Println("pierd " + version.String())
+		os.Exit(0)
 	case "serve":
 		os.Exit(serve(args))
 	case "init":
@@ -65,7 +69,7 @@ func main() {
 	case "token":
 		os.Exit(token(args))
 	default:
-		fmt.Fprintf(os.Stderr, "pierd: unknown command %q (serve, init, reset-password, keys, token)\n", cmd)
+		fmt.Fprintf(os.Stderr, "pierd: unknown command %q (serve, init, reset-password, keys, token, version)\n", cmd)
 		os.Exit(2)
 	}
 }
@@ -108,6 +112,7 @@ func serve(args []string) int {
 	fs.Parse(args)
 
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	log.Info("starting pierd", "version", version.String())
 	// git runs the hook from inside the repository, and Caddy from its own
 	// folder, so every path pierd hands out must be absolute.
 	abs, err := filepath.Abs(*data)
@@ -388,14 +393,14 @@ func serve(args []string) int {
 	}()
 
 	fmt.Fprintf(os.Stderr, `
-pierd is running
+pierd %s is running
   dashboard  %s   (or http://%s)
   push       git remote add pier ssh://git@localhost%s/<project>
   sites      %s
   api        http://%s   (token: pierd token -data %s)
   builds     %s
 
-`, dep.URL(*address), *apiAddr, *sshAddr, dep.URL("<project>."+*domain), *apiAddr, *data, runner.Name())
+`, version.String(), dep.URL(*address), *apiAddr, *sshAddr, dep.URL("<project>."+*domain), *apiAddr, *data, runner.Name())
 	if owners == 0 {
 		fmt.Fprintf(os.Stderr, "Nobody can sign in yet. Create the owner's account:  pierd init -data %s\n\n", *data)
 	}

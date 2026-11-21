@@ -170,7 +170,7 @@ func (m textPrompt) View() string {
 	}
 
 	out = append(out, cardBottom(inner, c))
-	sep := ink("  ·  ", fgBorder, c)
+	sep := "    "
 	hints := strings.Join([]string{
 		keyHint("enter", "confirm", c),
 		keyHint("ctrl+u", "clear", c),
@@ -330,7 +330,7 @@ func (m loginModel) View() string {
 		out = append(out, cardRow("  "+ink("✓ "+m.notice, mint, c), inner, c))
 	}
 	out = append(out, cardBottom(inner, c))
-	sep := ink("  ·  ", fgBorder, c)
+	sep := "    "
 	hints := strings.Join([]string{keyHint("o", "open browser", c), keyHint("esc", "cancel", c)}, sep)
 	out = append(out, "  "+ansi.Truncate(hints, inner+4, "…"))
 	return strings.Join(out, "\n")
@@ -535,7 +535,7 @@ func (m deployView) View() string {
 	clip := func(s string) string { return "  " + ansi.Truncate(s, w, "…") }
 
 	var out []string
-	ctx := boldInk(cleanLog(m.project), fgBright, c) + " " + ink("·", fgDim, c) + " " + ink(m.target, pink, c)
+	ctx := boldInk(cleanLog(m.project), fgBright, c) + "  " + ink(m.target, pink, c)
 	out = append(out, clip(miniMark(c)+"  "+boldInk("PIER", fgBright, c)+"  "+ink("/", fgDim, c)+"  "+ctx))
 
 	title := boldInk("Deploy "+m.target, fgBright, c)
@@ -549,7 +549,7 @@ func (m deployView) View() string {
 	case m.paused:
 		lbl := "Paused"
 		if m.unseen > 0 {
-			lbl += fmt.Sprintf(" · %d new", m.unseen)
+			lbl += fmt.Sprintf(", %d new", m.unseen)
 		}
 		badge = ink("● ", amber, c) + boldInk(lbl, amber, c)
 	default:
@@ -557,7 +557,7 @@ func (m deployView) View() string {
 		if lbl == "" {
 			lbl = "Building"
 		}
-		badge = ink(spinnerFrames[m.spin]+" ", lavender, c) + boldInk(lbl+" · "+elapsed, lavender, c)
+		badge = ink(spinnerFrames[m.spin]+" ", lavender, c) + boldInk(lbl+"  "+elapsed, lavender, c)
 	}
 	gap := max(2, w-ansi.StringWidth(title)-ansi.StringWidth(badge))
 	out = append(out, clip(title+strings.Repeat(" ", gap)+badge))
@@ -590,13 +590,13 @@ func (m deployView) View() string {
 	case m.done:
 		statusLine = ink("✓ Deployment complete", mint, c)
 	case m.paused:
-		statusLine = ink("Scroll paused · build continues in background", amber, c)
+		statusLine = ink("Scroll paused. The build carries on.", amber, c)
 	default:
 		statusLine = ink(filepath.Base(m.dir)+" → "+m.project+" ("+m.target+")", fgDim, c)
 	}
 	out = append(out, clip(statusLine))
 
-	sep := ink("  ·  ", fgBorder, c)
+	sep := "    "
 	if w < 46 {
 		sep = "  "
 	}
@@ -845,7 +845,7 @@ func (m helpModel) View() string {
 		out = append(out, cardRow(line, inner, c))
 	}
 	out = append(out, cardBottom(inner, c))
-	sep := ink("  ·  ", fgBorder, c)
+	sep := "    "
 	hints := strings.Join([]string{keyHint("↑↓", "scroll", c), keyHint("esc", "back", c)}, sep)
 	out = append(out, "  "+ansi.Truncate(hints, inner+4, "…"))
 	return strings.Join(out, "\n")
