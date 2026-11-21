@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -164,7 +165,8 @@ func TestDuplicateHostsKeepTheFirstRoute(t *testing.T) {
 	cfg := build(t, c, routes)
 	dial := map[string]string{}
 	for _, r := range cfg.Apps.HTTP.Servers["pier"].Routes {
-		if len(r.Match) == 0 {
+		// The catch-all routes name no host: one matches browsers by Accept.
+		if len(r.Match) == 0 || len(r.Match[0].Host) == 0 {
 			continue
 		}
 		host := r.Match[0].Host[0]
@@ -257,13 +259,13 @@ func TestConfig(t *testing.T) {
 	if !s.AutomaticHTTPS.Disable || s.Listen[0] != ":8088" {
 		t.Errorf("server = %+v", s)
 	}
-	if len(s.Routes) != 3 {
-		t.Fatalf("want 2 sites and a fallback, got %d routes", len(s.Routes))
+	if len(s.Routes) != 4 {
+		t.Fatalf("want 2 sites and the two catch-all 404s, a page and a line, got %d routes", len(s.Routes))
 	}
 	if h := s.Routes[0].Match[0].Host[0]; h != "blog.pier.localhost" {
 		t.Errorf("routes not sorted by host: first is %q", h)
 	}
-	if len(s.Routes[2].Match) != 0 {
+	if len(s.Routes[3].Match) != 0 {
 		t.Error("the last route should be the catch-all 404")
 	}
 	if !strings.Contains(string(raw), `"X-Pier-Deployment"`) {
@@ -296,5 +298,47 @@ func TestApply(t *testing.T) {
 	defer bad.Close()
 	if err := (Caddy{Admin: bad.URL}).Apply(context.Background(), nil); err == nil || !strings.Contains(err.Error(), "bad config") {
 		t.Fatalf("want Caddy's error passed on, got %v", err)
+	}
+}
+
+// An address nothing is deployed at gets a page in a browser and one plain
+// line anywhere else. Caddy expands {placeholders} in a response body, and the
+// page is full of braces, so it must arrive exactly as written.
+func TestNothingDeployedPage(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	ln.Close()
+	c := Caddy{Listen: []string{addr}, Storage: t.TempDir()}
+	if err := c.Apply(context.Background(), nil); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { c.Stop() })
+	get := func(accept string) (int, string, string) {
+		t.Helper()
+		req, _ := http.NewRequest("GET", "http://"+addr+"/some/page", nil)
+		req.Host = "gone.pier.localhost"
+		if accept != "" {
+			req.Header.Set("Accept", accept)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, resp.Header.Get("Content-Type"), string(b)
+	}
+	code, kind, body := get("text/html,application/xhtml+xml,*/*;q=0.8")
+	if code != 404 || !strings.HasPrefix(kind, "text/html") || body != notFoundPage {
+		t.Fatalf("a browser got %d %s, and the page changed on the way: %v", code, kind, body != notFoundPage)
+	}
+	if strings.Contains(body, "{{") || !strings.Contains(body, "Nothing is deployed here.") {
+		t.Fatal("the page's fonts or words are missing")
+	}
+	if code, kind, body := get(""); code != 404 || !strings.HasPrefix(kind, "text/plain") || body != notFoundText {
+		t.Fatalf("curl got %d %s %q", code, kind, body)
 	}
 }
