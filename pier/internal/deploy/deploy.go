@@ -344,7 +344,7 @@ func (d *Deployer) run(ctx context.Context, project string, src Source, out io.W
 			cancel()
 		}
 		say(out, "pier", "build failed after %s: %s", seconds(elapsed), err)
-		if host := d.addressFor(project, src); host != "" {
+		if host := d.addressFor(ctx, project, src); host != "" {
 			if prev := d.serving(ctx, host); prev != "" {
 				say(out, "pier", "%s still serves %s", host, prev)
 			}
@@ -368,7 +368,7 @@ func (d *Deployer) run(ctx context.Context, project string, src Source, out io.W
 			held = true
 		}
 	}
-	if host := d.addressFor(project, src); host != "" && !held {
+	if host := d.addressFor(ctx, project, src); host != "" && !held {
 		alias := store.Alias{Project: project, Branch: src.Branch, DeploymentID: dep.ID, Kind: store.KindBranch, Host: host}
 		if src.Target == store.TargetProduction {
 			alias.Kind = store.KindProduction
@@ -382,7 +382,7 @@ func (d *Deployer) run(ctx context.Context, project string, src Source, out io.W
 	}
 	if held {
 		say(out, "pier", "production is rolled back, so this build didn't replace it; promote it in the dashboard, or undo the rollback")
-	} else if host := d.addressFor(project, src); host != "" {
+	} else if host := d.addressFor(ctx, project, src); host != "" {
 		say(out, "alias", "%s", d.URL(host))
 	}
 	say(out, "alias", "%s", d.URL(names.Deployment(project, dep.ID, d.Domain)))
@@ -625,18 +625,28 @@ func (d *Deployer) pointProduction(ctx context.Context, dep store.Deployment) er
 		}
 	}
 	return d.Store.SetAlias(ctx, store.Alias{
-		Host: names.Production(dep.Project, d.Domain), Project: dep.Project, Kind: store.KindProduction,
+		Host: d.ProductionHost(ctx, dep.Project), Project: dep.Project, Kind: store.KindProduction,
 		Branch: dep.Branch, DeploymentID: dep.ID,
 	})
+}
+
+// ProductionHost is a project's production address under the base domain:
+// its name, or the name its owner gave the address instead.
+func (d *Deployer) ProductionHost(ctx context.Context, project string) string {
+	label := project
+	if p, err := d.Store.Project(ctx, project); err == nil {
+		label = p.Label()
+	}
+	return names.Production(label, d.Domain)
 }
 
 // addressFor is the address a source moves when it builds: production's,
 // a pushed branch's, or none for a preview uploaded by pier deploy, which
 // only gets its own permanent address.
-func (d *Deployer) addressFor(project string, src Source) string {
+func (d *Deployer) addressFor(ctx context.Context, project string, src Source) string {
 	switch {
 	case src.Target == store.TargetProduction:
-		return names.Production(project, d.Domain)
+		return d.ProductionHost(ctx, project)
 	case src.Kind == store.SourceGit || src.Kind == store.SourceGitHub:
 		return names.Branch(project, src.Branch, d.Domain)
 	}

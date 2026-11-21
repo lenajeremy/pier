@@ -124,7 +124,7 @@ func (a *API) domains(w http.ResponseWriter, r *http.Request) {
 		}
 		views = append(views, v)
 	}
-	base := names.Production(project, a.Deployer.Domain)
+	base := names.Production(ps.label, a.Deployer.Domain)
 	writeJSON(w, 200, map[string]any{"domains": views, "public_ip": ip, "default_host": base, "https": a.Deployer.Router.HTTPS, "default_tls": ps.production != nil && a.hasCertificate(r.Context(), base), "deployed": ps.production != nil})
 }
 

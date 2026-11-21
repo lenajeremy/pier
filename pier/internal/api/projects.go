@@ -50,6 +50,7 @@ type Address struct {
 // projectState is everything known about one project, worked out once.
 type projectState struct {
 	name             string
+	label            string // production's name under the base domain
 	productionBranch string
 	rolledBackFrom   string
 	deployments      []Deployment // newest first
@@ -58,8 +59,9 @@ type projectState struct {
 }
 
 func (a *API) loadProject(r *http.Request, name string, aliases []store.Alias) (projectState, error) {
-	ps := projectState{name: name, productionBranch: a.Deployer.ProductionBranch}
+	ps := projectState{name: name, label: name, productionBranch: a.Deployer.ProductionBranch}
 	if p, err := a.Store.Project(r.Context(), name); err == nil {
+		ps.label = p.Label()
 		if p.ProductionBranch != "" {
 			ps.productionBranch = p.ProductionBranch
 		}
@@ -198,7 +200,7 @@ func (a *API) projects(w http.ResponseWriter, r *http.Request) {
 			a.fail(w, err)
 			return
 		}
-		host := names.Production(name, a.Deployer.Domain)
+		host := names.Production(ps.label, a.Deployer.Domain)
 		p := map[string]any{
 			"name": name, "address": host, "url": a.Deployer.URL(host),
 			"status": ps.status(), "deployments": len(ps.deployments),
@@ -222,7 +224,7 @@ func (a *API) project(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	host := names.Production(name, a.Deployer.Domain)
+	host := names.Production(ps.label, a.Deployer.Domain)
 	var containerStatus *apphost.ContainerStatus
 	if ps.production != nil && ps.production.Deployment != nil && ps.production.Deployment.Runtime != "" && a.Deployer.Apps != nil {
 		sctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)

@@ -1,9 +1,9 @@
 import { useState, type FormEvent, type ReactNode } from 'react'
-import { api } from '../lib/api'
+import { api, ApiError } from '../lib/api'
 import { failed } from '../lib/actions'
 import { useData } from '../lib/data'
 import { Copy, Redeploy, Trash, Visit } from '../components/Icons'
-import { confirm } from '../components/Dialog'
+import { confirm, Dialog } from '../components/Dialog'
 import { Menu } from '../components/Menu'
 import { copy, toast } from '../components/Toast'
 import { Problem, Skeleton, When } from '../components/ui'
@@ -76,6 +76,7 @@ export function Domains({ project, now }: { project: string; now: number }) {
   const [host, setHost] = useState('')
   const [busy, setBusy] = useState(false)
   const [problem, setProblem] = useState('')
+  const [renaming, setRenaming] = useState(false)
 
   const add = async (e: FormEvent) => {
     e.preventDefault()
@@ -269,14 +270,35 @@ export function Domains({ project, now }: { project: string; now: number }) {
             host={data.default_host}
             url={data.deployed ? scheme + data.default_host : undefined}
             status={serving(data, data.default_tls)}
-            note="The address from your base domain. It can't be removed."
+            note={
+              data.default_host.split('.')[0] === project
+                ? "The address from your base domain. It can't be removed, but its name can change."
+                : `The address from your base domain, renamed from ${project}. Previews keep the project's name.`
+            }
             live={data.deployed && (!data.https || data.default_tls)}
             actions={
-              <button className="copy shown" onClick={() => copy(scheme + data.default_host)} aria-label={`Copy ${data.default_host}`} data-tip="Copy address">
-                <Copy />
-              </button>
+              <>
+                <button className="btn quiet small" onClick={() => setRenaming(true)}>
+                  Change
+                </button>
+                <button className="copy shown" onClick={() => copy(scheme + data.default_host)} aria-label={`Copy ${data.default_host}`} data-tip="Copy address">
+                  <Copy />
+                </button>
+              </>
             }
           />
+          {renaming && (
+            <AddressDialog
+              project={project}
+              host={data.default_host}
+              onClose={() => setRenaming(false)}
+              onDone={(host) => {
+                setRenaming(false)
+                reload()
+                toast(`${project} now lives at ${host}`)
+              }}
+            />
+          )}
         </div>
       )}
     </main>
@@ -291,5 +313,84 @@ function Copyable({ text, what }: { text: string; what: string }) {
         <Copy size={14} />
       </button>
     </span>
+  )
+}
+
+// AddressDialog renames the address a project has under the base domain:
+// blog.example.com can become journal.example.com. Only production's
+// address moves; previews and each deployment's own address keep the
+// project's name, so links already shared keep working.
+function AddressDialog({ project, host, onClose, onDone }: { project: string; host: string; onClose: () => void; onDone: (host: string) => void }) {
+  const dot = host.indexOf('.')
+  const domain = host.slice(dot + 1)
+  const [name, setName] = useState(host.slice(0, dot))
+  const [busy, setBusy] = useState(false)
+  const [problem, setProblem] = useState('')
+  const next = name.trim() || project
+  const same = next + '.' + domain === host
+  const submit = async (e: FormEvent) => {
+    e.preventDefault()
+    if (same) return onClose()
+    setBusy(true)
+    setProblem('')
+    try {
+      const r = await api<{ host: string }>(`/api/projects/${encodeURIComponent(project)}/address`, {
+        method: 'PUT',
+        body: JSON.stringify({ subdomain: next === project ? '' : next }),
+      })
+      onDone(r.host)
+    } catch (err) {
+      setProblem(err instanceof ApiError ? err.message : "Can't reach pierd.")
+      setBusy(false)
+    }
+  }
+  return (
+    <Dialog
+      title="Change the address"
+      busy={busy}
+      onClose={onClose}
+      onSubmit={submit}
+      footer={
+        <>
+          <button className="btn quiet medium" type="button" disabled={busy} onClick={onClose}>
+            Cancel
+          </button>
+          <button className="btn primary medium" type="submit" disabled={busy || same}>
+            {busy ? 'Changing…' : 'Change address'}
+          </button>
+        </>
+      }
+    >
+      <p>
+        <span className="mono">{host}</span> stops working the moment the new address does. Custom domains, previews and each
+        deployment's own address don't change.
+      </p>
+      <label className={'field' + (problem ? ' error' : '')}>
+        <span className="field-label">Address</span>
+        <span className="input affixed">
+          <input
+            value={name}
+            onChange={(e) => {
+              setName(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '-'))
+              setProblem('')
+            }}
+            placeholder={project}
+            size={Math.max(name.length, name ? 1 : project.length)}
+            spellCheck={false}
+            autoCapitalize="off"
+            autoComplete="off"
+            autoFocus
+          />
+          <span className="affix">.{domain}</span>
+        </span>
+        {problem ? (
+          <span className="field-message" role="alert">
+            {problem}
+          </span>
+        ) : (
+          <span className="t-note">Lowercase letters, numbers and dashes. Leave it empty to go back to {project}.</span>
+        )}
+      </label>
+    </Dialog>
   )
 }
