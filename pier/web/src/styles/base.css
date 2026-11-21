@@ -21,13 +21,21 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Scrollbars inside the dashboard are thin and dark, like the rest of it. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.16) transparent;
+}
+
 a {
   color: inherit;
   text-decoration: none;
 }
 
 button,
-input {
+input,
+select,
+textarea {
   font: inherit;
   color: inherit;
 }

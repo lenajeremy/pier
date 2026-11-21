@@ -1,22 +1,33 @@
-import { useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent, type FormEvent } from 'react'
+import { useMemo, useRef, useState, type ChangeEvent, type FormEvent } from 'react'
 import { api, ApiError } from '../lib/api'
+import { failed } from '../lib/actions'
 import { useData } from '../lib/data'
-import { ago } from '../lib/format'
-import { navigate, Link } from '../lib/router'
-import { Info, More, Search } from '../components/Icons'
-import { Badge } from '../components/ui'
+import { plural } from '../lib/format'
+import { Link, navigate } from '../lib/router'
+import { Copy, Eye, Info, Pencil, Trash, Visit } from '../components/Icons'
+import { confirm, Dialog } from '../components/Dialog'
+import { Menu } from '../components/Menu'
+import { copy, toast } from '../components/Toast'
+import { Badge, Paging, Problem, SearchField, Skeleton, usePaged, When } from '../components/ui'
 
-type Scope = 'production' | 'preview'
+export type Scope = 'production' | 'preview'
 type Entry = { name: string; scopes: Scope[]; updated_at: string }
-type Data = { inherited: Pick<Entry, 'name' | 'scopes'>[]; variables: Entry[]; stale: { production: boolean; names: string[]; deployment?: string } }
+type Data = {
+  inherited: Pick<Entry, 'name' | 'scopes'>[]
+  variables: Entry[]
+  stale: { production: boolean; names: string[]; deployment?: string }
+}
 
 const where: { label: string; scopes: Scope[] }[] = [
   { label: 'Production', scopes: ['production'] },
   { label: 'Preview', scopes: ['preview'] },
   { label: 'Both', scopes: ['production', 'preview'] },
 ]
+const PAGE = 50
+const MAX = 4096 * 16 // pierd's own limit is what counts; this only draws the counter
 
-// Lightweight client preview count for pasted .env blocks; the server performs full validation.
+// A count of what a pasted .env holds, shown before it's sent. pierd does
+// the real parsing.
 function countDotEnvEntries(raw: string): number {
   const keys = new Set<string>()
   const text = raw.replace(/\r\n?/g, '\n')
@@ -24,23 +35,38 @@ function countDotEnvEntries(raw: string): number {
   while (i < text.length) {
     while (i < text.length && (text[i] === ' ' || text[i] === '\t')) i++
     if (i >= text.length) break
-    if (text[i] === '\n') { i++; continue }
-    if (text[i] === '#') { while (i < text.length && text[i] !== '\n') i++; continue }
+    if (text[i] === '\n') {
+      i++
+      continue
+    }
+    if (text[i] === '#') {
+      while (i < text.length && text[i] !== '\n') i++
+      continue
+    }
     if (text.startsWith('export', i) && (text[i + 6] === ' ' || text[i + 6] === '\t')) {
       i += 6
       while (i < text.length && (text[i] === ' ' || text[i] === '\t')) i++
     }
     const start = i
     while (i < text.length && text[i] !== '=' && text[i] !== '\n') i++
-    if (text[i] !== '=') { while (i < text.length && text[i] !== '\n') i++; continue }
+    if (text[i] !== '=') {
+      while (i < text.length && text[i] !== '\n') i++
+      continue
+    }
     const key = text.slice(start, i).trim()
     i++
     while (i < text.length && (text[i] === ' ' || text[i] === '\t')) i++
     if (text[i] === '"' || text[i] === "'") {
       const q = text[i++]
       while (i < text.length) {
-        if (q === '"' && text[i] === '\\' && i + 1 < text.length) { i += 2; continue }
-        if (text[i] === q) { i++; break }
+        if (q === '"' && text[i] === '\\' && i + 1 < text.length) {
+          i += 2
+          continue
+        }
+        if (text[i] === q) {
+          i++
+          break
+        }
         i++
       }
       while (i < text.length && text[i] !== '\n') i++
@@ -52,96 +78,79 @@ function countDotEnvEntries(raw: string): number {
   return keys.size
 }
 
-// Variables is G1: add or import variables, see every one with where it applies,
-// and redeploy when production's build doesn't have the latest values.
+type Open = { kind: 'add'; raw?: string } | { kind: 'import'; raw?: string } | { kind: 'change'; entry: Entry } | null
+
+// Variables is G1: every variable with where it reaches, adding and
+// importing them, and a redeploy when production was built with old values.
 export function Variables({ project, now }: { project: string; now: number }) {
   const base = `/api/projects/${encodeURIComponent(project)}`
   const { data, error, reload } = useData<Data>(`${base}/variables`)
-  const [mode, setMode] = useState<'single' | 'import'>('single')
-  const [name, setName] = useState('')
-  const [value, setValue] = useState('')
-  const [multiline, setMultiline] = useState(false)
-  const [rawEnv, setRawEnv] = useState('')
-  const [scopes, setScopes] = useState<Scope[]>(['production', 'preview'])
   const [query, setQuery] = useState('')
-  const [problem, setProblem] = useState<{ text: string; field?: string } | null>(null)
-  const [busy, setBusy] = useState(false)
-  const fileRef = useRef<HTMLInputElement>(null)
+  const [open, setOpen] = useState<Open>(null)
 
-  const send = async (path: string, init: RequestInit) => {
-    setProblem(null)
-    try {
-      await api(path, init)
-      reload()
-      return true
-    } catch (e) {
-      setProblem(e instanceof ApiError ? { text: e.message, field: String(e.body.field ?? '') } : { text: "Can't reach pierd." })
-      return false
-    }
-  }
-
-  const add = async (e: FormEvent) => {
-    e.preventDefault()
-    setBusy(true)
-    if (await send(`${base}/variables`, { method: 'PUT', body: JSON.stringify({ name: name.trim(), value, scopes }) })) {
-      setName('')
-      setValue('')
-      setMultiline(false)
-    }
-    setBusy(false)
-  }
-
-  const importEnv = async (e: FormEvent) => {
-    e.preventDefault()
-    setBusy(true)
-    if (await send(`${base}/variables/import`, { method: 'POST', body: JSON.stringify({ raw: rawEnv, scopes }) })) {
-      setRawEnv('')
-      setMode('single')
-    }
-    setBusy(false)
-  }
-
-  const handlePasteValue = (e: ClipboardEvent<HTMLInputElement>) => {
-    const pasted = e.clipboardData.getData('text')
-    if (!pasted) return
-    if (pasted.includes('\n')) {
-      e.preventDefault()
-      setMultiline(true)
-      setValue(pasted)
-      setProblem(null)
-    }
-  }
-
-  const pickFile = async (e: ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0]
-    e.target.value = ''
-    if (!f) return
-    setRawEnv(await f.text())
-    setProblem(null)
-  }
-
-  const redeploy = async () => {
-    setBusy(true)
-    try {
-      const r = await api<{ id?: string }>(`${base}/redeploy`, { method: 'POST', body: '{}' })
-      if (r.id) navigate(`/projects/${project}/deployments/${r.id}`)
-    } catch (e) {
-      setProblem({ text: e instanceof ApiError ? e.message : "Can't reach pierd." })
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const importCount = useMemo(() => countDotEnvEntries(rawEnv), [rawEnv])
   const shown = useMemo(
     () => (data?.variables ?? []).filter((v) => v.name.toLowerCase().includes(query.trim().toLowerCase())),
     [data, query],
   )
-  if (error) return <main className="main"><span className="t-note">{error.message}</span></main>
-  if (!data) return <div className="loading">Loading variables…</div>
+  const paged = usePaged(shown, PAGE, query)
+
+  if (error) {
+    return (
+      <main className="main">
+        <Problem>{error.message}</Problem>
+      </main>
+    )
+  }
+  if (!data) {
+    return (
+      <main className="main">
+        <div className="panel">
+          <Skeleton rows={4} />
+        </div>
+      </main>
+    )
+  }
 
   const stale = data.stale
-  const field = (k: string) => 'field' + (problem?.field === k ? ' error' : '')
+  const redeploy = () =>
+    confirm({
+      title: 'Redeploy production?',
+      body: (
+        <p>
+          Pier builds production's source again with the variables as they are now. When the build works, it goes live in
+          place of what's serving.
+        </p>
+      ),
+      action: 'Redeploy',
+      working: 'Starting the build…',
+      run: async () => {
+        const r = await api<{ id?: string }>(`${base}/redeploy`, { method: 'POST', body: '{}' })
+        if (r.id) navigate(`/projects/${project}/deployments/${r.id}`)
+      },
+    })
+
+  const remove = (v: Entry) =>
+    confirm({
+      title: (
+        <>
+          Delete <span className="mono">{v.name}</span>?
+        </>
+      ),
+      body: (
+        <p>
+          {v.scopes.length === 2 ? 'Production and preview' : v.scopes[0] === 'production' ? 'Production' : 'Preview'} builds
+          stop getting it from the next deployment on. Deployments that are already built keep the value they were built with.
+        </p>
+      ),
+      action: 'Delete',
+      working: 'Deleting…',
+      danger: true,
+      run: async () => {
+        await api(`${base}/variables/delete`, { method: 'POST', body: JSON.stringify({ name: v.name, scopes: v.scopes }) })
+        reload()
+      },
+    }).then((ok) => ok && toast(`Deleted ${v.name}`))
+
   return (
     <main className="main">
       {stale.production && (
@@ -151,405 +160,560 @@ export function Variables({ project, now }: { project: string; now: number }) {
             <span className="t-small t-strong">
               {stale.names.length > 0 ? (
                 <>
-                  Production still uses the old{' '}
-                  {stale.names.map((n, i) => (
-                    <span key={n}>
-                      {i > 0 && (i === stale.names.length - 1 ? ' and ' : ', ')}
-                      <span className="mono">{n}</span>
-                    </span>
-                  ))}
+                  Production still uses the old <Names names={stale.names} />
                 </>
               ) : (
                 'Production was built before its variables changed'
               )}
             </span>
-            <span className="t-caption t-muted">Redeploy production so the build and running process receive the updated values.</span>
+            <span className="t-caption t-muted">Redeploy production so its build and its running process get the new values.</span>
           </div>
-          <button className="btn quiet" disabled={busy} onClick={redeploy}>
+          <button className="btn quiet" onClick={redeploy}>
             Redeploy
           </button>
         </div>
       )}
 
-      {mode === 'import' ? (
-        <form className="panel form-panel" onSubmit={importEnv} noValidate>
-          <div className="toolbar">
-            <span className="t-small t-strong">Import .env</span>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <input ref={fileRef} type="file" accept=".env,.txt,text/plain" hidden onChange={pickFile} />
-              <button className="btn quiet" type="button" onClick={() => fileRef.current?.click()}>
-                Choose file
-              </button>
-              <button
-                className="btn quiet"
-                type="button"
-                onClick={() => {
-                  setMode('single')
-                  setProblem(null)
-                }}
-              >
-                Single variable
-              </button>
-            </div>
-          </div>
-          <label className={field('raw')}>
-            <span className="field-label">Paste .env or Railway Raw Editor lines</span>
-            <textarea
-              className="input mono"
-              rows={7}
-              placeholder={'DATABASE_URL=postgres://...\nAPI_KEY=sk_live_...\nPRIVATE_KEY="-----BEGIN PRIVATE KEY-----\\n..."'}
-              value={rawEnv}
-              spellCheck={false}
-              autoCapitalize="off"
-              onChange={(e) => {
-                setRawEnv(e.target.value)
-                setProblem(null)
-              }}
-            />
-          </label>
-          <div className="import-footer">
-            <div className="field">
-              <span className="field-label">Where</span>
-              <div className="seg" role="radiogroup" aria-label="Where imported variables apply">
-                {where.map((w) => (
-                  <button
-                    key={w.label}
-                    type="button"
-                    className={w.scopes.join() === scopes.join() ? 'on' : ''}
-                    role="radio"
-                    aria-checked={w.scopes.join() === scopes.join()}
-                    onClick={() => setScopes(w.scopes)}
-                  >
-                    {w.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              {importCount > 0 && (
-                <span className="t-note">
-                  {importCount} {importCount === 1 ? 'variable' : 'variables'} ready
-                </span>
-              )}
-              <button className="btn primary large" type="submit" disabled={busy || !rawEnv.trim()}>
-                {busy ? 'Importing…' : importCount > 0 ? `Import ${importCount}` : 'Import'}
-              </button>
-            </div>
-          </div>
-          {problem && !stale.production ? (
-            <span className="field-message" role="alert">
-              {problem.text}
-            </span>
-          ) : (
-            <span className="t-note">
-              Existing variables with the same name and scope are updated. Supports comments, export prefixes, and quoted multiline secrets.
-            </span>
-          )}
-        </form>
-      ) : (
-        <form className="panel form-panel" onSubmit={add} noValidate>
-          <div className="toolbar">
-            <span className="t-small t-strong">Add a variable</span>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button
-                className="btn quiet"
-                type="button"
-                onClick={() => {
-                  setMultiline((m) => !m)
-                  setProblem(null)
-                }}
-              >
-                {multiline ? 'Single line' : 'Multiline'}
-              </button>
-              <button
-                className="btn quiet"
-                type="button"
-                onClick={() => {
-                  setMode('import')
-                  setProblem(null)
-                }}
-              >
-                Import .env
-              </button>
-            </div>
-          </div>
-          <div className={'add-fields' + (multiline ? ' multiline' : '')}>
-            <label className={field('name')}>
-              <span className="field-label">Name</span>
-              <input
-                className="input mono"
-                placeholder="e.g. DATABASE_URL"
-                value={name}
-                spellCheck={false}
-                autoCapitalize="off"
-                onChange={(e) => {
-                  setName(e.target.value.replace(/\s/g, '_'))
-                  setProblem(null)
-                }}
-              />
-            </label>
-            <label className={field('value')}>
-              <span className="field-label">Value</span>
-              {multiline ? (
-                <textarea
-                  className="input mono"
-                  rows={4}
-                  placeholder="Paste a multiline secret, PEM key, or JSON value"
-                  value={value}
-                  spellCheck={false}
-                  autoComplete="off"
-                  onChange={(e) => {
-                    setValue(e.target.value)
-                    setProblem(null)
-                  }}
-                />
-              ) : (
-                <input
-                  className="input mono"
-                  placeholder="Paste a value"
-                  value={value}
-                  spellCheck={false}
-                  autoComplete="off"
-                  onPaste={handlePasteValue}
-                  onChange={(e) => {
-                    setValue(e.target.value)
-                    setProblem(null)
-                  }}
-                />
-              )}
-            </label>
-            <div className={multiline ? 'import-footer' : undefined} style={multiline ? undefined : { display: 'contents' }}>
-              <div className="field">
-                <span className="field-label">Where</span>
-                <div className="seg" role="radiogroup" aria-label="Where it applies">
-                  {where.map((w) => (
-                    <button
-                      key={w.label}
-                      type="button"
-                      className={w.scopes.join() === scopes.join() ? 'on' : ''}
-                      role="radio"
-                      aria-checked={w.scopes.join() === scopes.join()}
-                      onClick={() => setScopes(w.scopes)}
-                    >
-                      {w.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <button className="btn primary large" type="submit" disabled={busy || !name.trim()}>
-                Add
-              </button>
-            </div>
-          </div>
-          {problem && !stale.production ? (
-            <span className="field-message" role="alert">
-              {problem.text}
-            </span>
-          ) : (
-            <span className="t-note">
-              Server apps receive variables at build time and at runtime. For static sites, only public prefixes like VITE_ reach the browser.
-            </span>
-          )}
-        </form>
-      )}
-
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div className="stack">
         <div className="toolbar">
           <div className="title">
-            <span className="t-small t-strong">Variables</span>
-            <span className="mono t-caption" style={{ color: 'var(--d-note)' }}>
-              {data.variables.length}
-            </span>
+            <h2 className="t-small t-strong">Variables</h2>
+            <span className="count">{data.variables.length.toLocaleString('en-GB')}</span>
           </div>
-          {data.variables.length > 0 && (
-            <label className="search-field" style={{ width: 280 }}>
-              <Search size={18} />
-              <input placeholder="Search variables" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Search variables" />
-            </label>
-          )}
+          {data.variables.length > 5 && <SearchField value={query} onChange={setQuery} placeholder="Search variables" hotkey="/" width={260} />}
+          <button className="btn quiet" onClick={() => setOpen({ kind: 'import' })}>
+            Import .env
+          </button>
+          <button className="btn primary" onClick={() => setOpen({ kind: 'add' })}>
+            Add variable
+          </button>
         </div>
-        <div className="panel">
-          {data.variables.length === 0 && (
-            <div className="var-row" style={{ gridTemplateColumns: '1fr' }}>
-              <span className="t-caption t-muted">No project-specific variables yet.</span>
+
+        {data.variables.length === 0 ? (
+          <div className="empty">
+            <span className="t-small t-strong">No variables yet</span>
+            <span className="t-caption t-muted" style={{ maxWidth: 520 }}>
+              Variables reach the build, and the running process of a server app. On a static site only names with a public
+              prefix, like <span className="mono">VITE_</span>, end up in the browser.
+            </span>
+            <div className="page-actions">
+              <button className="btn quiet" onClick={() => setOpen({ kind: 'import' })}>
+                Import .env
+              </button>
+              <button className="btn primary" onClick={() => setOpen({ kind: 'add' })}>
+                Add variable
+              </button>
             </div>
-          )}
-          {shown.map((v) => (
-            <Row key={v.name + v.scopes.join()} v={v} base={base} now={now} send={send} />
-          ))}
-        </div>
-        {data.inherited.length > 0 && (
-          <div className="panel form-panel">
-            <Link className="t-small t-strong" to="/shared-variables">
-              Inherited shared variables ↗
-            </Link>
-            {data.inherited.map((v) => (
-              <div key={v.name}>
-                <span className="mono">{v.name}</span>{' '}
-                <span className="t-note">{v.scopes.map((s) => (s === 'production' ? 'Production' : 'Preview')).join(', ')}</span>
-              </div>
+          </div>
+        ) : (
+          <div className="table variables">
+            <div className="t-head">
+              <span>Name</span>
+              <span>Value</span>
+              <span>Where</span>
+              <span>Changed</span>
+              <span />
+            </div>
+            {paged.shown.map((v) => (
+              <Row key={v.name + v.scopes.join()} v={v} base={base} now={now} onChange={() => setOpen({ kind: 'change', entry: v })} onDelete={() => remove(v)} />
             ))}
+            {shown.length === 0 && (
+              <div className="t-empty">
+                <span className="t-caption t-muted">No variable matches “{query.trim()}”.</span>
+                <button className="btn quiet small" onClick={() => setQuery('')}>
+                  Show all
+                </button>
+              </div>
+            )}
           </div>
         )}
-        {problem && stale.production && <span className="field-message">{problem.text}</span>}
+        <Paging paged={paged} noun="variable" />
       </div>
+
+      {data.inherited.length > 0 && (
+        <div className="stack">
+          <div className="toolbar">
+            <div className="title">
+              <h2 className="t-small t-strong">Shared with this project</h2>
+              <span className="count">{data.inherited.length}</span>
+            </div>
+            <Link className="btn quiet visit" to="/shared-variables">
+              Shared variables
+              <Visit />
+            </Link>
+          </div>
+          <div className="table inherited">
+            {data.inherited.map((v) => {
+              const own = data.variables.some((o) => o.name === v.name && o.scopes.some((s) => v.scopes.includes(s)))
+              return (
+                <div key={v.name} className="t-row">
+                  <span className="mono">{v.name}</span>
+                  <span className="scopes">
+                    {v.scopes.map((s) => (
+                      <Badge key={s} role={s} />
+                    ))}
+                  </span>
+                  <span className="t-note">{own ? `${project}'s own ${v.name} wins where both apply.` : 'Set once, for every project linked to it.'}</span>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {open?.kind === 'add' && (
+        <AddDialog
+          base={base}
+          onClose={() => setOpen(null)}
+          onImport={(raw) => setOpen({ kind: 'import', raw })}
+          onDone={(name) => {
+            setOpen(null)
+            reload()
+            toast(`Added ${name}`)
+          }}
+        />
+      )}
+      {open?.kind === 'import' && (
+        <ImportDialog
+          base={base}
+          raw={open.raw}
+          onClose={() => setOpen(null)}
+          onDone={(n) => {
+            setOpen(null)
+            reload()
+            toast(`Imported ${plural(n, 'variable')}`)
+          }}
+        />
+      )}
+      {open?.kind === 'change' && (
+        <ChangeDialog
+          base={base}
+          entry={open.entry}
+          onClose={() => setOpen(null)}
+          onDone={() => {
+            setOpen(null)
+            reload()
+            toast(`Changed ${open.entry.name}`)
+          }}
+        />
+      )}
     </main>
   )
 }
 
-function Row({
-  v,
-  base,
-  now,
-  send,
-}: {
+export function Names({ names }: { names: string[] }) {
+  return (
+    <>
+      {names.map((n, i) => (
+        <span key={n}>
+          {i > 0 && (i === names.length - 1 ? ' and ' : ', ')}
+          <span className="mono">{n}</span>
+        </span>
+      ))}
+    </>
+  )
+}
+
+function Row({ v, base, now, onChange, onDelete }: {
   v: Entry
   base: string
   now: number
-  send: (path: string, init: RequestInit) => Promise<boolean>
+  onChange: () => void
+  onDelete: () => void
 }) {
   const [revealed, setRevealed] = useState<string | null>(null)
-  const [editing, setEditing] = useState<string | null>(null)
-  const [editMultiline, setEditMultiline] = useState(false)
-  const [menu, setMenu] = useState(false)
-
+  const read = () =>
+    api<{ value: string }>(`${base}/variables/reveal`, {
+      method: 'POST',
+      body: JSON.stringify({ name: v.name, scopes: [v.scopes[0]] }),
+    }).then((r) => r.value)
   const reveal = async () => {
     if (revealed !== null) return setRevealed(null)
     try {
-      const r = await api<{ value: string }>(`${base}/variables/reveal`, {
-        method: 'POST',
-        body: JSON.stringify({ name: v.name, scopes: [v.scopes[0]] }),
-      })
-      setRevealed(r.value)
-    } catch {
-      setRevealed(null)
+      setRevealed(await read())
+    } catch (e) {
+      failed(e)
     }
   }
-  const startEdit = async () => {
-    setMenu(false)
-    if (revealed !== null) {
-      setEditMultiline(revealed.includes('\n'))
-      setEditing(revealed)
-      return
-    }
-    setEditMultiline(false)
-    setEditing('')
-  }
-  const save = async () => {
-    if (editing === null) return
-    if (await send(`${base}/variables`, { method: 'PUT', body: JSON.stringify({ name: v.name, value: editing, scopes: v.scopes }) })) {
-      setEditing(null)
-      setEditMultiline(false)
-      setRevealed(null)
-    }
-  }
-
   return (
-    <div className="var-row">
-      <span className="mono t-caption name">{v.name}</span>
+    <div className="t-row grow">
+      <span className="mono name" data-tip={v.name.length > 28 ? v.name : undefined}>
+        {v.name}
+      </span>
       <span className="value">
-        {editing !== null ? (
-          editMultiline ? (
-            <textarea
-              className="input mono"
-              autoFocus
-              rows={4}
-              value={editing}
-              onChange={(e) => setEditing(e.target.value)}
-              onKeyDown={(e) => {
-                if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') save()
-                if (e.key === 'Escape') {
-                  setEditing(null)
-                  setEditMultiline(false)
-                }
-              }}
-              aria-label={`New value for ${v.name}`}
-            />
-          ) : (
-            <input
-              className="input mono"
-              autoFocus
-              value={editing}
-              onPaste={(e) => {
-                const pasted = e.clipboardData.getData('text')
-                if (pasted.includes('\n')) {
-                  e.preventDefault()
-                  setEditMultiline(true)
-                  setEditing(pasted)
-                }
-              }}
-              onChange={(e) => setEditing(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') save()
-                if (e.key === 'Escape') setEditing(null)
-              }}
-              aria-label={`New value for ${v.name}`}
-            />
-          )
+        {revealed !== null && revealed.includes('\n') ? (
+          <pre className="mono">{revealed}</pre>
         ) : (
-          <>
-            {revealed !== null && revealed.includes('\n') ? (
-              <pre className="mono t-caption">{revealed}</pre>
-            ) : (
-              <span className={'mono t-caption' + (revealed === null ? ' t-muted' : '')}>{revealed ?? '••••••••••••'}</span>
-            )}
-            <button className="reveal" onClick={reveal} aria-label={revealed === null ? `Show ${v.name}` : `Hide ${v.name}`}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="#8A92A8" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" width="16" height="16" aria-hidden>
-                <path d="M2.5 12C4.5 7.5 8 5.5 12 5.5S19.5 7.5 21.5 12C19.5 16.5 16 18.5 12 18.5S4.5 16.5 2.5 12Z" />
-                <circle cx="12" cy="12" r="3" />
-              </svg>
-            </button>
-          </>
+          <span className={'mono' + (revealed === null ? ' t-quiet' : '')}>{revealed ?? '••••••••••••'}</span>
         )}
+        <button
+          className="reveal"
+          onClick={reveal}
+          aria-label={revealed === null ? `Show ${v.name}` : `Hide ${v.name}`}
+          aria-pressed={revealed !== null}
+          data-tip={revealed === null ? 'Show the value' : 'Hide the value'}
+        >
+          <Eye color={revealed === null ? '#8A92A8' : '#ECEEF4'} />
+        </button>
       </span>
       <span className="scopes">
         {v.scopes.map((s) => (
           <Badge key={s} role={s} />
         ))}
       </span>
-      {editing !== null ? (
-        <span className="edit-actions">
-          <button className="btn primary" onClick={save}>
-            Save
-          </button>
-          <button
-            className="btn quiet"
-            onClick={() => {
-              setEditing(null)
-              setEditMultiline(false)
-            }}
-          >
-            Cancel
-          </button>
-        </span>
-      ) : (
-        <span className="t-note">Changed {ago(v.updated_at, now).toLowerCase()}</span>
-      )}
-      <span style={{ position: 'relative' }}>
-        {editing === null && (
-          <>
-            <button className="icon-btn" aria-label={`Actions for ${v.name}`} aria-expanded={menu} onClick={() => setMenu(!menu)}>
-              <More />
-            </button>
-            {menu && (
-              <div className="menu" style={{ right: 0, top: 38, minWidth: 180 }}>
-                <button className="menu-item" onClick={startEdit}>
-                  Change value
-                </button>
-                <button
-                  className="menu-item"
-                  onClick={() => {
-                    setMenu(false)
-                    send(`${base}/variables/delete`, { method: 'POST', body: JSON.stringify({ name: v.name, scopes: v.scopes }) })
-                  }}
-                >
-                  Delete
-                </button>
-              </div>
-            )}
-          </>
-        )}
+      <When at={v.updated_at} now={now} className="t-muted" />
+      <span className="row-more">
+        <Menu
+          label={`Actions for ${v.name}`}
+          className="icon-btn bare"
+          items={[
+            { label: 'Change value', icon: <Pencil />, onSelect: onChange },
+            {
+              label: 'Copy value',
+              icon: <Copy />,
+              onSelect: () =>
+                read()
+                  .then((value) => copy(value, v.name))
+                  .catch(failed),
+            },
+            'separator',
+            { label: 'Delete', icon: <Trash />, danger: true, onSelect: onDelete },
+          ]}
+        />
       </span>
     </div>
+  )
+}
+
+// ScopePicker is the segmented control for where a variable reaches.
+export function ScopePicker({ value, onChange, label }: { value: Scope[]; onChange: (s: Scope[]) => void; label: string }) {
+  return (
+    <div className="seg" role="radiogroup" aria-label={label}>
+      {where.map((w) => (
+        <button
+          key={w.label}
+          type="button"
+          className={w.scopes.join() === value.join() ? 'on' : ''}
+          role="radio"
+          aria-checked={w.scopes.join() === value.join()}
+          onClick={() => onChange(w.scopes)}
+        >
+          {w.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+// LongValue is the long value field (Components 2): a 12px-corner text area
+// in mono that grows with what's in it.
+export function LongValue({ value, onChange, placeholder, label, rows = 3, autoFocus }: {
+  value: string
+  onChange: (v: string) => void
+  placeholder?: string
+  label: string
+  rows?: number
+  autoFocus?: boolean
+}) {
+  return (
+    <div className="long-value">
+      <textarea
+        className="mono"
+        rows={Math.min(12, Math.max(rows, value.split('\n').length))}
+        placeholder={placeholder}
+        value={value}
+        autoFocus={autoFocus}
+        spellCheck={false}
+        autoCapitalize="off"
+        autoComplete="off"
+        aria-label={label}
+        onChange={(e) => onChange(e.target.value)}
+      />
+      {value.length > 0 && (
+        <span className="counter">
+          {value.length.toLocaleString('en-GB')}
+          {value.length > MAX ? ' characters, which may be more than pierd accepts' : value.length === 1 ? ' character' : ' characters'}
+        </span>
+      )}
+    </div>
+  )
+}
+
+type Fault = { text: string; field?: string } | null
+const fault = (e: unknown): Fault =>
+  e instanceof ApiError ? { text: e.message, field: String(e.body.field ?? '') } : { text: "Can't reach pierd." }
+
+function AddDialog({ base, onClose, onDone, onImport }: {
+  base: string
+  onClose: () => void
+  onDone: (name: string) => void
+  onImport: (raw: string) => void
+}) {
+  const [name, setName] = useState('')
+  const [value, setValue] = useState('')
+  const [scopes, setScopes] = useState<Scope[]>(['production', 'preview'])
+  const [problem, setProblem] = useState<Fault>(null)
+  const [busy, setBusy] = useState(false)
+  const submit = async (e: FormEvent) => {
+    e.preventDefault()
+    setBusy(true)
+    setProblem(null)
+    try {
+      await api(`${base}/variables`, { method: 'PUT', body: JSON.stringify({ name: name.trim(), value, scopes }) })
+      onDone(name.trim())
+    } catch (err) {
+      setProblem(fault(err))
+      setBusy(false)
+    }
+  }
+  const bad = (k: string) => problem && (problem.field === k || (!problem.field && k === 'name'))
+  return (
+    <Dialog
+      wide
+      title="Add a variable"
+      busy={busy}
+      onClose={onClose}
+      onSubmit={submit}
+      footer={
+        <>
+          <button className="btn quiet medium" type="button" disabled={busy} onClick={onClose}>
+            Cancel
+          </button>
+          <button className="btn primary medium" type="submit" disabled={busy || !name.trim()}>
+            {busy ? 'Adding…' : 'Add variable'}
+          </button>
+        </>
+      }
+    >
+      <label className={'field' + (bad('name') ? ' error' : '')}>
+        <span className="field-label">Name</span>
+        <input
+          className="input mono"
+          placeholder="DATABASE_URL"
+          value={name}
+          spellCheck={false}
+          autoCapitalize="off"
+          autoComplete="off"
+          onPaste={(e) => {
+            // A whole .env pasted here belongs in the import; one NAME=value fills both fields.
+            const pasted = e.clipboardData.getData('text').trim()
+            const one = /^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=([^\n]*)$/.exec(pasted)
+            if (one) {
+              e.preventDefault()
+              setName(one[1])
+              setValue(one[2].replace(/^(['"])(.*)\1$/, '$2'))
+            } else if (pasted.includes('\n') && countDotEnvEntries(pasted) > 1) {
+              e.preventDefault()
+              onImport(pasted)
+            }
+          }}
+          onChange={(e) => {
+            setName(e.target.value.replace(/\s/g, '_'))
+            setProblem(null)
+          }}
+        />
+        {bad('name') && (
+          <span className="field-message" role="alert">
+            {problem!.text}
+          </span>
+        )}
+      </label>
+      <div className={'field' + (bad('value') ? ' error' : '')}>
+        <span className="field-label">Value</span>
+        <LongValue
+          value={value}
+          label="Value"
+          placeholder="Paste the value. Keys and JSON can run over several lines."
+          onChange={(v) => {
+            setValue(v)
+            setProblem(null)
+          }}
+        />
+        {bad('value') ? (
+          <span className="field-message" role="alert">
+            {problem!.text}
+          </span>
+        ) : (
+          <span className="t-note">Stored encrypted. Builds get it from the next deployment on.</span>
+        )}
+      </div>
+      <div className="field">
+        <span className="field-label">Where</span>
+        <ScopePicker value={scopes} onChange={setScopes} label="Where it applies" />
+      </div>
+    </Dialog>
+  )
+}
+
+function ImportDialog({ base, raw: first, onClose, onDone }: {
+  base: string
+  raw?: string
+  onClose: () => void
+  onDone: (count: number) => void
+}) {
+  const [raw, setRaw] = useState(first ?? '')
+  const [scopes, setScopes] = useState<Scope[]>(['production', 'preview'])
+  const [problem, setProblem] = useState<Fault>(null)
+  const [busy, setBusy] = useState(false)
+  const file = useRef<HTMLInputElement>(null)
+  const count = useMemo(() => countDotEnvEntries(raw), [raw])
+  const pick = async (e: ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0]
+    e.target.value = ''
+    if (!f) return
+    setRaw(await f.text())
+    setProblem(null)
+  }
+  const submit = async (e: FormEvent) => {
+    e.preventDefault()
+    setBusy(true)
+    setProblem(null)
+    try {
+      await api(`${base}/variables/import`, { method: 'POST', body: JSON.stringify({ raw, scopes }) })
+      onDone(count)
+    } catch (err) {
+      setProblem(fault(err))
+      setBusy(false)
+    }
+  }
+  return (
+    <Dialog
+      wide
+      title="Import a .env file"
+      busy={busy}
+      onClose={onClose}
+      onSubmit={submit}
+      footer={
+        <>
+          <span className="grow t-note">{count > 0 ? `${plural(count, 'variable')} found.` : ''}</span>
+          <button className="btn quiet medium" type="button" disabled={busy} onClick={onClose}>
+            Cancel
+          </button>
+          <button className="btn primary medium" type="submit" disabled={busy || count === 0}>
+            {busy ? 'Importing…' : count > 0 ? `Import ${count}` : 'Import'}
+          </button>
+        </>
+      }
+    >
+      <div className={'field' + (problem ? ' error' : '')}>
+        <div className="field-top">
+          <span className="field-label">The file's lines</span>
+          <input ref={file} type="file" accept=".env,.txt,text/plain" hidden onChange={pick} />
+          <button className="btn quiet small" type="button" onClick={() => file.current?.click()}>
+            Choose a file
+          </button>
+        </div>
+        <LongValue
+          value={raw}
+          rows={7}
+          autoFocus
+          label="The .env file's lines"
+          placeholder={'DATABASE_URL=postgres://…\nAPI_KEY=sk_live_…\nPRIVATE_KEY="-----BEGIN PRIVATE KEY-----\\n…"'}
+          onChange={(v) => {
+            setRaw(v)
+            setProblem(null)
+          }}
+        />
+        {problem ? (
+          <span className="field-message" role="alert">
+            {problem.text}
+          </span>
+        ) : (
+          <span className="t-note">
+            Comments, <span className="mono">export</span> and quoted values over several lines all work. A variable that's
+            already here with the same name is replaced.
+          </span>
+        )}
+      </div>
+      <div className="field">
+        <span className="field-label">Where</span>
+        <ScopePicker value={scopes} onChange={setScopes} label="Where the imported variables apply" />
+      </div>
+    </Dialog>
+  )
+}
+
+function ChangeDialog({ base, entry, onClose, onDone }: { base: string; entry: Entry; onClose: () => void; onDone: () => void }) {
+  const [value, setValue] = useState('')
+  const [problem, setProblem] = useState<Fault>(null)
+  const [busy, setBusy] = useState(false)
+  const [shown, setShown] = useState(false)
+  const show = async () => {
+    try {
+      const r = await api<{ value: string }>(`${base}/variables/reveal`, {
+        method: 'POST',
+        body: JSON.stringify({ name: entry.name, scopes: [entry.scopes[0]] }),
+      })
+      setValue(r.value)
+      setShown(true)
+    } catch (e) {
+      setProblem(fault(e))
+    }
+  }
+  const submit = async (e: FormEvent) => {
+    e.preventDefault()
+    setBusy(true)
+    setProblem(null)
+    try {
+      await api(`${base}/variables`, { method: 'PUT', body: JSON.stringify({ name: entry.name, value, scopes: entry.scopes }) })
+      onDone()
+    } catch (err) {
+      setProblem(fault(err))
+      setBusy(false)
+    }
+  }
+  return (
+    <Dialog
+      wide
+      title={
+        <>
+          Change <span className="mono">{entry.name}</span>
+        </>
+      }
+      busy={busy}
+      onClose={onClose}
+      onSubmit={submit}
+      footer={
+        <>
+          <button className="btn quiet medium" type="button" disabled={busy} onClick={onClose}>
+            Cancel
+          </button>
+          <button className="btn primary medium" type="submit" disabled={busy}>
+            {busy ? 'Saving…' : 'Save value'}
+          </button>
+        </>
+      }
+    >
+      <div className={'field' + (problem ? ' error' : '')}>
+        <div className="field-top">
+          <span className="field-label">New value</span>
+          {!shown && (
+            <button className="btn quiet small" type="button" onClick={show}>
+              Start from the current value
+            </button>
+          )}
+        </div>
+        <LongValue
+          value={value}
+          autoFocus
+          label={`New value for ${entry.name}`}
+          placeholder="Paste the new value"
+          onChange={(v) => {
+            setValue(v)
+            setProblem(null)
+          }}
+        />
+        {problem ? (
+          <span className="field-message" role="alert">
+            {problem.text}
+          </span>
+        ) : (
+          <span className="t-note">
+            It reaches {entry.scopes.length === 2 ? 'production and preview' : entry.scopes[0]} builds from the next deployment
+            on.
+          </span>
+        )}
+      </div>
+    </Dialog>
   )
 }

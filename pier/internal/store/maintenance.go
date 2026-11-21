@@ -51,6 +51,15 @@ func (s *Store) FinishCleanup(ctx context.Context, id string) error {
 	return err
 }
 
+// IDTaken says whether a deployment ID is in use: by a deployment, or by a
+// removed one whose files are still waiting to be deleted. The database
+// refuses a new deployment with such an ID, so a build must not pick one.
+func (s *Store) IDTaken(ctx context.Context, id string) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM deployments WHERE id=?)+(SELECT count(*) FROM cleanup_files WHERE id=?)`, id, id).Scan(&n)
+	return n > 0, err
+}
+
 func (s *Store) SaveAddresses(ctx context.Context, address, base string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -77,8 +86,27 @@ func (s *Store) AlignAliases(ctx context.Context, base string) error {
 		return err
 	}
 	defer tx.Rollback()
+	// Production follows the name its owner gave its address, if any.
+	labels := map[string]string{}
+	rows, err := tx.QueryContext(ctx, "SELECT name, subdomain FROM projects WHERE subdomain<>''")
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var name, sub string
+		if err := rows.Scan(&name, &sub); err != nil {
+			rows.Close()
+			return err
+		}
+		labels[name] = sub
+	}
+	rows.Close()
 	for _, a := range aliases {
-		host := names.Production(a.Project, base)
+		label := a.Project
+		if sub := labels[a.Project]; sub != "" {
+			label = sub
+		}
+		host := names.Production(label, base)
 		if a.Kind == KindBranch {
 			host = names.Branch(a.Project, a.Branch, base)
 		}

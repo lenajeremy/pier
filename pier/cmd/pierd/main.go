@@ -100,6 +100,11 @@ func serve(args []string) int {
 	builder := fs.String("builder", env("PIER_BUILDER", "railpack-preview"), "railpack-preview, docker, or local (host builds without isolation)")
 	image := fs.String("image", env("PIER_IMAGE", build.DefaultNodeImage), "the image builds run in")
 	prod := fs.String("production-branch", env("PIER_PRODUCTION_BRANCH", "main"), "the branch that deploys to production")
+	sleepDefault := 30 * time.Minute
+	if v, err := time.ParseDuration(env("PIER_SLEEP_AFTER", "")); err == nil {
+		sleepDefault = v
+	}
+	sleepAfter := fs.Duration("sleep-after", sleepDefault, "how long a preview's server runs without a visit before it sleeps until the next one (0 keeps previews awake)")
 	fs.Parse(args)
 
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
@@ -179,32 +184,42 @@ func serve(args []string) int {
 	if *https {
 		scheme = "https"
 	}
-	var wildcardReady atomic.Bool
+	caddyCfg := router.Caddy{Admin: *caddyAdmin, Storage: filepath.Join(*data, "caddy"), Listen: []string{*httpAddr}, HTTPS: *https, BaseDomain: *domain, AccessLog: paths.accessSock}
+	var wild wildcard
 	var challengeNS string
+	// probeWildcard asks DNS once whether the wildcard certificate can be
+	// issued, and reports whether the router's config has to change.
+	probeWildcard := func(ctx context.Context, timeout time.Duration) bool {
+		ctx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
+		delegated := dnscheck.ChallengeAuthority(ctx, *domain, challengeNS)
+		return wild.record(delegated, !delegated && caddyCfg.HasWildcardCertificate())
+	}
 	if *https && *caddyAdmin == "" && *dnsAddr != "" && *domain != "" && *domain != "localhost" && !strings.HasSuffix(*domain, ".localhost") {
 		challengeNS = *address
 		if net.ParseIP(challengeNS) != nil || challengeNS == *domain {
 			challengeNS = "pier." + *domain
 		}
-		pubIP, _ := st.Setting(setup, store.SettingPublicIP)
-		if srv, bound, err := startChallengeDNS(*domain, challengeNS, *dnsAddr, pubIP); err != nil {
+		if srv, bound, err := startChallengeDNS(*domain, challengeNS, *dnsAddr); err != nil {
 			log.Warn("ACME DNS responder unavailable; using per-host HTTPS certificates", "addr", *dnsAddr, "err", err)
 			challengeNS = ""
 		} else {
 			defer srv.Close()
 			log.Info("ACME DNS responder listening", "zone", "_acme-challenge."+*domain, "addr", bound)
-			probeCtx, cancel := context.WithTimeout(setup, 4*time.Second)
-			if dnscheck.ChallengeAuthority(probeCtx, *domain, challengeNS) {
-				wildcardReady.Store(true)
-			}
-			cancel()
+			probeWildcard(setup, 4*time.Second)
+			caddyCfg.WildcardReady = wild.ready.Load
 		}
 	}
-	caddyCfg := router.Caddy{Admin: *caddyAdmin, Storage: filepath.Join(*data, "caddy"), Listen: []string{*httpAddr}, HTTPS: *https, BaseDomain: *domain, AccessLog: paths.accessSock}
-	if challengeNS != "" {
-		caddyCfg.WildcardReady = wildcardReady.Load
+	// Caddy sends visits to an application that is asleep here, and pierd
+	// wakes it. Only Caddy should reach it, so it listens on loopback.
+	wakeLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		log.Error("listen for visits to sleeping applications", "err", err)
+		return 1
 	}
+	defer wakeLn.Close()
 	dep := &deploy.Deployer{
+		Waker: wakeLn.Addr().String(), SleepAfter: *sleepAfter,
 		Store: st, Repos: paths.repos, Deployments: paths.deployments, Logs: paths.logs, Sources: paths.sources, Tmp: paths.tmp,
 		Secrets: box,
 		Domain:  *domain, ProductionBranch: *prod, Runner: runner, PreviewRailpack: preview, Apps: apphost.New(*data), Log: log, BuildTimeout: 15 * time.Minute,
@@ -235,11 +250,8 @@ func serve(args []string) int {
 				case <-ctx.Done():
 					return
 				case <-t.C:
-					probeCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
-					ready := dnscheck.ChallengeAuthority(probeCtx, *domain, challengeNS)
-					cancel()
-					if ready != wildcardReady.Swap(ready) {
-						log.Info("wildcard certificate delegation changed", "ready", ready)
+					if probeWildcard(ctx, 8*time.Second) {
+						log.Info("wildcard certificate delegation changed", "ready", wild.ready.Load())
 						if err := dep.Sync(ctx); err != nil && ctx.Err() == nil {
 							log.Warn("sync router after delegation change", "err", err)
 						}
@@ -255,6 +267,10 @@ func serve(args []string) int {
 		return 1
 	}
 	defer reqs.Close()
+	dep.Visited = reqs.LastSeen
+	waker := &http.Server{Handler: dep.WakeHandler(), ReadHeaderTimeout: 5 * time.Second}
+	go waker.Serve(wakeLn)
+	defer waker.Close()
 	go func() {
 		if err := reqs.Listen(ctx, paths.accessSock); err != nil {
 			log.Error("request log socket", "err", err)
@@ -277,12 +293,26 @@ func serve(args []string) int {
 			log.Error("stop router", "err", err)
 		}
 	}()
+	// After a reboot Docker may have started applications that nothing
+	// serves any more; the addresses above are up before any is stopped.
+	dep.StopSupersededLater("")
 
 	a := &api.API{StartedAt: time.Now(), Store: st, Deployer: dep, Token: tok, Log: log, Web: web.Handler(), Requests: reqs, SiteListener: dialable(*httpAddr)}
 	if err := a.ResumeCleanup(ctx); err != nil {
 		log.Warn("resume preview cleanup", "err", err)
 	}
-	go a.RunGitHub(ctx)
+	// A build cut short by the stop records that on its way out, so the
+	// database stays open until the queue returns, for a while at most.
+	githubDone := make(chan struct{})
+	go func() { defer close(githubDone); a.RunGitHub(ctx) }()
+	defer func() {
+		stop()
+		select {
+		case <-githubDone:
+		case <-time.After(30 * time.Second):
+			log.Warn("the GitHub queue didn't stop within 30 s; closing the database anyway")
+		}
+	}()
 	go a.SampleServer(ctx)
 	domainsDone := make(chan struct{})
 	go func() { defer close(domainsDone); a.RunDomainChecks(ctx) }()
@@ -334,6 +364,7 @@ func serve(args []string) int {
 	}()
 
 	go dep.KeepSynced(ctx, 5*time.Second)
+	go dep.SleepIdle(ctx, sweepEvery(*sleepAfter))
 	go func() {
 		t := time.NewTicker(time.Minute)
 		defer t.Stop()
@@ -344,6 +375,13 @@ func serve(args []string) int {
 			case <-t.C:
 				if err := dep.CleanupApps(ctx); err != nil {
 					log.Warn("application cleanup", "err", err)
+				}
+				if err := dep.RetryStops(ctx); err != nil {
+					log.Warn("stop superseded applications", "err", err)
+				}
+				// Activity older than a year goes, so the feed stays quick to read.
+				if _, err := st.PruneEvents(ctx); err != nil {
+					log.Warn("prune activity", "err", err)
 				}
 			}
 		}
@@ -372,6 +410,12 @@ pierd is running
 	internal.Shutdown(shut)
 	os.Remove(paths.socket)
 	return 0
+}
+
+// sweepEvery is how often pierd looks for applications to put to sleep: a
+// quarter of the idle time, between five seconds and a minute.
+func sweepEvery(sleepAfter time.Duration) time.Duration {
+	return min(max(sleepAfter/4, 5*time.Second), time.Minute)
 }
 
 type paths struct {
@@ -524,11 +568,36 @@ func token(args []string) int {
 	return 0
 }
 
-// startChallengeDNS binds Pier's ACME DNS-01 listener. When the default wildcard
-// address (e.g. ":53") collides with a local stub resolver such as Ubuntu's
-// systemd-resolved on 127.0.0.53:53, it falls back to binding the server's
-// public IP on the same port.
-func startChallengeDNS(domain, ns, addr, publicIP string) (*challengedns.Server, string, error) {
+// wildcard decides whether the router asks for and serves the wildcard
+// certificate. Taking its policy out of the config makes Caddy drop the
+// certificate, and every preview then asks Let's Encrypt for one of its own
+// until the weekly limit runs out. One failed DNS probe must not do that: it
+// takes wildcardFailures in a row, and no usable certificate in storage.
+type wildcard struct {
+	ready    atomic.Bool
+	failures int // failed probes in a row; only the prober uses it
+}
+
+const wildcardFailures = 5
+
+// record takes one probe's answers: whether DNS showed the challenge zone
+// delegated to this server, and whether a wildcard certificate that hasn't
+// expired is stored. It reports whether the router's config has to change.
+func (w *wildcard) record(delegated, stored bool) (changed bool) {
+	if delegated {
+		w.failures = 0
+	} else if w.failures < wildcardFailures {
+		w.failures++
+	}
+	ready := delegated || stored || (w.ready.Load() && w.failures < wildcardFailures)
+	return w.ready.Swap(ready) != ready
+}
+
+// startChallengeDNS binds Pier's ACME DNS-01 listener. When the default
+// address (":53") collides with a local stub resolver such as Ubuntu's
+// systemd-resolved on 127.0.0.53:53, it binds each of the machine's own
+// addresses instead, and works if it gets at least one.
+func startChallengeDNS(domain, ns, addr string) (*challengedns.Server, string, error) {
 	srv, err := challengedns.Start(domain, ns, addr)
 	if err == nil {
 		return srv, addr, nil
@@ -537,18 +606,44 @@ func startChallengeDNS(domain, ns, addr, publicIP string) (*challengedns.Server,
 	if splitErr != nil || host != "" {
 		return nil, "", err
 	}
-	ip := publicIP
-	if net.ParseIP(ip) == nil {
-		if detected, derr := dnscheck.PublicIP(); derr == nil && net.ParseIP(detected) != nil {
-			ip = detected
-		}
-	}
-	if net.ParseIP(ip) == nil {
+	local, _ := net.InterfaceAddrs()
+	srv, startErr := challengedns.Start(domain, ns)
+	if startErr != nil {
 		return nil, "", err
 	}
-	fallback := net.JoinHostPort(ip, port)
-	if srv2, err2 := challengedns.Start(domain, ns, fallback); err2 == nil {
-		return srv2, fallback, nil
+	var bound []string
+	for _, a := range challengeAddrs(local, port) {
+		if srv.Listen(a) == nil {
+			bound = append(bound, a)
+		}
 	}
-	return nil, "", err
+	if len(bound) == 0 {
+		srv.Close()
+		return nil, "", err
+	}
+	return srv, strings.Join(bound, ", "), nil
+}
+
+// challengeAddrs lists where the ACME DNS responder listens when it can't
+// have its port on every address at once: each address of the machine's
+// interfaces, IPv4 and IPv6. The public IP the owner typed isn't one of
+// them behind NAT (EC2, Lightsail, GCP, Azure, Oracle), where binding it
+// fails and the wildcard certificate would never be issued. Loopback is left
+// to the local resolver, and nothing outside reaches a link-local address.
+func challengeAddrs(local []net.Addr, port string) []string {
+	var out []string
+	for _, a := range local {
+		var ip net.IP
+		switch a := a.(type) {
+		case *net.IPNet:
+			ip = a.IP
+		case *net.IPAddr:
+			ip = a.IP
+		}
+		if ip == nil || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsMulticast() || ip.IsUnspecified() {
+			continue
+		}
+		out = append(out, net.JoinHostPort(ip.String(), port))
+	}
+	return out
 }

@@ -1,8 +1,12 @@
 import { useState, type FormEvent, type ReactNode } from 'react'
-import { api } from '../lib/api'
+import { api, ApiError } from '../lib/api'
+import { failed } from '../lib/actions'
 import { useData } from '../lib/data'
-import { ago } from '../lib/format'
-import { Redeploy } from '../components/Icons'
+import { Copy, Redeploy, Trash, Visit } from '../components/Icons'
+import { confirm, Dialog } from '../components/Dialog'
+import { Menu } from '../components/Menu'
+import { copy, toast } from '../components/Toast'
+import { Problem, Skeleton, When } from '../components/ui'
 
 type Domain = {
   host: string
@@ -29,17 +33,11 @@ function serving(data: Response, tls: boolean) {
   return tls ? 'Live, with HTTPS' : 'Waiting for HTTPS'
 }
 
-function DomainCard({
-  host,
-  status,
-  note,
-  live,
-  actions,
-  children,
-}: {
+function DomainCard({ host, url, status, note, live, actions, children }: {
   host: string
+  url?: string
   status: string
-  note?: string
+  note?: ReactNode
   live: boolean
   actions?: ReactNode
   children?: ReactNode
@@ -48,7 +46,15 @@ function DomainCard({
     <section className="panel domain-card">
       <header>
         <div className="domain-info">
-          <h3 className="mono t-caption t-strong">{host}</h3>
+          <h3 className="mono t-caption t-strong">
+            {url ? (
+              <a href={url} target="_blank" rel="noreferrer">
+                {host}
+              </a>
+            ) : (
+              host
+            )}
+          </h3>
           <span className="domain-status t-caption t-muted">
             <i className={'swatch ' + (live ? 'ready' : 'building')} />
             {status}
@@ -62,127 +68,182 @@ function DomainCard({
   )
 }
 
+// Domains is F1 to F3: the project's own domains, the DNS records each still
+// needs, and the address it always has under the base domain.
 export function Domains({ project, now }: { project: string; now: number }) {
   const path = '/api/projects/' + encodeURIComponent(project) + '/domains'
   const { data, error, reload } = useData<Response>(path, () => true, 10000)
   const [host, setHost] = useState('')
   const [busy, setBusy] = useState(false)
   const [problem, setProblem] = useState('')
-  async function change(method: string, suffix: string, body?: object) {
+  const [renaming, setRenaming] = useState(false)
+
+  const add = async (e: FormEvent) => {
+    e.preventDefault()
+    const name = host.trim().toLowerCase()
+    if (!name) return
     setProblem('')
     setBusy(true)
     try {
-      await api(path + suffix, { method, body: body && JSON.stringify(body) })
-      if (body) setHost('')
+      await api(path, { method: 'POST', body: JSON.stringify({ host: name }) })
+      setHost('')
       await reload()
-    } catch (e) {
-      setProblem(e instanceof Error ? e.message : 'Could not reach Pier.')
+      toast(`Added ${name}. It goes live once its DNS records match.`)
+    } catch (err) {
+      setProblem(err instanceof Error ? err.message : "Can't reach pierd.")
     } finally {
       setBusy(false)
     }
   }
-  function add(e: FormEvent) {
-    e.preventDefault()
-    void change('POST', '', { host })
+  const check = async (d: Domain) => {
+    try {
+      await api(path + '/' + encodeURIComponent(d.host) + '/check', { method: 'POST' })
+      await reload()
+    } catch (err) {
+      failed(err)
+    }
   }
+  const remove = (d: Domain) =>
+    confirm({
+      title: (
+        <>
+          Remove <span className="mono">{d.host}</span>?
+        </>
+      ),
+      body: (
+        <p>
+          {d.host}
+          {d.redirect ? ` and ${d.redirect} stop` : ' stops'} serving {project} at once. {data?.default_host} keeps working, and
+          you can add the domain again later.
+        </p>
+      ),
+      action: 'Remove',
+      working: 'Removing…',
+      danger: true,
+      run: async () => {
+        await api(path + '/' + encodeURIComponent(d.host), { method: 'DELETE' })
+        await reload()
+      },
+    }).then((ok) => ok && toast(`Removed ${d.host}`))
+
+  const scheme = data?.https ? 'https://' : 'http://'
   return (
     <main className="main domains-page">
-      <form className="domain-add" onSubmit={add}>
+      <form className="domain-add" onSubmit={add} noValidate>
         <div>
           <h2 className="t-small t-strong">Domains</h2>
-          <p className="t-caption t-muted">
-            Point your own domain at {project}. Pier checks the DNS and gets HTTPS for you.
-          </p>
+          <p className="t-caption t-muted">Point your own domain at {project}. Pier checks the DNS and gets HTTPS for you.</p>
         </div>
-        <input
-          className="input mono"
-          aria-label="Domain name"
-          required
-          autoCapitalize="off"
-          spellCheck={false}
-          placeholder="yourdomain.com"
-          value={host}
-          onChange={(e) => setHost(e.target.value)}
-        />
-        <button className="btn primary large" disabled={busy}>
-          Add domain
+        <label className={'field' + (problem ? ' error' : '')}>
+          <input
+            className="input mono"
+            aria-label="Domain name"
+            autoCapitalize="off"
+            autoComplete="off"
+            spellCheck={false}
+            placeholder="yourdomain.com"
+            value={host}
+            onChange={(e) => {
+              setHost(e.target.value.replace(/^https?:\/\//, '').replace(/[\s/]/g, ''))
+              setProblem('')
+            }}
+          />
+        </label>
+        <button className="btn primary large" disabled={busy || !host.trim()}>
+          {busy ? 'Adding…' : 'Add domain'}
         </button>
       </form>
-      {(problem || error) && (
-        <p role="alert" className="field-message">
-          {problem || error?.message}
-        </p>
+      {problem && <Problem>{problem}</Problem>}
+      {error && <Problem>{error.message}</Problem>}
+      {!data && !error && (
+        <div className="panel">
+          <Skeleton rows={2} tall />
+        </div>
       )}
       {data && (
         <div className="domain-cards">
           {data.domains.map((d) => {
-            const suffix = '/' + encodeURIComponent(d.host)
-            const note = d.checked
-              ? 'Checked ' + ago(new Date(d.checked).toISOString(), now)
-              : 'Waiting for the first DNS check.'
+            const live = d.verified && data.deployed && (!data.https || d.tls)
             const records = [
-              ['A', d.redirect ? '@' : d.host, data.public_ip || 'Set the server IP with pierd init', d.address_result],
-              ...(d.redirect ? [['CNAME', 'www', d.host, d.redirect_result]] : []),
+              { type: 'A', name: d.redirect ? '@' : d.host, value: data.public_ip, actual: d.address_result },
+              ...(d.redirect ? [{ type: 'CNAME', name: 'www', value: d.host, actual: d.redirect_result }] : []),
             ]
             return (
               <div className="domain-cards" key={d.host}>
                 <DomainCard
                   host={d.host}
+                  url={live ? scheme + d.host : undefined}
                   status={d.verified ? serving(data, d.tls) : 'Waiting for DNS'}
                   note={
-                    d.verified && data.deployed && data.https && !d.tls
-                      ? 'DNS matches. Pier is waiting for the certificate.'
-                      : note
+                    d.verified && data.deployed && data.https && !d.tls ? (
+                      'DNS matches. Pier is getting the certificate.'
+                    ) : d.checked ? (
+                      <>
+                        Checked <When at={d.checked} now={now} lower />
+                      </>
+                    ) : (
+                      'Waiting for the first DNS check.'
+                    )
                   }
-                  live={d.verified && data.deployed && (!data.https || d.tls)}
+                  live={live}
                   actions={
                     <>
-                      <button className="btn quiet" disabled={busy} onClick={() => change('POST', suffix + '/check')}>
-                        <Redeploy size={14} />
-                        Check now
-                      </button>
-                      <button
-                        className="btn quiet"
-                        disabled={busy}
-                        onClick={() => {
-                          if (
-                            window.confirm(
-                              'Remove ' + d.host + (d.redirect ? ' and ' + d.redirect : '') + ' from this project?',
-                            )
-                          )
-                            void change('DELETE', suffix)
-                        }}
-                      >
-                        Remove
-                      </button>
+                      {!live && (
+                        <button className="btn quiet icon" onClick={() => check(d)}>
+                          <Redeploy size={14} />
+                          Check now
+                        </button>
+                      )}
+                      <Menu
+                        label={`Actions for ${d.host}`}
+                        items={[
+                          ...(live ? [{ label: 'Visit', icon: <Visit color="#A3ABBE" />, href: scheme + d.host }] : []),
+                          { label: 'Copy address', icon: <Copy />, onSelect: () => copy(scheme + d.host) },
+                          ...(live ? [{ label: 'Check the DNS again', icon: <Redeploy color="#A3ABBE" />, onSelect: () => check(d) }] : []),
+                          'separator' as const,
+                          { label: 'Remove', icon: <Trash />, danger: true, onSelect: () => remove(d) },
+                        ]}
+                      />
                     </>
                   }
                 >
                   {!d.verified && (
                     <div className="domain-records">
-                      <p className="t-small">Add these records at your DNS provider.</p>
+                      <p className="t-small">Add {records.length === 1 ? 'this record' : 'these records'} at your DNS provider.</p>
                       <div className="domain-table">
                         <table>
                           <thead>
                             <tr>
-                              {['Type', 'Name', 'Value', 'Right now'].map((t) => (
-                                <th key={t}>{t}</th>
-                              ))}
+                              <th>Type</th>
+                              <th>Name</th>
+                              <th>Value</th>
+                              <th>Right now</th>
                             </tr>
                           </thead>
                           <tbody>
-                            {records.map(([type, name, value, actual]) => (
-                              <tr key={type}>
-                                <td>{type}</td>
-                                <td>{name}</td>
-                                <td>{value}</td>
-                                <td>{actual || 'Not checked yet'}</td>
+                            {records.map((r) => (
+                              <tr key={r.type}>
+                                <td>{r.type}</td>
+                                <td>
+                                  <Copyable text={r.name} what="the name" />
+                                </td>
+                                <td>
+                                  {r.value ? (
+                                    <Copyable text={r.value} what="the value" />
+                                  ) : (
+                                    <span className="t-quiet">Set the server's IP with pierd init</span>
+                                  )}
+                                </td>
+                                <td className={/^points to|^is /i.test(r.actual) ? 'wrong' : ''}>{r.actual || 'Not checked yet'}</td>
                               </tr>
                             ))}
                           </tbody>
                         </table>
                       </div>
-                      <p className="t-note">Pier checks every 10 seconds. DNS changes can take a few minutes.</p>
+                      <p className="t-note">
+                        Pier checks every 10 seconds. Once {records.length === 1 ? 'it resolves' : 'both resolve'}, it gets the HTTPS
+                        certificate on its own. DNS changes can take a few minutes.
+                      </p>
                     </div>
                   )}
                 </DomainCard>
@@ -193,10 +254,10 @@ export function Domains({ project, now }: { project: string; now: number }) {
                     note={
                       data.deployed
                         ? d.redirect_tls
-                          ? 'Permanent redirect, with HTTPS'
+                          ? 'A permanent redirect, with HTTPS.'
                           : data.https
-                            ? 'Waiting for HTTPS'
-                            : 'Permanent redirect, over HTTP'
+                            ? 'Waiting for HTTPS.'
+                            : 'A permanent redirect, over HTTP.'
                         : undefined
                     }
                     live={data.deployed && (!data.https || d.redirect_tls)}
@@ -207,12 +268,129 @@ export function Domains({ project, now }: { project: string; now: number }) {
           })}
           <DomainCard
             host={data.default_host}
+            url={data.deployed ? scheme + data.default_host : undefined}
             status={serving(data, data.default_tls)}
-            note="The test address from your base domain."
+            note={
+              data.default_host.split('.')[0] === project
+                ? "The address from your base domain. It can't be removed, but its name can change."
+                : `The address from your base domain, renamed from ${project}. Previews keep the project's name.`
+            }
             live={data.deployed && (!data.https || data.default_tls)}
+            actions={
+              <>
+                <button className="btn quiet small" onClick={() => setRenaming(true)}>
+                  Change
+                </button>
+                <button className="copy shown" onClick={() => copy(scheme + data.default_host)} aria-label={`Copy ${data.default_host}`} data-tip="Copy address">
+                  <Copy />
+                </button>
+              </>
+            }
           />
+          {renaming && (
+            <AddressDialog
+              project={project}
+              host={data.default_host}
+              onClose={() => setRenaming(false)}
+              onDone={(host) => {
+                setRenaming(false)
+                reload()
+                toast(`${project} now lives at ${host}`)
+              }}
+            />
+          )}
         </div>
       )}
     </main>
+  )
+}
+
+function Copyable({ text, what }: { text: string; what: string }) {
+  return (
+    <span className="copyable">
+      <span>{text}</span>
+      <button className="copy shown" type="button" onClick={() => copy(text, what)} aria-label={`Copy ${text}`} data-tip={`Copy ${what}`}>
+        <Copy size={14} />
+      </button>
+    </span>
+  )
+}
+
+// AddressDialog renames the address a project has under the base domain:
+// blog.example.com can become journal.example.com. Only production's
+// address moves; previews and each deployment's own address keep the
+// project's name, so links already shared keep working.
+function AddressDialog({ project, host, onClose, onDone }: { project: string; host: string; onClose: () => void; onDone: (host: string) => void }) {
+  const dot = host.indexOf('.')
+  const domain = host.slice(dot + 1)
+  const [name, setName] = useState(host.slice(0, dot))
+  const [busy, setBusy] = useState(false)
+  const [problem, setProblem] = useState('')
+  const next = name.trim() || project
+  const same = next + '.' + domain === host
+  const submit = async (e: FormEvent) => {
+    e.preventDefault()
+    if (same) return onClose()
+    setBusy(true)
+    setProblem('')
+    try {
+      const r = await api<{ host: string }>(`/api/projects/${encodeURIComponent(project)}/address`, {
+        method: 'PUT',
+        body: JSON.stringify({ subdomain: next === project ? '' : next }),
+      })
+      onDone(r.host)
+    } catch (err) {
+      setProblem(err instanceof ApiError ? err.message : "Can't reach pierd.")
+      setBusy(false)
+    }
+  }
+  return (
+    <Dialog
+      title="Change the address"
+      busy={busy}
+      onClose={onClose}
+      onSubmit={submit}
+      footer={
+        <>
+          <button className="btn quiet medium" type="button" disabled={busy} onClick={onClose}>
+            Cancel
+          </button>
+          <button className="btn primary medium" type="submit" disabled={busy || same}>
+            {busy ? 'Changing…' : 'Change address'}
+          </button>
+        </>
+      }
+    >
+      <p>
+        <span className="mono">{host}</span> stops working the moment the new address does. Custom domains, previews and each
+        deployment's own address don't change.
+      </p>
+      <label className={'field' + (problem ? ' error' : '')}>
+        <span className="field-label">Address</span>
+        <span className="input affixed">
+          <input
+            value={name}
+            onChange={(e) => {
+              setName(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '-'))
+              setProblem('')
+            }}
+            placeholder={project}
+            size={Math.max(name.length, name ? 1 : project.length)}
+            spellCheck={false}
+            autoCapitalize="off"
+            autoComplete="off"
+            autoFocus
+          />
+          <span className="affix">.{domain}</span>
+        </span>
+        {problem ? (
+          <span className="field-message" role="alert">
+            {problem}
+          </span>
+        ) : (
+          <span className="t-note">Lowercase letters, numbers and dashes. Leave it empty to go back to {project}.</span>
+        )}
+      </label>
+    </Dialog>
   )
 }

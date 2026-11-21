@@ -54,6 +54,14 @@ func (a *API) createProject(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": name + " is the dashboard's own address. Choose another name.", "field": "name"})
 		return
 	}
+	if taken, err := a.Store.SubdomainTaken(r.Context(), name); err != nil || taken {
+		if err != nil {
+			a.fail(w, err)
+			return
+		}
+		writeJSON(w, http.StatusConflict, map[string]any{"error": name + " is another project's address. Choose another name.", "field": "name"})
+		return
+	}
 	err := a.Store.CreateProject(r.Context(), store.Project{Name: name})
 	if errors.Is(err, store.ErrExists) {
 		writeJSON(w, http.StatusConflict, map[string]any{"error": "There's already a project called " + name + ".", "field": "name"})

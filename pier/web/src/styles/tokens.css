@@ -10,6 +10,8 @@
 :root {
   --d-bg: #07090f;
   --d-sidebar: #0b0e16;
+  --d-sidebar-glass: rgba(7, 9, 15, 0.46); /* over the ground, which shows through */
+  --d-ground-strength: 0.5; /* how much of the sign-in gradient the dashboard shows: 1 is all of it */
   --d-panel: rgba(14, 18, 28, 0.92);
   --d-input: rgba(14, 18, 28, 0.9);
   --d-well: rgba(7, 9, 15, 0.72);
@@ -19,6 +21,7 @@
   --d-line: rgba(255, 255, 255, 0.09);
   --d-line-soft: rgba(255, 255, 255, 0.07);
   --d-line-faint: rgba(255, 255, 255, 0.06);
+  --d-line-overlay: rgba(255, 255, 255, 0.12);
   --d-line-control: rgba(255, 255, 255, 0.16);
   --d-line-input: rgba(255, 255, 255, 0.14);
   --d-hover: rgba(255, 255, 255, 0.04);
@@ -47,13 +50,14 @@
     radial-gradient(40% 45% at 0% 62%, rgba(70, 24, 66, 0.3), transparent 70%),
     radial-gradient(80% 50% at 50% 105%, rgba(22, 40, 92, 0.55), transparent 70%), #07090f;
 
-  /* Split-flap tiles (Foundations 5), as on the website. */
-  --tile-top: #1a2030;
-  --tile-mid: #131826;
-  --tile-low: #0f131d;
-  --tile-bottom: #0c1018;
+  /* Split-flap tiles (Foundations 5), as on the website, one step lighter:
+     here they sit on a panel, not in the dark housing. */
+  --tile-top: #232b3e;
+  --tile-mid: #1b2233;
+  --tile-low: #181e2d;
+  --tile-bottom: #141a27;
   --flap-ink: #f1eee6;
-  --pin: #2a3042;
+  --pin: #333b50;
   --housing: rgba(5, 7, 12, 0.84);
 
   --d-sans: 'Schibsted Grotesk', ui-sans-serif, system-ui, sans-serif;

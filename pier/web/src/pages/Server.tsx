@@ -1,8 +1,12 @@
-import { ServerCharts } from '../components/ServerCharts'
 import { useState } from 'react'
 import { api } from '../lib/api'
 import { useData } from '../lib/data'
-import { size } from '../lib/format'
+import { exact, plural, size } from '../lib/format'
+import { confirm } from '../components/Dialog'
+import { UsageChart, type History } from '../components/ServerCharts'
+import { toast } from '../components/Toast'
+import { PageHeading, Problem, Skeleton } from '../components/ui'
+
 type Health = {
   os: string
   arch: string
@@ -19,141 +23,275 @@ type Health = {
   items: { name: string; bytes: number | null }[]
   previews: number
   cache: boolean
+  docker_cache?: boolean
 }
+
+const osName: Record<string, string> = { darwin: 'macOS', linux: 'Linux', windows: 'Windows' }
+
+// What each thing on the disk is, so a size means something.
+const about: Record<string, string> = {
+  Deployments: 'The built files of every kept deployment.',
+  'Source archives': 'Uploads from pier deploy, kept so a deployment can be built again.',
+  Repositories: 'The git history pushed to Pier.',
+  'Build logs': 'The log of every build.',
+  'Request database': 'Request lines for 14 days, and hourly counts for 6 months.',
+  'Build cache': 'Packages kept so installs are faster. Safe to clear; the next builds download them again.',
+  'Docker images': 'The images of server apps, and the ones builds run in.',
+  'Docker build cache': 'Layers Docker kept from earlier builds. Safe to prune; the next builds start from scratch.',
+}
+const serviceNote: Record<string, string> = {
+  Caddy: 'The web server in front of every site. It gets their certificates.',
+  Docker: 'Runs the builds, and the containers of server apps.',
+  pierd: 'Pier itself: the dashboard, the API and git pushes.',
+}
+
+type Clean = 'previews' | 'cache' | 'docker-cache'
+
+// Server is I1: how full the machine is and how that's changed, what's
+// using the disk with what can be cleared, and the services Pier needs.
 export function Server() {
   const { data, error, reload } = useData<Health>('/api/server', () => true, 15000)
-  const [busy, setBusy] = useState(false),
-    [notice, setNotice] = useState('')
-  async function clean(kind: 'previews' | 'cache' | 'docker-cache') {
-    const prompt =
-      kind === 'previews'
-        ? 'Remove the listed inactive previews and their saved sources and build logs?'
+  const [range, setRange] = useState<'24h' | '7d'>('24h')
+  const history = useData<History>('/api/server/history?range=' + range, () => true, 60000)
+  const [hover, setHover] = useState<number | null>(null)
+
+  const clean = (kind: Clean, bytes: number | null) => {
+    const freed = bytes ? ` (${size(bytes)})` : ''
+    const q =
+      kind === 'cache'
+        ? {
+            title: 'Clear the build cache?',
+            body: `Pier deletes the packages it kept to make installs faster${freed}. Nothing that's serving is touched. The next build of each project downloads its packages again.`,
+            action: 'Clear cache',
+            done: 'Cleared the build cache',
+          }
         : kind === 'docker-cache'
-          ? 'Prune Docker Buildx layer cache and untagged dangling layers? Running containers and active deployment images are untouched.'
-          : 'Clear Pier’s Docker package cache? The next build may take longer.'
-    if (!window.confirm(prompt)) return
-    setBusy(true)
-    setNotice('')
-    try {
-      await api('/api/server/cleanup/' + kind, { method: 'POST' })
-      await reload()
-      setNotice('Cleanup complete.')
-    } catch (e) {
-      setNotice((e as Error).message)
-    } finally {
-      setBusy(false)
-    }
+          ? {
+              title: "Prune Docker's build cache?",
+              body: `Docker deletes the layers it kept from earlier builds, and images that nothing uses${freed}. Running containers and the images of kept deployments stay. The next build of each server app starts from scratch.`,
+              action: 'Prune cache',
+              done: "Pruned Docker's build cache",
+            }
+          : {
+              title: `Remove ${plural(data?.previews ?? 0, 'old preview')}?`,
+              body: "Their built files, saved sources and build logs are deleted, so they can't be visited or promoted any more. Production's history is kept.",
+              action: 'Remove previews',
+              done: 'Removed the old previews',
+            }
+    return confirm({
+      title: q.title,
+      body: <p>{q.body}</p>,
+      action: q.action,
+      working: 'Clearing…',
+      danger: kind === 'previews',
+      run: async () => {
+        await api('/api/server/cleanup/' + kind, { method: 'POST' })
+        await reload()
+      },
+    }).then((ok) => ok && toast(q.done))
   }
-  const svc = Object.entries(data?.services ?? {})
+
+  const samples = history.data?.samples ?? []
+  const at = hover !== null ? samples[hover] : null
+  const read = at
+    ? new Date(at.at).toLocaleString('en-GB', { weekday: 'short', hour: '2-digit', minute: '2-digit' })
+    : ''
+
+  const items = [...(data?.items ?? [])].sort((a, b) => (b.bytes ?? -1) - (a.bytes ?? -1))
+  const largest = Math.max(1, ...items.map((i) => i.bytes ?? 0))
+  const listed = items.reduce((n, i) => n + (i.bytes ?? 0), 0)
+  const clearable = items.filter((i) => i.name === 'Build cache' || i.name === 'Docker build cache').reduce((n, i) => n + (i.bytes ?? 0), 0)
+  const services = Object.entries(data?.services ?? {})
+
   return (
-    <main className="main global operations">
-      <header className="page-heading">
-        <div>
-          <h1 className="t-title">Server</h1>
-          {data && (
-            <p className="t-caption t-muted">
-              {data.address} · {data.os} / {data.arch} · {data.cores} CPUs
-            </p>
-          )}
+    <main className="main global">
+      <PageHeading
+        title="Server"
+        note={
+          data
+            ? `${data.address}. ${osName[data.os] ?? data.os} on ${data.arch}, with ${plural(data.cores, 'CPU')}${
+                data.memory_total ? `, ${size(data.memory_total)} of memory` : ''
+              } and a ${size(data.disk_total)} disk.`
+            : undefined
+        }
+      >
+        <div className="range" role="radiogroup" aria-label="How far back the charts go">
+          {(['24h', '7d'] as const).map((r) => (
+            <button key={r} className={range === r ? 'on' : ''} role="radio" aria-checked={range === r} onClick={() => setRange(r)}>
+              {r}
+            </button>
+          ))}
         </div>
-      </header>
-      {error && <p role="alert">{error.message}</p>}
+      </PageHeading>
+      {error && <Problem>{error.message}</Problem>}
+      {!data && !error && (
+        <div className="panel">
+          <Skeleton rows={4} tall />
+        </div>
+      )}
       {data && (
         <>
-          <div className="panel ops-metrics">
-            {[
-              ['Disk', Math.round(data.disk_percent) + '%', size(data.disk_free) + ' free of ' + size(data.disk_total)],
-              [
-                'Memory',
-                data.memory_used == null ? 'Unavailable' : size(data.memory_used),
-                data.memory_total ? 'Of ' + size(data.memory_total) : '',
-              ],
-              ['CPU', data.cpu == null ? 'Unavailable' : Math.round(data.cpu) + '%', 'Across all cores'],
-              [
-                'Services',
-                String(svc.filter(([, v]) => v !== 'Unavailable' && !v.startsWith('Unused')).length) + ' running',
-                'Checked on this server',
-              ],
-            ].map(([k, v, t]) => (
-              <div key={k}>
-                <small>{k}</small>
-                <strong>{v}</strong>
-                <small>{t}</small>
+          <div className="panel usage">
+            <Measure
+              label="CPU"
+              value={at ? Math.round(at.cpu) + '%' : data.cpu == null ? 'Not measured' : Math.round(data.cpu) + '%'}
+              note={at ? read : `Across ${plural(data.cores, 'CPU')}, right now.`}
+            >
+              {history.data && <UsageChart history={history.data} measure="cpu" hover={hover} onHover={setHover} label="CPU" />}
+            </Measure>
+            <Measure
+              label="Memory"
+              level={!at && data.memory_total && data.memory_used != null && data.memory_used / data.memory_total >= 0.9 ? 'warning' : ''}
+              value={
+                at && data.memory_total
+                  ? size((at.memory / 100) * data.memory_total)
+                  : data.memory_used == null
+                    ? 'Not measured'
+                    : size(data.memory_used)
+              }
+              note={
+                at
+                  ? read
+                  : data.memory_total && data.memory_used != null
+                    ? `${Math.round((data.memory_used / data.memory_total) * 100)}% of ${size(data.memory_total)} is in use.`
+                    : ''
+              }
+            >
+              {history.data && <UsageChart history={history.data} measure="memory" hover={hover} onHover={setHover} label="Memory" />}
+            </Measure>
+            <Measure
+              label="Disk"
+              level={!at && data.disk_percent >= 95 ? 'failed' : !at && data.disk_percent >= 85 ? 'warning' : ''}
+              value={Math.round(at ? at.disk : data.disk_percent) + '%'}
+              note={
+                at
+                  ? read
+                  : `${size(data.disk_free)} free of ${size(data.disk_total)}.${data.disk_percent >= 85 ? ' Builds fail when it runs out.' : ''}`
+              }
+            >
+              {history.data && <UsageChart history={history.data} measure="disk" hover={hover} onHover={setHover} label="Disk" />}
+            </Measure>
+            {history.data && samples.length > 1 && (
+              <div className="usage-axis t-note" aria-hidden>
+                <span>
+                  {new Date(history.data.start).toLocaleString('en-GB', {
+                    ...(range === '7d' ? { day: 'numeric', month: 'short' } : { weekday: 'short', hour: '2-digit', minute: '2-digit' }),
+                  })}
+                </span>
+                <span>Each chart runs from 0 to 100%, over the last {range === '7d' ? '7 days' : '24 hours'}. Point at one to read all three.</span>
+                <span>Now</span>
               </div>
-            ))}
+            )}
+            {history.data && samples.length < 2 && (
+              <div className="usage-axis t-note">
+                <span>Pier measures the server every few minutes. The charts appear after its second reading.</span>
+              </div>
+            )}
           </div>
-          {data.disk_percent >= 85 && (
-            <p className="field-message">Disk usage is above 85%. Review the space used below.</p>
-          )}
-          {data.memory_total && data.memory_used != null && data.memory_used / data.memory_total >= 0.9 && (
-            <p className="field-message">Memory usage is above 90%.</p>
-          )}
-          <ServerCharts />
-          <section className="panel ops-feed">
-            <h2 className="ops-section-title">What’s using the disk</h2>
-            {data.items.map((i) => (
-              <div className="ops-row" key={i.name}>
-                <div>{i.name}</div>
-                {i.bytes != null && (
-                  <meter
-                    className="disk-share"
-                    min={0}
-                    max={Math.max(1, ...data.items.map((x) => x.bytes ?? 0))}
-                    value={i.bytes}
-                    aria-label={i.name + ' relative to the largest category'}
-                  />
-                )}
-                <span className="mono">{i.bytes == null ? 'Size unavailable' : size(i.bytes)}</span>
-                {i.name === 'Build cache' && (
-                  <button className="btn quiet" disabled={busy} onClick={() => clean('cache')}>
-                    Clear cache
+
+          <section className="panel">
+            <div className="panel-head">
+              <h2 className="t-small t-strong">What's using the disk</h2>
+              <span className="t-note end">
+                {size(listed)} of the {size(data.disk_total - data.disk_free)} in use.
+                {clearable > 0 && ` Clearing the caches frees up to ${size(clearable)}.`}
+              </span>
+            </div>
+            {items.map((i) => {
+              const action: Clean | null =
+                i.name === 'Build cache' && data.cache ? 'cache' : i.name === 'Docker build cache' && data.docker_cache ? 'docker-cache' : null
+              return (
+                <div className="disk-row" key={i.name}>
+                  <div className="what">
+                    <span className="t-small">{i.name}</span>
+                    {about[i.name] && <span className="t-note">{about[i.name]}</span>}
+                  </div>
+                  <div className="share" aria-hidden>
+                    {i.bytes != null && <i style={{ width: Math.max(1, (i.bytes / largest) * 100) + '%' }} />}
+                  </div>
+                  <span className="amount">{i.bytes == null ? <span className="t-quiet">Not measured</span> : size(i.bytes)}</span>
+                  <span className="act">
+                    {action && (
+                      <button className="btn quiet" onClick={() => clean(action, i.bytes)}>
+                        {action === 'cache' ? 'Clear' : 'Prune'}
+                      </button>
+                    )}
+                  </span>
+                </div>
+              )
+            })}
+            <div className="disk-row">
+              <div className="what">
+                <span className="t-small">Old previews</span>
+                <span className="t-note">
+                  {data.previews > 0
+                    ? `${plural(data.previews, 'preview')} older than 30 days that nothing points at, with ${data.previews === 1 ? 'its' : 'their'} sources and build logs.`
+                    : 'None to remove. Previews older than 30 days that nothing points at are listed here.'}
+                </span>
+              </div>
+              <div className="share" aria-hidden />
+              <span className="amount">{data.previews > 0 ? data.previews.toLocaleString('en-GB') : ''}</span>
+              <span className="act">
+                {data.previews > 0 && (
+                  <button className="btn quiet" onClick={() => clean('previews', null)}>
+                    Remove
                   </button>
                 )}
-                {i.name === 'Docker build cache' && (
-                  <button className="btn quiet" disabled={busy} onClick={() => clean('docker-cache')}>
-                    Prune cache
-                  </button>
-                )}
-              </div>
-            ))}
-            <div className="ops-row">
-              <div>
-                <strong>Old previews</strong>
-                <small>
-                  {data.previews} eligible for removal. Includes saved sources and build logs for inactive previews
-                  older than 30 days. Production history is kept.
-                </small>
-              </div>
-              <button className="btn quiet" disabled={busy || !data.previews} onClick={() => clean('previews')}>
-                Remove previews
-              </button>
+              </span>
             </div>
           </section>
-          {notice && (
-            <p role="status" className="t-caption">
-              {notice}
-            </p>
-          )}
-          <section className="panel ops-feed">
-            <h2 className="ops-section-title">Services</h2>
-            {svc.map(([name, state]) => (
-              <div className="ops-row" key={name}>
-                <i
-                  className={
-                    'swatch ' + (state === 'Unavailable' ? 'failed' : state.startsWith('Unused') ? 'asleep' : 'ready')
-                  }
-                />
-                <div>{name}</div>
-                <span>{state}</span>
-              </div>
-            ))}
-            <div className="ops-row">
-              <div>Pier started</div>
-              <time>{new Date(data.started_at).toLocaleString()}</time>
+
+          <section className="panel">
+            <div className="panel-head">
+              <h2 className="t-small t-strong">Services</h2>
             </div>
+            {services.map(([name, state]) => {
+              const version = /^\d/.test(state)
+              const down = state === 'Unavailable'
+              const unused = state.startsWith('Unused')
+              return (
+                <div className="service-row" key={name}>
+                  <i className={'swatch ' + (down ? 'failed' : unused ? '' : 'ready')} />
+                  <div className="what">
+                    <span className="t-small">{name}</span>
+                    <span className="t-note">
+                      {serviceNote[name] ?? ''}
+                      {name === 'pierd' && (
+                        <>
+                          {' '}
+                          Running since{' '}
+                          <time dateTime={data.started_at} data-tip={exact(data.started_at)} data-tip-mono>
+                            {new Date(data.started_at).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                          </time>
+                          .
+                        </>
+                      )}
+                    </span>
+                  </div>
+                  <span className={'t-caption' + (down ? ' bad' : ' t-muted')}>{version ? `Running, version ${state}` : down ? 'Not running' : state}</span>
+                </div>
+              )
+            })}
           </section>
         </>
       )}
     </main>
+  )
+}
+
+function Measure({ label, value, note, level, children }: {
+  label: string
+  value: string
+  note: string
+  level?: string // 'warning' or 'failed' once it's nearly full
+  children?: React.ReactNode
+}) {
+  return (
+    <div className="measure">
+      <span className="t-note">{label}</span>
+      <span className={'value' + (level ? ' ' + level : '')}>{value}</span>
+      <span className="t-note">{note}</span>
+      {children}
+    </div>
   )
 }

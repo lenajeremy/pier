@@ -121,6 +121,22 @@
   box-shadow: calc(var(--w) - min(var(--h) * 0.02, 2px)) 0 0 var(--pin);
 }
 
+/* Small tiles get a hairline hinge and smaller pins, so the hinge doesn't
+   cut the letter in two. */
+.flaps-sm .tile::after,
+.flaps-xs .tile::after {
+  top: calc(50% - 0.5px);
+  height: 1px;
+  background: rgba(5, 7, 12, 0.72);
+}
+.flaps-sm .tile::before,
+.flaps-xs .tile::before {
+  width: 2px;
+  height: 3px;
+  top: calc(50% - 1.5px);
+  box-shadow: calc(var(--w) - 1px) 0 0 var(--pin);
+}
+
 .tile.blank .top,
 .tile.blank .bottom {
   filter: brightness(0.86);

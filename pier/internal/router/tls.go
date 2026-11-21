@@ -2,8 +2,13 @@ package router
 
 import (
 	"context"
+	"crypto/x509"
+	"encoding/pem"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/modules/caddytls"
@@ -34,9 +39,49 @@ func (p *allowedHosts) CertificateAllowed(_ context.Context, name string) error 
 	return caddytls.ErrPermissionDenied
 }
 
+// HasWildcardCertificate reports whether embedded Caddy's storage holds a
+// wildcard certificate for the base domain that hasn't expired. While it
+// does, the wildcard policy stays in the config whatever a DNS probe says:
+// taking the policy out makes Caddy drop the certificate, and every preview
+// then asks Let's Encrypt for a certificate of its own.
+func (c Caddy) HasWildcardCertificate() bool {
+	name := certmagic.StorageKeys.Safe("*." + c.BaseDomain)
+	certs := filepath.Join(c.Storage, "certificates")
+	issuers, _ := os.ReadDir(certs)
+	for _, issuer := range issuers {
+		raw, err := os.ReadFile(filepath.Join(certs, issuer.Name(), name, name+".crt"))
+		if err != nil {
+			continue
+		}
+		block, _ := pem.Decode(raw)
+		if block == nil {
+			continue
+		}
+		if cert, err := x509.ParseCertificate(block.Bytes); err == nil && time.Now().Before(cert.NotAfter) {
+			return true
+		}
+	}
+	return false
+}
+
+// dashboardIP is the dashboard's address when the owner reaches it by bare IP.
+// A browser sends no server name for an IP, and Caddy then looks for a
+// certificate for the address the connection arrived on. Behind NAT (EC2,
+// GCP, Azure) that is a private 10.x address and no certificate matches, so
+// the config names the public IP as the certificate for such connections.
+func dashboardIP(routes []Route) string {
+	for _, r := range routes {
+		if r.Upstream != "" && r.DeploymentID == "" && net.ParseIP(r.Host) != nil && certmagic.SubjectQualifiesForPublicCert(r.Host) {
+			return r.Host
+		}
+	}
+	return ""
+}
+
 // tlsConfig gives generated preview names on-demand certificates until the
 // wildcard is available. Verified custom domains and the dashboard start
-// obtaining their own certificates when their route becomes active.
+// obtaining their own certificates when their route becomes active. The
+// routes come with one route per host: Caddy refuses a host named twice.
 func (c Caddy) tlsConfig(routes []Route) map[string]any {
 	var allowed, generated, custom, ips []string
 	for _, r := range routes {

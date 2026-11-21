@@ -221,20 +221,25 @@ func CheckCNAME(ctx context.Context, host, want string) Result {
 	return Result{}
 }
 
-// ChallengeAuthority checks the delegated zone through a recursive resolver.
+// ChallengeAuthority checks the delegated zone through recursive resolvers.
 // Seeing the responder's own SOA verifies the delegation and reachability.
+// One resolver's SERVFAIL or lost packet says nothing about the delegation,
+// so each resolver is asked until one has seen it. Even then false can be a
+// passing failure: callers act on several in a row, not on one.
 func ChallengeAuthority(ctx context.Context, base, ns string) bool {
 	name := dns.Fqdn("_acme-challenge." + base)
 	q := new(dns.Msg)
 	q.SetQuestion(name, dns.TypeSOA)
 	q.RecursionDesired = true
-	r, err := exchange(ctx, q, Resolvers)
-	if err != nil || r.Rcode != dns.RcodeSuccess {
-		return false
-	}
-	for _, rr := range r.Answer {
-		if soa, ok := rr.(*dns.SOA); ok && strings.EqualFold(soa.Hdr.Name, name) && strings.EqualFold(soa.Ns, dns.Fqdn(ns)) {
-			return true
+	for _, resolver := range Resolvers {
+		r, err := exchange(ctx, q, []string{resolver})
+		if err != nil || r.Rcode != dns.RcodeSuccess {
+			continue
+		}
+		for _, rr := range r.Answer {
+			if soa, ok := rr.(*dns.SOA); ok && strings.EqualFold(soa.Hdr.Name, name) && strings.EqualFold(soa.Ns, dns.Fqdn(ns)) {
+				return true
+			}
 		}
 	}
 	return false

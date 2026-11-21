@@ -15,6 +15,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -73,6 +74,7 @@ type Log struct {
 	mu      sync.Mutex
 	pending []Line
 	changed chan struct{}
+	seen    map[string]int64 // deployment -> its latest request, ms since the epoch
 }
 
 // Open opens (and if needed creates) the requests database. project maps a
@@ -197,7 +199,27 @@ func (l *Log) flushLoop(ctx context.Context) {
 func (l *Log) Add(lines ...Line) {
 	l.mu.Lock()
 	l.pending = append(l.pending, lines...)
+	if l.seen == nil {
+		l.seen = map[string]int64{}
+	}
+	for _, line := range lines {
+		if line.At > l.seen[line.Deployment] {
+			l.seen[line.Deployment] = line.At
+		}
+	}
 	l.mu.Unlock()
+}
+
+// LastSeen is when a deployment last answered a request since pierd
+// started, or the zero time. It tells an idle preview from one in use.
+func (l *Log) LastSeen(deployment string) time.Time {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	at, ok := l.seen[deployment]
+	if !ok {
+		return time.Time{}
+	}
+	return time.UnixMilli(at)
 }
 
 // Flush writes the requests waiting in memory.
@@ -356,10 +378,69 @@ type Bucket struct {
 	E4xx, E5xx int   `json:"-"`
 }
 
+// MaxOffset is the furthest a viewer's clock can be from UTC.
+const MaxOffset = 14 * time.Hour
+
+// Offset reads a viewer's distance from UTC as the dashboard sends it: a
+// whole number of minutes, east positive, and "" for UTC.
+func Offset(minutes string) (time.Duration, error) {
+	if minutes == "" {
+		return 0, nil
+	}
+	most := int(MaxOffset / time.Minute)
+	m, err := strconv.Atoi(minutes)
+	if err != nil || m < -most || m > most {
+		return 0, fmt.Errorf("not a whole number of minutes within %d of UTC", most)
+	}
+	return time.Duration(m) * time.Minute, nil
+}
+
+// Zone is where a viewer reads the chart: the IANA zone the dashboard sends,
+// such as Europe/London, whose midnights move with its clock changes. Older
+// dashboards send only their distance from UTC (see Offset), and that
+// stands in too when pierd doesn't know the zone. "Local" would be the
+// server's zone, never a viewer's.
+func Zone(name, minutes string) (*time.Location, error) {
+	if name != "" && name != "Local" {
+		if loc, err := time.LoadLocation(name); err == nil {
+			return loc, nil
+		}
+	}
+	off, err := Offset(minutes)
+	if err != nil {
+		return nil, err
+	}
+	return time.FixedZone("", int(off/time.Second)), nil
+}
+
+// midnight is when a day, given by its date in UTC, starts in loc. That's
+// 00:00 nearly everywhere, but where the clocks jump forward at midnight, as
+// Chile's do, 00:00 never happens and the day starts at the jump; Go answers
+// with the hour before it, on the day before.
+func midnight(day time.Time, loc *time.Location) time.Time {
+	y, m, d := day.Date()
+	t := time.Date(y, m, d, 0, 0, 0, 0, loc)
+	if t.Day() != d {
+		_, t = t.ZoneBounds()
+	}
+	return t
+}
+
+func gcd(a, b int64) int64 {
+	for b != 0 {
+		a, b = b, a%b
+	}
+	return a
+}
+
 // Chart counts requests and errors over [from, to) in buckets: minutes for
 // two hours or less (from the lines), hours up to eight days, days beyond
-// (from the hourly counts, which are kept 6 months).
-func (l *Log) Chart(ctx context.Context, project string, from, to int64, status, query string) ([]Bucket, int64, error) {
+// (from the hourly counts, which are kept 6 months). Days are the viewer's,
+// from one midnight in loc to the next, since that's how the chart names
+// them, so across a clock change a day is 23 or 25 hours; the step returned
+// is still a day. Minutes and hours start at the same moment everywhere that
+// matters. A nil loc is UTC.
+func (l *Log) Chart(ctx context.Context, project string, from, to int64, status, query string, loc *time.Location) ([]Bucket, int64, error) {
 	span := time.Duration(to-from) * time.Millisecond
 	var size time.Duration
 	switch {
@@ -370,12 +451,38 @@ func (l *Log) Chart(ctx context.Context, project string, from, to int64, status,
 	default:
 		size = 24 * time.Hour
 	}
-	step := size.Milliseconds()
-	start := from - from%step
-	n := int((to - start + step - 1) / step)
-	buckets := make([]Bucket, n)
+	step, hour := size.Milliseconds(), time.Hour.Milliseconds()
+	// starts holds where each bucket starts, and then where the one after
+	// the last would. Lines are counted in pieces that no start falls
+	// inside: minutes or hours, and for days the most that divides every
+	// midnight's place in its UTC hour, which is half an hour in India.
+	var starts []int64
+	piece := step
+	if size < 24*time.Hour {
+		for at := from - from%step; ; at += step {
+			starts = append(starts, at)
+			if at >= to {
+				break
+			}
+		}
+	} else {
+		if loc == nil {
+			loc = time.UTC
+		}
+		y, m, d := time.UnixMilli(from).In(loc).Date()
+		piece = hour
+		for day := time.Date(y, m, d, 0, 0, 0, 0, time.UTC); ; day = day.AddDate(0, 0, 1) {
+			at := midnight(day, loc).UnixMilli()
+			starts = append(starts, at)
+			piece = gcd(piece, at%hour)
+			if at >= to {
+				break
+			}
+		}
+	}
+	buckets := make([]Bucket, len(starts)-1)
 	for i := range buckets {
-		buckets[i].At = start + int64(i)*step
+		buckets[i].At = starts[i]
 	}
 	// Whole hours can use retained counts. At a recent range boundary we
 	// still have individual timestamps, so count only the part of that hour
@@ -383,9 +490,8 @@ func (l *Log) Chart(ctx context.Context, project string, from, to int64, status,
 	where, args := Filter{From: from, To: to, Status: status, Query: query}.where(project)
 	linesSQL := `SELECT ts - ts % ? AS bucket, count(*), sum(status BETWEEN 400 AND 499), sum(status >= 500)
 		FROM requests WHERE ` + where
-	args = append([]any{step}, args...)
+	args = append([]any{piece}, args...)
 	if size != time.Minute && status == "" && strings.TrimSpace(query) == "" {
-		hour := time.Hour.Milliseconds()
 		first, last := from-from%hour, to
 		cutoff := time.Now().Add(-KeepLines).UnixMilli()
 		if first < from && first >= cutoff {
@@ -394,10 +500,28 @@ func (l *Log) Chart(ctx context.Context, project string, from, to int64, status,
 		if to-to%hour >= cutoff {
 			last = to - to%hour
 		}
-		linesSQL += ` AND (ts < ? OR ts >= ?) GROUP BY bucket
-			UNION ALL SELECT hour - hour % ? AS bucket, sum(requests), sum(e4xx), sum(e5xx)
-			FROM hours WHERE project = ? AND hour >= ? AND hour < ?`
-		args = append(args, first, last, step, project, first, last)
+		// Where midnight is a half or three quarters of an hour off UTC's
+		// hours, as in India, it falls inside one of the stored hours. While
+		// the lines are kept, that hour is counted from them, each request
+		// on its own side of midnight. Older than that, only the hour's total
+		// is left, and all of it goes to the day that holds the hour's
+		// middle: up to half an hour of requests can be counted a day out.
+		// A clock change can move midnight into an hour or out of one, so
+		// each midnight is looked at on its own. SQLite takes an empty list
+		// after IN, for zones whose midnights are all on the hour.
+		recent := cutoff - cutoff%hour + hour // the first hour whose lines are all kept
+		var split []any
+		for _, at := range starts {
+			if h := at - at%hour; h != at && h >= recent {
+				split = append(split, h)
+			}
+		}
+		list := strings.TrimPrefix(strings.Repeat(", ?", len(split)), ", ")
+		linesSQL += ` AND (ts < ? OR ts >= ? OR ts - ts % ? IN (` + list + `)) GROUP BY bucket
+			UNION ALL SELECT hour + ? AS bucket, sum(requests), sum(e4xx), sum(e5xx)
+			FROM hours WHERE project = ? AND hour >= ? AND hour < ? AND hour NOT IN (` + list + `)`
+		args = append(append(args, first, last, hour), split...)
+		args = append(append(args, hour/2, project, first, last), split...)
 	}
 	rows, err := l.db.QueryContext(ctx, linesSQL+" GROUP BY bucket", args...)
 	if err != nil {
@@ -410,7 +534,12 @@ func (l *Log) Chart(ctx context.Context, project string, from, to int64, status,
 		if err := rows.Scan(&at, &count, &e4, &e5); err != nil {
 			return nil, step, err
 		}
-		idx := int((at - start) / step)
+		// at is where a piece of lines starts, or a stored hour's middle: it
+		// counts for the last bucket that starts at or before it.
+		idx, found := slices.BinarySearch(starts, at)
+		if !found {
+			idx--
+		}
 		if idx < 0 || idx >= len(buckets) {
 			continue
 		}

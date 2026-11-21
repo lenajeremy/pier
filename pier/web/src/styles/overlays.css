@@ -1,0 +1,395 @@
+/* What appears over the page (Components 4): the confirmation and form
+   dialog, toasts, tooltips and the floating menu. Overlays open in 160ms
+   with a 4px rise. */
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+}
+
+/* ---- Dialog -------------------------------------------------------------- */
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(3, 5, 9, 0.65);
+  animation: fade 0.16s ease-out;
+  overflow-y: auto;
+}
+.dialog {
+  width: 440px;
+  max-width: 100%;
+  margin: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 26px;
+  border-radius: 14px;
+  background: var(--d-popover);
+  border: 1px solid var(--d-line-overlay);
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6);
+  animation: rise 0.16s ease-out;
+}
+.dialog.wide {
+  width: 560px;
+  gap: 22px;
+}
+.dialog-text {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.dialog.wide .dialog-text {
+  gap: 18px;
+}
+.dialog h2 {
+  margin: 0;
+}
+.dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  font-size: 15px;
+  line-height: 24px;
+  color: var(--d-muted);
+  overflow-wrap: anywhere;
+}
+.dialog.wide .dialog-body {
+  gap: 16px;
+}
+.dialog-body p {
+  margin: 0;
+}
+.dialog-body .mono,
+.dialog-body strong {
+  color: var(--d-text);
+  font-weight: 400;
+}
+.dialog-body .mono {
+  font-size: 14px;
+}
+.dialog-body .field {
+  color: var(--d-text);
+}
+.dialog-foot {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 10px;
+}
+.dialog-foot .grow {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ---- Command menu -------------------------------------------------------- */
+
+.scrim.top {
+  align-items: flex-start;
+  padding-top: 14vh;
+}
+.command-menu {
+  width: 640px;
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  border-radius: 14px;
+  background: var(--d-popover);
+  border: 1px solid var(--d-line-overlay);
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+  animation: rise 0.16s ease-out;
+}
+.command-input {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 56px;
+  padding: 0 18px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+.command-input input {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: none;
+  outline: none;
+  font-size: 16px;
+  line-height: 24px;
+}
+.command-input input::placeholder {
+  color: var(--d-note);
+}
+.command-key {
+  display: flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 6px;
+  border: 1px solid var(--d-line-input);
+  font-family: var(--d-mono);
+  font-size: 11.5px;
+  color: var(--d-muted);
+}
+.command-list {
+  padding: 8px;
+  max-height: min(420px, 56vh);
+  overflow-y: auto;
+}
+.command-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  height: 44px;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--d-muted);
+  text-align: left;
+}
+.command-item.on {
+  background: var(--d-active);
+  color: var(--d-text);
+}
+.command-item .grow {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.command-item mark {
+  background: none;
+  color: var(--d-text);
+  font-weight: 500;
+}
+.command-item > .swatch {
+  margin: 0 5px;
+}
+.command-hint {
+  flex: none;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  color: var(--d-note);
+}
+.command-none {
+  padding: 18px 10px;
+}
+.command-foot {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  height: 40px;
+  padding: 0 18px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 12.5px;
+  color: var(--d-note);
+}
+.command-foot .mono {
+  color: var(--d-muted);
+}
+
+/* ---- Toasts -------------------------------------------------------------- */
+
+.toasts {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 70;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 400px;
+  max-width: calc(100vw - 32px);
+  pointer-events: none;
+}
+.toast {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  padding: 10px 14px 10px 16px;
+  border-radius: 12px;
+  background: var(--d-popover);
+  border: 1px solid var(--d-line-overlay);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.5);
+  pointer-events: auto;
+  animation: rise 0.16s ease-out;
+}
+.toast.failed {
+  border-color: rgba(255, 128, 128, 0.45);
+}
+.toast-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+
+/* ---- Tooltip ------------------------------------------------------------- */
+
+.tooltip {
+  position: fixed;
+  z-index: 80;
+  max-width: 320px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--d-text);
+  color: var(--d-bg);
+  font-size: 12.5px;
+  line-height: 18px;
+  font-weight: 500;
+  pointer-events: none;
+  animation: fade 0.12s ease-out;
+}
+.tooltip.mono {
+  font-family: var(--d-mono);
+  font-size: 12px;
+  font-weight: 400;
+}
+/* Something with more to say on hover: an exact time behind "6 min ago". */
+.has-tip {
+  text-decoration: underline dotted;
+  text-decoration-color: var(--d-faint);
+  text-underline-offset: 3px;
+  cursor: default;
+}
+
+/* ---- Floating menu ------------------------------------------------------- */
+
+.menu.floating {
+  position: fixed;
+  z-index: 50;
+  max-height: min(420px, calc(100vh - 16px));
+  overflow-y: auto;
+  animation: rise 0.16s ease-out;
+}
+.menu-item .grow {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.menu-item {
+  width: 100%;
+  color: var(--d-text);
+}
+.menu-item:hover:not(:disabled),
+.menu-item:focus-visible {
+  background: var(--d-active);
+  outline: none;
+}
+.menu-item.danger {
+  color: var(--d-red-text);
+}
+.menu-hint {
+  font-family: var(--d-mono);
+  font-size: 12px;
+  color: var(--d-note);
+}
+.menu-label {
+  padding: 8px 10px 6px;
+  font-size: 12.5px;
+  line-height: 18px;
+  font-weight: 500;
+  color: var(--d-note);
+}
+
+/* ---- Folder picker -------------------------------------------------------- */
+
+/* The root directory field's list: the row menu's surface and rows, at the
+   field's width, so it reads as part of the field. */
+.folder-list {
+  position: fixed;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 6px;
+  border-radius: 12px;
+  background: var(--d-popover);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
+}
+.folder-where,
+.folder-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px 6px;
+  font-weight: 500;
+  color: var(--d-note);
+}
+.folder-label {
+  margin-top: 4px;
+  border-top: 1px solid var(--d-line-soft);
+  padding-top: 10px;
+}
+.folder-label.top {
+  margin-top: 0;
+  border-top: 0;
+  padding-top: 8px;
+}
+.folder-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+  height: 36px;
+  padding: 0 10px;
+  border-radius: 6px;
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--d-muted);
+  cursor: pointer;
+}
+.folder-row.on {
+  background: var(--d-active);
+  color: var(--d-text);
+}
+.folder-row .grow {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.folder-row mark {
+  background: none;
+  color: var(--d-text);
+  font-weight: 500;
+}
+.folder-dim {
+  color: var(--d-note);
+}
+.folder-kind {
+  flex: none;
+  font-size: 12.5px;
+  color: var(--d-note);
+}
+.folder-kind.deployable {
+  color: var(--d-muted);
+}
+.folder-note {
+  padding: 10px;
+}

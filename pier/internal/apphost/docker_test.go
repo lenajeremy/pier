@@ -2,9 +2,78 @@ package apphost
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
+	"errors"
+	"slices"
+	"strings"
 	"testing"
+
+	"pier/internal/apphost/dockertest"
 )
+
+// A stopped deployment keeps its container, stays down across a reboot, and
+// can be brought back; nothing of another instance's is touched.
+func TestStopAndResume(t *testing.T) {
+	ctx := context.Background()
+	engine := dockertest.Start(t)
+	h := New(t.TempDir())
+	engine.Add(dockertest.Container{Name: "pier-app-old", Labels: h.Labels(), Running: true, Policy: "always"})
+	newAddr := engine.Add(dockertest.Container{Name: "pier-app-new", Labels: h.Labels(), Running: true, Policy: "unless-stopped"})
+	engine.Add(dockertest.Container{Name: "pier-app-bad", Labels: h.Labels(), Policy: "unless-stopped", Crashes: true})
+	engine.Add(dockertest.Container{Name: "another-instance", Labels: map[string]string{ownerLabel: "pier-other"}, Running: true})
+	calls := func(want ...string) {
+		t.Helper()
+		if got := engine.Calls(); !slices.Equal(got, want) {
+			t.Fatalf("engine calls = %q, want %q", got, want)
+		}
+	}
+
+	running, err := h.Running(ctx)
+	if err != nil || len(running) != 2 || !running["pier-app-old"] || !running["pier-app-new"] {
+		t.Fatalf("running = %v, %v", running, err)
+	}
+
+	// "always" would start it again when Docker restarts.
+	if err := h.Stop(ctx, "pier-app-old"); err != nil {
+		t.Fatal(err)
+	}
+	stopped := []string{"update pier-app-old unless-stopped", "stop pier-app-old"}
+	calls(stopped...)
+	for _, name := range []string{"pier-app-old", "pier-app-gone"} {
+		if err := h.Stop(ctx, name); err != nil {
+			t.Fatalf("stopping %s again: %v", name, err)
+		}
+	}
+	calls(stopped...)
+	if err := h.Stop(ctx, "another-instance"); err == nil {
+		t.Fatal("stopped a container this instance doesn't own")
+	}
+	endpoints, err := h.Endpoints(ctx)
+	if err != nil || len(endpoints) != 1 || endpoints["pier-app-new"] != newAddr {
+		t.Fatalf("endpoints = %v, %v", endpoints, err)
+	}
+
+	for _, name := range []string{"pier-app-old", "pier-app-new"} {
+		if err := h.Resume(ctx, name); err != nil {
+			t.Fatalf("resuming %s: %v", name, err)
+		}
+	}
+	calls(append(stopped, "start pier-app-old")...)
+	if got := engine.Running(); !slices.Equal(got, []string{"another-instance", "pier-app-new", "pier-app-old"}) {
+		t.Fatalf("running after resume = %v", got)
+	}
+
+	if err := h.Resume(ctx, "pier-app-bad"); err == nil || !strings.Contains(err.Error(), "exit code 23") {
+		t.Fatalf("a crashing process resumed: %v", err)
+	}
+	if err := h.Resume(ctx, "pier-app-gone"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("resuming a removed container: %v", err)
+	}
+	if err := h.Resume(ctx, "another-instance"); err == nil {
+		t.Fatal("resumed a container this instance doesn't own")
+	}
+}
 
 func TestHTTPPort(t *testing.T) {
 	for _, tc := range []struct {

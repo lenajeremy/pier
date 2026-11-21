@@ -1,0 +1,211 @@
+/* ---- Narrower windows ---------------------------------------------------
+   The content is measured, not the window, so the sidebar doesn't matter.
+   A table gives up its least needed columns first; nothing scrolls sideways. */
+
+.content {
+  container-type: inline-size;
+}
+@container (max-width: 940px) {
+  .main,
+  .project-header {
+    padding-left: 28px;
+    padding-right: 28px;
+  }
+  .table.deployments {
+    --cols: 96px minmax(96px, 160px) minmax(0, 1fr) 108px 112px 32px;
+  }
+  .table.deployments :is(.t-head, .t-row) > :nth-child(5) {
+    display: none;
+  }
+  .table.variables {
+    --cols: minmax(0, 1.1fr) minmax(0, 1fr) 176px 32px;
+  }
+  .table.variables :is(.t-head, .t-row) > :nth-child(4) {
+    display: none;
+  }
+  .table.shared {
+    --cols: minmax(0, 1.1fr) 176px minmax(0, 1fr) 32px;
+  }
+  .table.shared :is(.t-head, .t-row) > :nth-child(2) {
+    display: none;
+  }
+  .table.repos {
+    --cols: minmax(0, 1fr) 116px 124px;
+  }
+  .table.repos :is(.t-head, .t-row) > :nth-child(2) {
+    display: none;
+  }
+  .form-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .project-row .who {
+    width: 180px;
+  }
+  .disk-row {
+    grid-template-columns: minmax(0, 1fr) 96px 88px;
+  }
+  .disk-row .share {
+    display: none;
+  }
+  .address-row .kind {
+    width: 160px;
+  }
+  .strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .strip > :nth-child(2n) {
+    border-right: none;
+  }
+  .strip > :nth-child(n + 3) {
+    border-top: 1px solid var(--d-line-soft);
+  }
+  .activity-row.sessions {
+    grid-template-columns: minmax(0, 1fr) 120px 92px;
+  }
+  .activity-row.sessions > :nth-child(2) {
+    display: none;
+  }
+}
+@container (max-width: 700px) {
+  .app-choices {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .table.deployments {
+    --cols: 84px minmax(0, 1fr) 104px 32px;
+  }
+  .table.deployments :is(.t-head, .t-row) > :is(:nth-child(2), :nth-child(6)) {
+    display: none;
+  }
+  .table.variables {
+    --cols: minmax(0, 1fr) minmax(0, 1fr) 32px;
+  }
+  .table.variables :is(.t-head, .t-row) > :nth-child(3) {
+    display: none;
+  }
+  .table.shared {
+    --cols: minmax(0, 1fr) minmax(0, 1fr) 32px;
+  }
+  .table.shared :is(.t-head, .t-row) > :nth-child(3) {
+    display: none;
+  }
+  .table.repos {
+    --cols: minmax(0, 1fr) 116px;
+  }
+  .table.repos :is(.t-head, .t-row) > :nth-child(3) {
+    display: none;
+  }
+  .usage {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .measure {
+    border-right: none;
+    border-bottom: 1px solid var(--d-line-soft);
+  }
+  .form-grid,
+  .form-grid.two {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .toolbar {
+    flex-wrap: wrap;
+  }
+  .toolbar .title {
+    flex-basis: 100%;
+  }
+  .toolbar .search-field {
+    flex: 1;
+  }
+  .page-heading {
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+  .address-row {
+    flex-wrap: wrap;
+    gap: 10px 20px;
+  }
+  .address-row .where {
+    flex-basis: 100%;
+    order: 3;
+  }
+  .address-row .kind {
+    flex: 1;
+    width: auto;
+  }
+  .project-row .what {
+    display: none;
+  }
+  .project-row .who {
+    flex: 1;
+    width: auto;
+  }
+  .project-row .status {
+    width: auto;
+  }
+  .feed .activity-row {
+    grid-template-columns: minmax(0, 1fr) 88px;
+  }
+  .feed .activity-row > :nth-child(2) {
+    display: none;
+  }
+  .card-body {
+    flex-direction: column;
+  }
+  .preview-box {
+    width: 100%;
+  }
+  .details-row {
+    grid-template-columns: repeat(2, auto);
+  }
+  .save-bar {
+    border-radius: 16px;
+    flex-wrap: wrap;
+  }
+  .danger-row,
+  .attention-row,
+  .integration-head,
+  .form-foot,
+  .inline-form,
+  .domain-add {
+    flex-wrap: wrap;
+  }
+  .domain-add > .field,
+  .inline-form > .field {
+    width: 100%;
+  }
+  .panel-head {
+    flex-wrap: wrap;
+  }
+  .panel-head .end {
+    margin-left: 0;
+    text-align: left;
+  }
+}
+@container (max-width: 520px) {
+  .main,
+  .project-header {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+  .strip {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .strip > * {
+    border-right: none;
+  }
+  .strip > :nth-child(n + 2) {
+    border-top: 1px solid var(--d-line-soft);
+  }
+  .seg {
+    overflow-x: auto;
+    max-width: 100%;
+  }
+  .tabs {
+    gap: 20px;
+    overflow-x: auto;
+  }
+  .project-row .status {
+    display: none;
+  }
+  .picker-months {
+    flex-direction: column;
+  }
+}

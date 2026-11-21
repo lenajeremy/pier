@@ -144,7 +144,8 @@ export function RequestsChart({ data, live }: { data: ChartData; live: boolean }
             </span>
           ))}
           <span className="t-note" style={{ right: 0 }}>
-            {live ? 'Now' : when(data.to, data.bucket_ms, data.to - data.from)}
+            {/* A past range ends at the midnight after its last day: label the day it covers, not the next one. */}
+            {live ? 'Now' : when(data.bucket_ms >= DAY ? data.to - 1 : data.to, data.bucket_ms, data.to - data.from)}
           </span>
         </div>
       </div>
@@ -192,16 +193,17 @@ function unit(step: number): string {
   return 'day'
 }
 
+const DAY = 86_400_000
+const date = (t: number) => new Date(t).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+const time = (t: number) => new Date(t).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
+
+// pierd starts a daily bucket at the viewer's own midnight, clock changes
+// included, so the day it counts is the date of its start.
 function when(at: number, step: number, span: number): string {
-  const d = new Date(at)
-  if (span > 2 * 86_400_000 || step >= 86_400_000) return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
-  return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
+  if (step >= DAY) return date(at)
+  return span > 2 * DAY ? date(at) : time(at)
 }
 
 function range(at: number, step: number): string {
-  const f = (t: number) =>
-    step >= 86_400_000
-      ? new Date(t).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
-      : new Date(t).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
-  return step >= 86_400_000 ? f(at) : `${f(at)} to ${f(at + step)}`
+  return step >= DAY ? date(at) : `${time(at)} to ${time(at + step)}`
 }

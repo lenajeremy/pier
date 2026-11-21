@@ -27,35 +27,16 @@ type Server struct {
 // challenges belong to pierd and survive those reloads.
 var zones sync.Map // lower-case FQDN -> *Server
 
-func Start(base, ns, addr string) (*Server, error) {
+// Start serves the challenge zone on every address given, or on none if one
+// of them can't be had. With no address it only claims the zone, and Listen
+// adds addresses one at a time.
+func Start(base, ns string, addrs ...string) (*Server, error) {
 	s := &Server{zone: dns.CanonicalName("_acme-challenge." + base), ns: dns.CanonicalName(ns), values: map[string]int{}, serial: uint32(time.Now().Unix())}
-	tcp, err := net.Listen("tcp", addr)
-	if err != nil {
-		return nil, err
-	}
-	udp, err := net.ListenPacket("udp", tcp.Addr().String())
-	if err != nil {
-		tcp.Close()
-		return nil, err
-	}
 	if _, loaded := zones.LoadOrStore(s.zone, s); loaded {
-		tcp.Close()
-		udp.Close()
 		return nil, fmt.Errorf("already serving %s", s.zone)
 	}
-	s.servers = []*dns.Server{{Listener: tcp, Handler: s}, {PacketConn: udp, Handler: s}}
-	for _, srv := range s.servers {
-		ready := make(chan struct{})
-		errCh := make(chan error, 1)
-		srv.NotifyStartedFunc = func() { close(ready) }
-		go func(srv *dns.Server) {
-			if err := srv.ActivateAndServe(); err != nil {
-				errCh <- err
-			}
-		}(srv)
-		select {
-		case <-ready:
-		case err := <-errCh:
+	for _, addr := range addrs {
+		if err := s.Listen(addr); err != nil {
 			s.Close()
 			return nil, err
 		}
@@ -63,8 +44,41 @@ func Start(base, ns, addr string) (*Server, error) {
 	return s, nil
 }
 
+// Listen answers on one more address, over TCP and UDP. It is for starting
+// up, before anything else uses the server.
+func (s *Server) Listen(addr string) error {
+	tcp, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+	udp, err := net.ListenPacket("udp", tcp.Addr().String())
+	if err != nil {
+		tcp.Close()
+		return err
+	}
+	for _, srv := range []*dns.Server{{Listener: tcp, Handler: s}, {PacketConn: udp, Handler: s}} {
+		ready := make(chan struct{})
+		errCh := make(chan error, 1)
+		srv.NotifyStartedFunc = func() { close(ready) }
+		go func() {
+			if err := srv.ActivateAndServe(); err != nil {
+				errCh <- err
+			}
+		}()
+		select {
+		case <-ready:
+			s.servers = append(s.servers, srv)
+		case err := <-errCh:
+			tcp.Close()
+			udp.Close()
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Server) Close() {
-	zones.Delete(s.zone)
+	zones.CompareAndDelete(s.zone, s)
 	for _, srv := range s.servers {
 		srv.Shutdown()
 	}

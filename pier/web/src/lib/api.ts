@@ -132,6 +132,7 @@ export interface Build {
   install: string
   command: string
   output: string
+  always_build?: boolean // build on every push from GitHub, even one that doesn't change the root directory
 }
 
 export function changePreset(build: Build, preset: Build['preset']): Build {

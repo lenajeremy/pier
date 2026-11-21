@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { ProjectSummary, Session } from '../lib/api'
 import { signOut } from '../lib/api'
-import { Link, navigate } from '../lib/router'
-import * as I from './Icons'
 import { useData } from '../lib/data'
-import type { Sample } from './ServerCharts'
+import { Link } from '../lib/router'
+import { CommandMenu } from './CommandMenu'
+import * as I from './Icons'
 import { ProjectMark } from './ProjectMark'
+import type { Sample } from './ServerCharts'
 
 const globals = [
   { to: '/', label: 'Projects', icon: I.Projects },
@@ -28,27 +29,29 @@ type Props = {
 // Shell is the sidebar and the content beside it: the sidebar answers
 // "which project", the project's tabs answer "which part of it".
 export function Shell({ session, projects, path, project, children }: Props) {
-  const recent = useData<{samples: Sample[]}>('/api/server/history?range=latest', () => true, 60000)
+  const recent = useData<{ samples: Sample[] }>('/api/server/history?range=latest', () => true, 60000)
   const sample = recent.data?.samples.at(-1)
-  const pressure = sample && (sample.disk >= 85 ? 'Disk usage above 85%' : sample.memory >= 90 ? 'Memory usage above 90%' : '')
+  const pressure = sample && (sample.disk >= 85 ? 'The disk is more than 85% full' : sample.memory >= 90 ? 'Memory is more than 90% used' : '')
   const [menuOpen, setMenuOpen] = useState(false)
-  const [query, setQuery] = useState('')
-  useEffect(() => setMenuOpen(false), [path])
-  const search = useRef<HTMLInputElement>(null)
+  const [finding, setFinding] = useState(false)
+  useEffect(() => {
+    setMenuOpen(false)
+    setFinding(false)
+  }, [path])
 
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault()
-        search.current?.focus()
+        setFinding((f) => !f)
       }
     }
     window.addEventListener('keydown', key)
     return () => window.removeEventListener('keydown', key)
   }, [])
 
-  const shown = projects.filter((p) => p.name.includes(query.trim().toLowerCase()))
-  const active = (to: string) => !project && (to === '/' ? path === '/' || path === '/new' : path.startsWith(to))
+  const active = (to: string) => !project && (to === '/' ? path === '/' || path.startsWith('/new') : path.startsWith(to))
+  const mac = /Mac|iPhone|iPad/.test(navigator.platform)
 
   return (
     <div className="app">
@@ -63,62 +66,47 @@ export function Shell({ session, projects, path, project, children }: Props) {
       </button>
       <aside id="server-navigation" className={'sidebar' + (menuOpen ? ' mobile-open' : '')}>
         <Switcher session={session} projects={projects} project={project} />
-        <label className="side-search">
+        <button className="side-search" onClick={() => setFinding(true)} aria-haspopup="dialog">
           <I.Search />
-          <input
-            ref={search}
-            placeholder="Search"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && shown[0]) {
-                navigate(`/projects/${shown[0].name}`)
-                setQuery('')
-                search.current?.blur()
-              }
-              if (e.key === 'Escape') {
-                setQuery('')
-                search.current?.blur()
-              }
-            }}
-            aria-label="Search projects"
-          />
-          <span className="kbd">⌘K</span>
-        </label>
+          <span>Search</span>
+          <span className="kbd">{mac ? '⌘K' : 'Ctrl K'}</span>
+        </button>
         <nav className="nav" aria-label="Server">
           {globals.map(({ to, label, icon: Icon }) => (
-            <Link key={to} to={to} className={'nav-item' + (active(to) ? ' active' : '')}>
+            <Link key={to} to={to} className={'nav-item' + (active(to) ? ' active' : '')} aria-current={active(to) ? 'page' : undefined}>
               <Icon />
               <span className="grow">{label}</span>
-              {to === '/server' && pressure && <span className="server-warning" title={pressure} aria-label={pressure}>●</span>}
+              {to === '/server' && pressure && <span className="nav-alert" role="img" aria-label={pressure} data-tip={pressure} />}
             </Link>
           ))}
         </nav>
-        <nav className="nav" aria-label="Projects">
+        <nav className="nav side-projects" aria-label="Projects">
           <div className="side-projects-head">
             <span className="t-note">Projects</span>
-            <Link to="/new" className="icon-btn-24" aria-label="New project" title="New project">
+            <Link to="/new" className="icon-btn-24" aria-label="New project" data-tip="New project">
               <I.Plus />
             </Link>
           </div>
-          {shown.map((p) => (
-            <Link
-              key={p.name}
-              to={`/projects/${p.name}`}
-              className={'side-project' + (p.name === project ? ' active' : '')}
-            >
-              <i className={'swatch ' + p.status} />
-              <span>{p.name}</span>
-            </Link>
-          ))}
-          {projects.length > 0 && shown.length === 0 && (
-            <span className="side-project t-note">No project matches</span>
-          )}
+          <div className="side-projects-list">
+            {projects.map((p) => (
+              <Link
+                key={p.name}
+                to={`/projects/${p.name}`}
+                className={'side-project' + (p.name === project ? ' active' : '')}
+                aria-current={p.name === project ? 'page' : undefined}
+              >
+                <i className={'swatch ' + p.status} />
+                <span>{p.name}</span>
+              </Link>
+            ))}
+          </div>
         </nav>
-        <div className="side-spacer" />
         <Account session={session} />
       </aside>
       <div className="content">{children}</div>
+      {finding && (
+        <CommandMenu projects={projects} project={project} branch={session.server.production_branch} onClose={() => setFinding(false)} />
+      )}
     </div>
   )
 }
@@ -129,9 +117,9 @@ function Switcher({ session, projects, project }: { session: Session; projects: 
   useClickAway(ref, () => setOpen(false))
   return (
     <div ref={ref} style={{ position: 'relative' }}>
-      <button className="switcher" onClick={() => setOpen(!open)} aria-expanded={open}>
+      <button className="switcher" onClick={() => setOpen(!open)} aria-expanded={open} aria-haspopup="menu">
         {project ? (
-          <ProjectMark name={project} />
+          <ProjectMark key={project} name={project} />
         ) : (
           <span className="switcher-mark">
             <I.Mark />
@@ -144,20 +132,27 @@ function Switcher({ session, projects, project }: { session: Session; projects: 
         <I.UpDown />
       </button>
       {open && (
-        <div className="menu" style={{ top: 52, left: 0, right: 0 }}>
-          <Link to="/" className="menu-item" onClick={() => setOpen(false)}>
-            <span className="switcher-mark" style={{ width: 24, height: 24, borderRadius: 6 }}>
+        <div className="menu switcher-menu" role="menu">
+          <Link to="/" className="menu-item" role="menuitem" onClick={() => setOpen(false)}>
+            <span className="switcher-mark small">
               <I.Mark size={14} />
             </span>
-            All projects
+            <span className="grow">All projects</span>
+            {!project && <I.Check size={14} color="#8DB2F8" />}
           </Link>
           {projects.length > 0 && <div className="menu-sep" />}
           {projects.map((p) => (
-            <Link key={p.name} to={`/projects/${p.name}`} className="menu-item" onClick={() => setOpen(false)}>
+            <Link key={p.name} to={`/projects/${p.name}`} className="menu-item" role="menuitem" onClick={() => setOpen(false)}>
               <i className={'swatch ' + p.status} />
-              {p.name}
+              <span className="grow">{p.name}</span>
+              {p.name === project && <I.Check size={14} color="#8DB2F8" />}
             </Link>
           ))}
+          <div className="menu-sep" />
+          <Link to="/new" className="menu-item" role="menuitem" onClick={() => setOpen(false)}>
+            <I.Plus size={14} />
+            <span className="grow">New project</span>
+          </Link>
         </div>
       )}
     </div>
@@ -176,8 +171,8 @@ function Account({ session }: { session: Session }) {
     }
   }
   return (
-    <div ref={ref} style={{ position: 'relative' }}>
-      <button className="account" onClick={() => setOpen(!open)} aria-expanded={open}>
+    <div ref={ref} className="account-box">
+      <button className="account" onClick={() => setOpen(!open)} aria-expanded={open} aria-haspopup="menu">
         <div>
           <span className="t-small">{session.user?.name || 'Owner'}</span>
           <span className="t-note">{session.user?.email}</span>
@@ -185,8 +180,15 @@ function Account({ session }: { session: Session }) {
         <I.UpDown size={16} />
       </button>
       {open && (
-        <div className="menu" style={{ bottom: 52, left: 0, right: 0 }}>
-          <button className="menu-item" onClick={out}>
+        <div className="menu account-menu" role="menu">
+          <Link to="/members" className="menu-item" role="menuitem" onClick={() => setOpen(false)}>
+            Where you're signed in
+          </Link>
+          <Link to="/settings" className="menu-item" role="menuitem" onClick={() => setOpen(false)}>
+            Change password
+          </Link>
+          <div className="menu-sep" />
+          <button className="menu-item" role="menuitem" onClick={out}>
             Sign out
           </button>
         </div>

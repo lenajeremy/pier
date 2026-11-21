@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -27,8 +28,13 @@ type Route struct {
 	Unavailable  bool
 	DeploymentID string
 	Upstream     string // host:port to proxy to instead of serving files
+	Wake         string // pierd's waker, host:port, for an application that is asleep
 	Fallback     string // what a path that isn't a file gets: FallbackSPA, FallbackPage, or a plain 404
 }
+
+// WakeHeader names the deployment a request to the waker is for. Caddy sets
+// it, replacing any a visitor sent.
+const WakeHeader = "X-Pier-Wake"
 
 // Fallbacks for a path that isn't a file.
 const (
@@ -55,9 +61,31 @@ type Caddy struct {
 	Client        *http.Client
 }
 
+// streamCloseDelay keeps proxied WebSockets and other streams open when a
+// config is replaced. Pier loads a new config on every deploy of any project,
+// and without the delay Caddy closes every application's streams each time.
+const streamCloseDelay = "5m"
+
+// unique keeps the first route for each host. Caddy refuses a whole config
+// in which two certificate policies name one host, and at startup that would
+// take every site down, so an address that two things claim goes to the
+// earlier route: callers list routes in the order that should win.
+func unique(routes []Route) []Route {
+	seen := map[string]bool{}
+	var out []Route
+	for _, r := range routes {
+		host := strings.ToLower(r.Host)
+		if !seen[host] {
+			seen[host] = true
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
 // Config builds Caddy's complete JSON config for these routes.
 func (c Caddy) Config(routes []Route) ([]byte, error) {
-	sorted := append([]Route(nil), routes...)
+	sorted := unique(routes)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Host < sorted[j].Host })
 
 	var handlers []any
@@ -68,8 +96,16 @@ func (c Caddy) Config(routes []Route) ([]byte, error) {
 				"headers": map[string][]string{"Location": {r.Redirect + "{http.request.uri}"}}}
 		} else if r.Unavailable {
 			h = map[string]any{"handler": "static_response", "status_code": 503, "body": "Application unavailable.\n", "headers": map[string][]string{"X-Pier-Deployment": {r.DeploymentID}}}
+		} else if r.Wake != "" {
+			// The waker starts the application, answers this request
+			// through it, and moves the address back to it.
+			h = map[string]any{"handler": "reverse_proxy", "upstreams": []any{map[string]any{"dial": r.Wake}}, "stream_close_delay": streamCloseDelay,
+				"headers": map[string]any{
+					"request":  map[string]any{"set": map[string][]string{WakeHeader: {r.DeploymentID}}},
+					"response": map[string]any{"set": map[string][]string{"X-Pier-Deployment": {r.DeploymentID}}},
+				}}
 		} else if r.Upstream != "" {
-			h = map[string]any{"handler": "reverse_proxy", "upstreams": []any{map[string]any{"dial": r.Upstream}}}
+			h = map[string]any{"handler": "reverse_proxy", "upstreams": []any{map[string]any{"dial": r.Upstream}}, "stream_close_delay": streamCloseDelay}
 			if r.DeploymentID != "" {
 				h["headers"] = map[string]any{"response": map[string]any{"set": map[string][]string{"X-Pier-Deployment": {r.DeploymentID}}}}
 			}
@@ -100,6 +136,9 @@ func (c Caddy) Config(routes []Route) ([]byte, error) {
 	}
 	if c.Admin == "" && c.HTTPS {
 		cfg["apps"].(map[string]any)["tls"] = c.tlsConfig(sorted)
+		if ip := dashboardIP(sorted); ip != "" {
+			server["tls_connection_policies"] = []any{map[string]any{"default_sni": ip}}
+		}
 	}
 	if c.Admin != "" {
 		u, err := url.Parse(c.Admin)

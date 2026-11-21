@@ -47,10 +47,19 @@ func (a *API) addDomain(w http.ResponseWriter, r *http.Request) {
 	if host == apex {
 		redirect = "www." + host
 	}
-	for _, candidate := range []string{host, redirect} {
-		if candidate != "" && (candidate == a.Deployer.PierHost || candidate == a.Deployer.Domain || strings.HasSuffix(candidate, "."+a.Deployer.Domain)) {
-			writeJSON(w, 400, map[string]string{"error": "Pier already uses that address for the dashboard or project deployments."})
-			return
+	// Addresses the owner saved take effect at the next restart, and a custom
+	// domain under them would then be an address Pier generates itself.
+	saved, err := a.savedAddresses(r.Context())
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	for _, used := range []addresses{{a.Deployer.PierHost, a.Deployer.Domain}, saved} {
+		for _, candidate := range []string{host, redirect} {
+			if candidate != "" && (candidate == used.Address || candidate == used.Base || strings.HasSuffix(candidate, "."+used.Base)) {
+				writeJSON(w, 400, map[string]string{"error": "Pier already uses that address for the dashboard or project deployments."})
+				return
+			}
 		}
 	}
 	err = a.Store.AddDomain(r.Context(), project, host, redirect)
@@ -115,7 +124,7 @@ func (a *API) domains(w http.ResponseWriter, r *http.Request) {
 		}
 		views = append(views, v)
 	}
-	base := names.Production(project, a.Deployer.Domain)
+	base := names.Production(ps.label, a.Deployer.Domain)
 	writeJSON(w, 200, map[string]any{"domains": views, "public_ip": ip, "default_host": base, "https": a.Deployer.Router.HTTPS, "default_tls": ps.production != nil && a.hasCertificate(r.Context(), base), "deployed": ps.production != nil})
 }
 

@@ -6,6 +6,9 @@ case "${1:-}" in ""|--check) ;; *) echo "Usage: ./install.sh [--check]" >&2; exi
 [ "$(uname -s)" = Linux ] || { echo 'Pier server requires Linux.' >&2; exit 1; }
 case "$(uname -m)" in x86_64) arch=amd64;; aarch64|arm64) arch=arm64;; *) echo 'Unsupported CPU architecture.' >&2; exit 1;; esac
 [ "$(cat ARCH)" = "$arch" ] || { echo "Use the Linux $arch bundle." >&2; exit 1; }
+# SHA256SUMS came in the same bundle as the files it lists. It catches a
+# download or an unpacking that went wrong, and nothing else: whoever could
+# change the bundle could change the sums with it.
 sha256sum -c SHA256SUMS
 printf 'Installing Pier %s for Linux %s\n' "$(cat VERSION)" "$arch"
 df -h .

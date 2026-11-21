@@ -28,6 +28,9 @@ type API struct {
 	healthMu       sync.Mutex
 	healthAt       time.Time
 	healthSnapshot map[string]any
+	cacheSize      cacheMeter
+	// folders keeps folder listings, by repository and commit.
+	folders        folderCache
 	SiteListener   string // local site listener for TLS handshakes with the requested SNI
 	githubSetup    sync.Mutex
 	githubEndpoint string // GitHub API base for integration tests
@@ -75,6 +78,9 @@ func (a *API) Public() http.Handler {
 	mux.Handle("DELETE /api/projects/{project}", a.auth(http.HandlerFunc(a.deleteProject)))
 	mux.Handle("GET /api/projects/{project}/settings", a.auth(http.HandlerFunc(a.settings)))
 	mux.Handle("PUT /api/projects/{project}/settings", a.auth(http.HandlerFunc(a.saveSettings)))
+	mux.Handle("PUT /api/projects/{project}/address", a.auth(http.HandlerFunc(a.setAddress)))
+	mux.Handle("GET /api/projects/{project}/folders", a.auth(http.HandlerFunc(a.projectFolders)))
+	mux.Handle("GET /api/github/repositories/{id}/folders", a.auth(http.HandlerFunc(a.repoFolders)))
 	mux.Handle("POST /api/projects/{project}/deployments", a.auth(http.HandlerFunc(a.upload)))
 	mux.Handle("POST /api/projects/{project}/promote", a.auth(http.HandlerFunc(a.promote)))
 	mux.Handle("POST /api/projects/{project}/redeploy", a.auth(http.HandlerFunc(a.redeploy)))

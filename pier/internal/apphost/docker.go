@@ -42,6 +42,10 @@ func New(data string) *Host {
 	return &Host{owner: fmt.Sprintf("pier-%x", hash[:8])}
 }
 
+// Labels mark a container or network as this instance's. Everything Pier
+// creates carries them, and it touches nothing without them.
+func (h *Host) Labels() map[string]string { return map[string]string{ownerLabel: h.owner} }
+
 // Connect lazily so a static site or the dashboard can run with Docker offline.
 func (h *Host) engine(ctx context.Context) (*client.Client, error) {
 	h.mu.Lock()
@@ -70,7 +74,7 @@ func (h *Host) engine(ctx context.Context) (*client.Client, error) {
 func (h *Host) ensureNetwork(ctx context.Context, c *client.Client) error {
 	netw, err := c.NetworkInspect(ctx, h.owner, client.NetworkInspectOptions{})
 	if errdefs.IsNotFound(err) {
-		_, err = c.NetworkCreate(ctx, h.owner, client.NetworkCreateOptions{Driver: "bridge", Labels: map[string]string{ownerLabel: h.owner}, Options: map[string]string{"com.docker.network.bridge.enable_icc": "false"}})
+		_, err = c.NetworkCreate(ctx, h.owner, client.NetworkCreateOptions{Driver: "bridge", Labels: h.Labels(), Options: map[string]string{"com.docker.network.bridge.enable_icc": "false"}})
 		if err != nil && !errdefs.IsConflict(err) {
 			return err
 		}
@@ -210,13 +214,13 @@ func (h *Host) StartWithOptions(ctx context.Context, name string, env []string, 
 	if err := socket.Close(); err != nil {
 		return err
 	}
-	config := &container.Config{Env: env, Labels: map[string]string{ownerLabel: h.owner}, ExposedPorts: network.PortSet{port: {}}}
+	config := &container.Config{Env: env, Labels: h.Labels(), ExposedPorts: network.PortSet{port: {}}}
 	if opts.StartCommand != "" {
 		config.Entrypoint = []string{"/bin/sh", "-c"}
 		config.Cmd = []string{opts.StartCommand}
 	}
 	host := &container.HostConfig{NetworkMode: container.NetworkMode(h.owner), PortBindings: network.PortMap{port: {{HostIP: loopback, HostPort: published}}},
-		RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyAlways}, SecurityOpt: []string{"no-new-privileges"}, Resources: resolveResources(opts),
+		RestartPolicy: restartPolicy, SecurityOpt: []string{"no-new-privileges"}, Resources: resolveResources(opts),
 		LogConfig: container.LogConfig{Type: "json-file", Config: map[string]string{"max-size": "10m", "max-file": "2"}}}
 	created, err := c.ContainerCreate(ctx, client.ContainerCreateOptions{Name: name, Image: img.ID, Config: config, HostConfig: host})
 	if err != nil {
@@ -292,6 +296,104 @@ func (h *Host) Restart(ctx context.Context, name string) error {
 		return err
 	}
 	return h.Ready(ctx, name)
+}
+
+// restartPolicy brings an application back after a crash or a reboot, but
+// leaves one that Pier stopped alone. "always" would start every superseded
+// deployment again whenever Docker restarts.
+var restartPolicy = container.RestartPolicy{Name: container.RestartPolicyUnlessStopped}
+
+// owned inspects one of this instance's containers by name.
+func (h *Host) owned(ctx context.Context, c *client.Client, name string) (container.InspectResponse, error) {
+	res, err := c.ContainerInspect(ctx, name, client.ContainerInspectOptions{})
+	if errdefs.IsNotFound(err) {
+		return container.InspectResponse{}, ErrNotFound
+	}
+	if err != nil {
+		return container.InspectResponse{}, err
+	}
+	if res.Container.Config == nil || res.Container.Config.Labels[ownerLabel] != h.owner {
+		return container.InspectResponse{}, errors.New("application container ownership mismatch")
+	}
+	return res.Container, nil
+}
+
+// Stop stops a superseded deployment's container. The container and its image
+// stay, so Resume can bring the deployment back. One that is already gone or
+// stopped is left as it is.
+func (h *Host) Stop(ctx context.Context, name string) error {
+	c, err := h.engine(ctx)
+	if err != nil {
+		return err
+	}
+	app, err := h.owned(ctx, c, name)
+	if errors.Is(err, ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	// Containers made before restartPolicy changed would come back at the
+	// next reboot.
+	if app.HostConfig != nil && app.HostConfig.RestartPolicy.Name != restartPolicy.Name {
+		if _, err := c.ContainerUpdate(ctx, app.ID, client.ContainerUpdateOptions{RestartPolicy: &restartPolicy}); err != nil {
+			return err
+		}
+	}
+	if app.State != nil && !app.State.Running && !app.State.Restarting {
+		return nil
+	}
+	_, err = c.ContainerStop(ctx, app.ID, client.ContainerStopOptions{})
+	return err
+}
+
+// Resume makes sure a deployment's container is running and answering, and
+// starts it first if it was stopped. One that was started and then doesn't
+// answer is stopped again, or Docker would keep restarting a process that
+// crashes at boot.
+func (h *Host) Resume(ctx context.Context, name string) error {
+	c, err := h.engine(ctx)
+	if err != nil {
+		return err
+	}
+	app, err := h.owned(ctx, c, name)
+	if err != nil {
+		return err
+	}
+	if app.State != nil && app.State.Running {
+		return h.Ready(ctx, name)
+	}
+	if _, err := c.ContainerStart(ctx, app.ID, client.ContainerStartOptions{}); err != nil {
+		return err
+	}
+	err = h.Ready(ctx, name)
+	if err != nil {
+		// The caller may have given up, and the stop must still happen.
+		stop, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancel()
+		c.ContainerStop(stop, app.ID, client.ContainerStopOptions{})
+	}
+	return err
+}
+
+// Running names this instance's containers that are up, whether or not they
+// answer yet.
+func (h *Host) Running(ctx context.Context) (map[string]bool, error) {
+	c, err := h.engine(ctx)
+	if err != nil {
+		return nil, err
+	}
+	list, err := c.ContainerList(ctx, client.ContainerListOptions{Filters: client.Filters{}.Add("label", ownerLabel+"="+h.owner)})
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]bool{}
+	for _, app := range list.Items {
+		for _, name := range app.Names {
+			out[strings.TrimPrefix(name, "/")] = true
+		}
+	}
+	return out, nil
 }
 
 var probeClient = &http.Client{Timeout: 2 * time.Second, Transport: &http.Transport{DisableKeepAlives: true}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}

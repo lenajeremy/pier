@@ -1,154 +1,215 @@
 import { useState, type FormEvent } from 'react'
 import { api } from '../lib/api'
 import { useData } from '../lib/data'
-import { Link } from '../lib/router'
+import { Info } from '../components/Icons'
+import { confirm } from '../components/Dialog'
+import { toast } from '../components/Toast'
+import { PageHeading, Problem, Skeleton } from '../components/ui'
+
 type Addresses = { address: string; base: string }
 type Setup = { saved: Addresses; active: Addresses; pending: boolean; ip: string }
+const message = (e: unknown) => (e instanceof Error ? e.message : "Can't reach pierd.")
+const good = (result: string) => /^(Matches|Local)/.test(result)
+
+// Settings is K4: where the server is reached, and the owner's password.
 export function Settings() {
   const { data, error, reload } = useData<Setup>('/api/settings')
-  const [draft, setDraft] = useState<Addresses | null>(null),
-    [notice, msg] = useState(''),
-    [problem, fail] = useState(''),
-    [busy, wait] = useState(false)
-  const [current, setCurrent] = useState(''),
-    [password, setPassword] = useState(''),
-    [confirmation, confirmPassword] = useState('')
+  const [draft, setDraft] = useState<Addresses | null>(null)
+  const [dns, setDns] = useState<Addresses | null>(null)
+  const [problem, setProblem] = useState('')
+  const [busy, setBusy] = useState('')
+  const [current, setCurrent] = useState('')
+  const [password, setPassword] = useState('')
+  const [again, setAgain] = useState('')
+  const [wrong, setWrong] = useState<{ field: string; text: string } | null>(null)
+
   const values = draft ?? data?.saved ?? { address: '', base: '' }
-  async function save(e: FormEvent) {
+  const dirty = !!draft && !!data && (draft.address !== data.saved.address || draft.base !== data.saved.base)
+
+  const save = async (e: FormEvent) => {
     e.preventDefault()
-    wait(true)
-    fail('')
-    msg('')
+    setBusy('save')
+    setProblem('')
+    setDns(null)
     try {
       await api('/api/settings', { method: 'PUT', body: JSON.stringify(values) })
       await reload()
       setDraft(null)
-      msg('Addresses saved.')
-    } catch (e) {
-      fail((e as Error).message)
+      toast('Saved the addresses. They take effect when pierd restarts.')
+    } catch (err) {
+      setProblem(message(err))
     } finally {
-      wait(false)
+      setBusy('')
     }
   }
-  async function dns() {
-    wait(true)
-    fail('')
-    msg('')
+  const check = async () => {
+    setBusy('dns')
+    setProblem('')
     try {
-      const r = await api<Addresses>('/api/settings/dns', { method: 'POST' })
-      msg('Dashboard: ' + r.address + ' · Base domain: ' + r.base)
-    } catch (e) {
-      fail((e as Error).message)
+      setDns(await api<Addresses>('/api/settings/dns', { method: 'POST' }))
+    } catch (err) {
+      setProblem(message(err))
     } finally {
-      wait(false)
+      setBusy('')
     }
   }
-  async function change(e: FormEvent) {
+  const change = (e: FormEvent) => {
     e.preventDefault()
-    fail('')
-    msg('')
-    if (password !== confirmation) {
-      fail('The new passwords must match.')
-      return
-    }
-    wait(true)
-    try {
-      await api('/api/settings/password', { method: 'POST', body: JSON.stringify({ current, new: password }) })
-      window.dispatchEvent(new Event('pier:signed-out'))
-    } catch (e) {
-      fail((e as Error).message)
-    } finally {
-      wait(false)
-    }
-  }
-  return (
-    <main className="main global operations">
-      <header className="page-heading">
-        <h1 className="t-title">Settings</h1>
-      </header>
-      {(error || problem) && (
-        <p className="field-message" role="alert">
-          {problem || error?.message}
+    if (password.length < 12) return setWrong({ field: 'new', text: 'Use at least 12 characters.' })
+    if (password !== again) return setWrong({ field: 'again', text: "This doesn't match the new password." })
+    setWrong(null)
+    confirm({
+      title: 'Change your password?',
+      body: (
+        <p>
+          Every browser and linked computer is signed out, this one included. You sign in again with the new password, and
+          approve each computer again with pier login.
         </p>
+      ),
+      action: 'Change password',
+      working: 'Changing…',
+      run: async () => {
+        await api('/api/settings/password', { method: 'POST', body: JSON.stringify({ current, new: password }) })
+        window.dispatchEvent(new Event('pier:signed-out'))
+      },
+    })
+  }
+
+  return (
+    <main className="main global">
+      <PageHeading title="Settings" note="Where this server is reached, and how you sign in to it." />
+      {error && <Problem>{error.message}</Problem>}
+      {!data && !error && (
+        <div className="panel">
+          <Skeleton rows={3} tall />
+        </div>
       )}
       {data && (
         <>
-          <form className="panel ops-panel" onSubmit={save}>
-            <h2>Server addresses</h2>
-            {(['address', 'base'] as const).map((k) => (
-              <label className="ops-field" key={k}>
-                <span>{k === 'address' ? 'Dashboard address' : 'Base domain'}</span>
+          <form className="panel form-panel" onSubmit={save} noValidate>
+            <h2 className="t-small t-strong">Server addresses</h2>
+            {data.pending && (
+              <div className="alert info">
+                <Info />
+                <div>
+                  <span className="t-small t-strong">Restart pierd to use the saved addresses</span>
+                  <span className="t-caption t-muted">
+                    Until then the dashboard is at {data.active.address}, and projects get addresses under{' '}
+                    {data.active.base}.
+                  </span>
+                </div>
+              </div>
+            )}
+            <div className="form-grid two">
+              <label className="field">
+                <span className="field-label">Dashboard address</span>
                 <input
                   className="input mono"
-                  required
-                  value={values[k]}
-                  onChange={(e) => setDraft({ ...values, [k]: e.target.value })}
+                  value={values.address}
+                  spellCheck={false}
+                  autoCapitalize="off"
+                  onChange={(e) => {
+                    setDraft({ ...values, address: e.target.value.trim() })
+                    setDns(null)
+                  }}
                 />
+                {dns ? <DnsLine result={dns.address} /> : <span className="t-note">Where you open this dashboard.</span>}
               </label>
-            ))}
-            <p className="t-note">
-              {data.pending
-                ? 'Restart pierd to use the saved addresses. Currently serving ' +
-                  data.active.address +
-                  ' and *.' +
-                  data.active.base +
-                  '.'
-                : 'Saved addresses take effect when pierd restarts.'}
-            </p>
-            <div className="ops-actions">
-              <button className="btn primary" disabled={busy}>
-                Save addresses
+              <label className="field">
+                <span className="field-label">Base domain</span>
+                <input
+                  className="input mono"
+                  value={values.base}
+                  spellCheck={false}
+                  autoCapitalize="off"
+                  onChange={(e) => {
+                    setDraft({ ...values, base: e.target.value.trim() })
+                    setDns(null)
+                  }}
+                />
+                {dns ? (
+                  <DnsLine result={dns.base} />
+                ) : (
+                  <span className="t-note">
+                    Every project gets an address under it, like blog.{values.base || 'example.com'}.
+                  </span>
+                )}
+              </label>
+            </div>
+            {problem && (
+              <span className="field-message" role="alert">
+                {problem}
+              </span>
+            )}
+            <div className="form-foot">
+              <span className="t-note">
+                {dirty
+                  ? 'Saved addresses take effect when pierd restarts.'
+                  : data.ip
+                    ? `Check DNS looks up both names and compares them with this server's IP, ${data.ip}.`
+                    : 'Set the server’s IP with pierd init to check DNS from here.'}
+              </span>
+              <button className="btn quiet" type="button" disabled={!!busy || dirty} onClick={check}>
+                {busy === 'dns' ? 'Checking…' : 'Check DNS'}
               </button>
-              <button className="btn quiet" type="button" disabled={busy || !!draft} onClick={dns}>
-                Check DNS
+              <button className="btn primary" type="submit" disabled={!!busy || !dirty}>
+                {busy === 'save' ? 'Saving…' : 'Save addresses'}
               </button>
             </div>
-            {notice && <p role="status">{notice}</p>}
           </form>
-          <section className="panel ops-panel">
-            <h2>Account and integrations</h2>
-            <Link to="/integrations">GitHub App ↗</Link>
-            <Link to="/members">Signed-in computers ↗</Link>
-          </section>
-          <form className="panel ops-panel" onSubmit={change}>
-            <h2>Change password</h2>
-            <label className="ops-field">
-              <span>Current password</span>
-              <input
-                type="password"
-                className="input"
-                required
-                value={current}
-                autoComplete="current-password"
-                onChange={(e) => setCurrent(e.target.value)}
-              />
-            </label>
-            <label className="ops-field">
-              <span>New password</span>
-              <input
-                type="password"
-                className="input"
-                minLength={12}
-                required
-                value={password}
-                autoComplete="new-password"
-                onChange={(e) => setPassword(e.target.value)}
-              />
-            </label>
-            <label className="ops-field">
-              <span>Confirm new password</span>
-              <input
-                type="password"
-                className="input"
-                required
-                autoComplete="new-password"
-                value={confirmation}
-                onChange={(e) => confirmPassword(e.target.value)}
-              />
-            </label>
-            <p className="t-note">Changing the password signs out all browsers and linked computers.</p>
-            <div>
-              <button className="btn quiet" disabled={busy}>
+
+          <form className="panel form-panel" onSubmit={change} noValidate>
+            <h2 className="t-small t-strong">Password</h2>
+            <div className="form-grid">
+              <label className="field">
+                <span className="field-label">Current password</span>
+                <input type="password" className="input" value={current} autoComplete="current-password" onChange={(e) => setCurrent(e.target.value)} />
+              </label>
+              <label className={'field' + (wrong?.field === 'new' ? ' error' : '')}>
+                <span className="field-label">New password</span>
+                <input
+                  type="password"
+                  className="input"
+                  value={password}
+                  autoComplete="new-password"
+                  onChange={(e) => {
+                    setPassword(e.target.value)
+                    setWrong(null)
+                  }}
+                />
+                {wrong?.field === 'new' ? (
+                  <span className="field-message" role="alert">
+                    {wrong.text}
+                  </span>
+                ) : (
+                  <span className="t-note">At least 12 characters.</span>
+                )}
+              </label>
+              <label className={'field' + (wrong?.field === 'again' ? ' error' : '')}>
+                <span className="field-label">New password, again</span>
+                <input
+                  type="password"
+                  className="input"
+                  value={again}
+                  autoComplete="new-password"
+                  onChange={(e) => {
+                    setAgain(e.target.value)
+                    setWrong(null)
+                  }}
+                />
+                {wrong?.field === 'again' && (
+                  <span className="field-message" role="alert">
+                    {wrong.text}
+                  </span>
+                )}
+              </label>
+            </div>
+            <div className="form-foot">
+              <span className="t-note">
+                Changing it signs out every browser and linked computer. If you've lost it, run{' '}
+                <span className="mono">pierd reset-password</span> on the server.
+              </span>
+              <button className="btn quiet" type="submit" disabled={!current || !password || !again}>
                 Change password
               </button>
             </div>
@@ -156,5 +217,14 @@ export function Settings() {
         </>
       )}
     </main>
+  )
+}
+
+function DnsLine({ result }: { result: string }) {
+  return (
+    <span className="t-note check-line" role="status">
+      <i className={'swatch ' + (good(result) ? 'ready' : 'warning')} />
+      {result}
+    </span>
   )
 }

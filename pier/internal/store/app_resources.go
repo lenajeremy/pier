@@ -1,6 +1,9 @@
 package store
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // Record ownership before invoking Docker. The record outlives an expired
 // deployment until both its container and tagged image are gone.
@@ -17,7 +20,73 @@ func (s *Store) InterruptAppBuilds(ctx context.Context) error {
 	return err
 }
 func (s *Store) UnusedApps(ctx context.Context) ([]string, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT r.name FROM app_resources r LEFT JOIN deployments d ON d.id=r.deployment WHERE d.id IS NULL OR d.status='failed'`)
+	return s.appNames(ctx, `SELECT r.name FROM app_resources r LEFT JOIN deployments d ON d.id=r.deployment WHERE d.id IS NULL OR d.status='failed'`)
+}
+
+// idleApp is true for a built deployment d that nothing needs running. A
+// deployment is needed while an address points at it (custom domains follow
+// production's), while it is where a rollback came from or where the next one
+// would go, and while it is the newest of its branch and target: pier
+// deploy's previews have only their own address, and a production build held
+// back by a rollback waits to be promoted. The rollback target is chosen as
+// the API chooses it: the newest production deployment that built, older
+// than the one production serves.
+const idleApp = `d.status='ready'
+	AND NOT EXISTS(SELECT 1 FROM aliases a WHERE a.deployment_id=d.id)
+	AND NOT EXISTS(SELECT 1 FROM projects p WHERE p.rolled_back_from=d.id)
+	AND EXISTS(SELECT 1 FROM deployments n WHERE n.project=d.project AND n.branch=d.branch AND n.target=d.target
+		AND n.status='ready' AND (n.created_at>d.created_at OR (n.created_at=d.created_at AND n.id>d.id)))
+	AND d.id IS NOT (SELECT t.id FROM aliases a JOIN deployments cur ON cur.id=a.deployment_id JOIN deployments t ON t.project=a.project
+		WHERE a.kind='production' AND a.project=d.project AND t.id!=cur.id AND t.target='production' AND t.status='ready'
+		AND t.created_at<cur.created_at ORDER BY t.created_at DESC, t.id LIMIT 1)`
+
+// IdleApps lists the containers of superseded deployments, which can be
+// stopped: in one project or, with project empty, in all of them. Their
+// images stay, so a rollback or a promote can start one again.
+func (s *Store) IdleApps(ctx context.Context, project string) ([]string, error) {
+	return s.appNames(ctx, `SELECT r.name FROM app_resources r JOIN deployments d ON d.id=r.deployment
+		WHERE (?='' OR d.project=?) AND `+idleApp+` ORDER BY r.name`, project, project)
+}
+
+// Sleeper is an application container that may sleep while nobody visits
+// it: a superseded deployment's, or a preview's that only its own address or
+// its branch's serves. Production, its custom domains and what a rollback
+// needs at once stay awake.
+type Sleeper struct {
+	Name       string
+	Deployment string
+	Ready      time.Time // when its build finished
+	Superseded bool      // nothing needs it; a preview has an address that does
+}
+
+// Sleepers lists the containers that may sleep, in one project or, with
+// project empty, in all of them. A preview that production was promoted to
+// is production's, and stays awake.
+func (s *Store) Sleepers(ctx context.Context, project string) ([]Sleeper, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT r.name, d.id, d.created_at+d.build_ms, `+idleApp+` FROM app_resources r JOIN deployments d ON d.id=r.deployment
+		WHERE (?='' OR d.project=?) AND d.status='ready' AND (`+idleApp+` OR (d.target='preview'
+			AND NOT EXISTS(SELECT 1 FROM aliases a WHERE a.deployment_id=d.id AND a.kind<>'branch')
+			AND NOT EXISTS(SELECT 1 FROM projects p WHERE p.rolled_back_from=d.id)))
+		ORDER BY r.name`, project, project)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Sleeper
+	for rows.Next() {
+		var z Sleeper
+		var ready int64
+		if err := rows.Scan(&z.Name, &z.Deployment, &ready, &z.Superseded); err != nil {
+			return nil, err
+		}
+		z.Ready = time.UnixMilli(ready)
+		out = append(out, z)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) appNames(ctx context.Context, query string, args ...any) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

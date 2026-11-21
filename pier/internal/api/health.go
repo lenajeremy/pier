@@ -18,6 +18,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -103,6 +104,124 @@ func dockerDiskUsage(ctx context.Context) (images, buildCache *int64) {
 	}
 	return images, buildCache
 }
+
+// meter remembers a size that is slow to measure. The Server page asks
+// every few seconds for as long as it's open; the measuring happens behind
+// it, one at a time and only now and then, and the page gets the last answer.
+type meter struct {
+	every time.Duration // how long a measurement stands before the next
+	wait  time.Duration // how long a request waits when there's no answer yet
+
+	mu      sync.Mutex
+	bytes   *int64        // the last measurement; nil if it failed or none has ended
+	at      time.Time     // when it ended
+	running chan struct{} // closed when the measurement under way ends; nil for none
+	gen     int           // forget moves it on, to drop a measurement of what's gone
+}
+
+// size returns the last measurement, and starts the next in the background
+// when that one is due and none is running. With nothing to show yet it
+// gives a quick measurement a moment to answer this request.
+func (m *meter) size(ctx context.Context, measure func() *int64) *int64 {
+	m.mu.Lock()
+	if m.running == nil && (m.at.IsZero() || time.Since(m.at) >= m.every) {
+		done, gen := make(chan struct{}), m.gen
+		m.running = done
+		go func() {
+			v := measure()
+			m.mu.Lock()
+			if gen == m.gen {
+				m.bytes, m.at = v, time.Now()
+			}
+			m.running = nil
+			m.mu.Unlock()
+			close(done)
+		}()
+	}
+	known, running := m.bytes, m.running
+	m.mu.Unlock()
+	if known != nil || running == nil {
+		return known
+	}
+	wait := time.NewTimer(m.wait)
+	defer wait.Stop()
+	select {
+	case <-running:
+	case <-wait.C:
+	case <-ctx.Done():
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.bytes
+}
+
+// forget drops the measurement, so the next request measures again.
+func (m *meter) forget() {
+	m.mu.Lock()
+	m.bytes, m.at = nil, time.Time{}
+	m.gen++
+	m.mu.Unlock()
+}
+
+// cacheMeasureLimit is how long adding up the build cache may take. A cache
+// of many gigabytes takes far longer than a page should wait, which is why
+// it's measured behind the page.
+const cacheMeasureLimit = 2 * time.Minute
+
+// cacheMeter measures the build cache volume. pierd has one builder, so an
+// API holds one of these. It's made on first use, so an API written as a
+// plain struct, as tests write it, still gets a meter of its own.
+type cacheMeter struct {
+	once sync.Once
+	m    *meter
+}
+
+func (c *cacheMeter) get() *meter {
+	c.once.Do(func() { c.m = &meter{every: 5 * time.Minute, wait: 2 * time.Second} })
+	return c.m
+}
+
+// cacheMeasurer names the container that measures a cache volume. The name
+// is how it's stopped, and Docker won't start a second one under it.
+func cacheMeasurer(volume string) string { return volume + "-size" }
+
+// measureCache adds up the build cache volume, or returns nil if it can't
+// within limit. pierd walks Docker's folder itself where it may; Docker
+// Desktop and a service that doesn't run as root can't, and there a
+// throwaway container runs du over the volume. Giving up on the docker
+// command doesn't stop the container it started, so that is removed by name.
+func measureCache(volume, image string, limit time.Duration) *int64 {
+	ctx, stop := context.WithTimeout(context.Background(), limit)
+	defer stop()
+	mount, err := dockerOutput(ctx, "volume", "inspect", "--format", "{{.Mountpoint}}", volume)
+	if err != nil {
+		return nil
+	}
+	if filepath.IsAbs(mount) {
+		if _, err := os.Stat(mount); err == nil {
+			if size := treeBytes(mount); size != nil {
+				return size
+			}
+		}
+	}
+	name := cacheMeasurer(volume)
+	out, err := dockerOutputTimeout(ctx, limit, "run", "--name", name, "--pull=never", "--rm", "--network", "none", "--read-only", "-v", volume+":/cache:ro", "--entrypoint", "du", image, "-sk", "/cache")
+	if err != nil {
+		_, _ = dockerOutputTimeout(context.Background(), 10*time.Second, "rm", "-f", name)
+		return nil
+	}
+	fields := strings.Fields(out)
+	if len(fields) == 0 {
+		return nil
+	}
+	kib, err := strconv.ParseInt(fields[0], 10, 64)
+	if err != nil {
+		return nil
+	}
+	bytes := kib * 1024
+	return &bytes
+}
+
 func (a *API) health(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	d := a.Deployer
@@ -146,23 +265,7 @@ func (a *API) health(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if dockerBuilds {
-		cache, e := dockerOutput(ctx, "volume", "inspect", "--format", "{{.Mountpoint}}", b.CacheVolume)
-		var size *int64
-		if e == nil && filepath.IsAbs(cache) {
-			if _, statErr := os.Stat(cache); statErr == nil {
-				size = treeBytes(cache)
-			}
-		}
-		if size == nil && e == nil {
-			// Docker Desktop and a non-root Linux service cannot walk Docker's mountpoint.
-			out, err := dockerOutput(ctx, "run", "--pull=never", "--rm", "--network", "none", "--read-only", "-v", b.CacheVolume+":/cache:ro", "--entrypoint", "du", b.Image, "-sk", "/cache")
-			if fields := strings.Fields(out); err == nil && len(fields) > 0 {
-				if kib, err := strconv.ParseInt(fields[0], 10, 64); err == nil {
-					bytes := kib * 1024
-					size = &bytes
-				}
-			}
-		}
+		size := a.cacheSize.get().size(ctx, func() *int64 { return measureCache(b.CacheVolume, b.Image, cacheMeasureLimit) })
 		items = append(items, diskItem{"Build cache", size})
 		h["cache"] = true
 	}
@@ -191,9 +294,15 @@ func (a *API) health(w http.ResponseWriter, r *http.Request) {
 
 var artifactID = regexp.MustCompile("^[0-9a-f]{6}$")
 
+// finishFiles removes the files of the deployments queued for clean-up.
+// Their containers and images are removed first, but files don't wait for
+// that to work: the deployments' rows are gone already, so nothing else
+// would ever remove these files, and with Docker away they'd sit on the disk
+// and in the Server page's count. pierd tries the containers again every
+// minute.
 func (a *API) finishFiles(ctx context.Context) error {
 	if err := a.Deployer.CleanupApps(ctx); err != nil {
-		return err
+		a.Log.Warn("application cleanup deferred", "err", err)
 	}
 	ids, err := a.Store.CleanupFiles(ctx)
 	if err != nil {
@@ -242,10 +351,14 @@ func (a *API) cleanup(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, 409, map[string]string{"error": "This builder has no Docker cache."})
 			return
 		}
+		// Docker won't remove a volume that a container has mounted, and the
+		// one measuring it would be the reason more often than a build.
+		_, _ = dockerOutput(ctx, "rm", "-f", cacheMeasurer(b.CacheVolume))
 		if _, err := dockerOutput(ctx, "volume", "rm", b.CacheVolume); err != nil {
 			writeJSON(w, 409, map[string]string{"error": "Docker could not remove Pier’s cache. It may be in use or already empty."})
 			return
 		}
+		a.cacheSize.get().forget()
 	case "docker-cache":
 		if _, err := dockerOutputTimeout(ctx, 60*time.Second, "buildx", "prune", "-af"); err != nil {
 			writeJSON(w, 409, map[string]string{"error": "Docker could not prune the Buildx cache."})

@@ -91,6 +91,12 @@ export const Docs = ({ size = 17, color = 'currentColor' }: P) => (
   </svg>
 )
 
+export const Folder = ({ size = 16, color = 'currentColor' }: P) => (
+  <svg {...line(size, color)}>
+    <path d="M3.5 7A1.5 1.5 0 0 1 5 5.5H9.4L11.4 7.5H19A1.5 1.5 0 0 1 20.5 9V17.5A1.5 1.5 0 0 1 19 19H5A1.5 1.5 0 0 1 3.5 17.5Z" />
+  </svg>
+)
+
 export const Plus = ({ size = 13, color = '#A3ABBE' }: P) => (
   <svg {...line(size, color, 2)}>
     <path d="M12 5V19M5 12H19" />
@@ -187,6 +193,85 @@ export const Info = ({ size = 20, color = '#8DB2F8' }: P) => (
   <svg {...line(size, color)}>
     <circle cx="12" cy="12" r="8" />
     <path d="M12 11V16M12 8V8.01" />
+  </svg>
+)
+
+export const Copy = ({ size = 16, color = '#A3ABBE' }: P) => (
+  <svg {...line(size, color)}>
+    <rect x="9" y="9" width="11" height="11" rx="2" />
+    <path d="M15 9V6.5A1.5 1.5 0 0 0 13.5 5H6.5A1.5 1.5 0 0 0 5 6.5V13.5A1.5 1.5 0 0 0 6.5 15H9" />
+  </svg>
+)
+
+export const Warning = ({ size = 18, color = '#FFB4B4' }: P) => (
+  <svg {...line(size, color)}>
+    <path d="M12 4.5L20.5 19H3.5Z" />
+    <path d="M12 10V13.5M12 16.3H12.01" />
+  </svg>
+)
+
+export const Trash = ({ size = 16, color = '#FFB4B4' }: P) => (
+  <svg {...line(size, color)}>
+    <path d="M4.5 7H19.5M10 4.5H14M7 7L7.8 18.2A1.5 1.5 0 0 0 9.3 19.5H14.7A1.5 1.5 0 0 0 16.2 18.2L17 7" />
+  </svg>
+)
+
+export const ArrowUp = ({ size = 16, color = '#A3ABBE' }: P) => (
+  <svg {...line(size, color)}>
+    <path d="M12 19V5M6 11L12 5L18 11" />
+  </svg>
+)
+
+export const Rows = ({ size = 16, color = '#A3ABBE' }: P) => (
+  <svg {...line(size, color)}>
+    <path d="M9 7H19.5M9 12H19.5M9 17H19.5M4.5 7H5M4.5 12H5M4.5 17H5" />
+  </svg>
+)
+
+export const Layers = ({ size = 16, color = '#A3ABBE' }: P) => (
+  <svg {...line(size, color)}>
+    <path d="M12 4L20 8L12 12L4 8Z" />
+    <path d="M4 12L12 16L20 12M4 16L12 20L20 16" />
+  </svg>
+)
+
+export const RollBack = ({ size = 16, color = '#ECEEF4' }: P) => (
+  <svg {...line(size, color)}>
+    <path d="M5 12A7 7 0 1 0 7.05 7.05M5 4.5V8.5H9" />
+  </svg>
+)
+
+export const Terminal = ({ size = 14, color = '#A3ABBE' }: P) => (
+  <svg {...line(size, color, 1.6)}>
+    <rect x="3.5" y="5" width="17" height="14" rx="2.5" />
+    <path d="M7.5 10L10.5 12.5L7.5 15M13 15H16.5" />
+  </svg>
+)
+
+export const Close = ({ size = 16, color = '#A3ABBE' }: P) => (
+  <svg {...line(size, color)}>
+    <path d="M6.5 6.5L17.5 17.5M17.5 6.5L6.5 17.5" />
+  </svg>
+)
+
+export const Eye = ({ size = 16, color = '#8A92A8' }: P) => (
+  <svg {...line(size, color, 1.6)}>
+    <path d="M2.5 12C4.5 7.5 8 5.5 12 5.5S19.5 7.5 21.5 12C19.5 16.5 16 18.5 12 18.5S4.5 16.5 2.5 12Z" />
+    <circle cx="12" cy="12" r="3" />
+  </svg>
+)
+
+export const Pencil = ({ size = 16, color = '#A3ABBE' }: P) => (
+  <svg {...line(size, color)}>
+    <path d="M5 19L5.8 15.4L15.9 5.3A1.6 1.6 0 0 1 18.2 5.3L18.7 5.8A1.6 1.6 0 0 1 18.7 8.1L8.6 18.2Z" />
+    <path d="M14.2 7L17 9.8" />
+  </svg>
+)
+
+export const Calendar = ({ size = 14, color = 'currentColor' }: P) => (
+  <svg {...line(size, color, 1.6)}>
+    <rect x="4" y="5.5" width="16" height="14" rx="2" />
+    <path d="M4 10H20M8.5 3.5V7M15.5 3.5V7" />
   </svg>
 )
 
