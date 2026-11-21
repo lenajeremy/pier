@@ -4,8 +4,9 @@ import { failed } from '../lib/actions'
 import { useData, useNow } from '../lib/data'
 import { plural } from '../lib/format'
 import { Link } from '../lib/router'
-import { Check, Docs, GitHubMark, Visit, Warning } from '../components/Icons'
+import { Check, Docs, GitHubMark, Trash, Visit, Warning } from '../components/Icons'
 import { confirm } from '../components/Dialog'
+import { Menu } from '../components/Menu'
 import { toast } from '../components/Toast'
 import { PageHeading, Paging, Problem, SearchField, Skeleton, usePaged, When } from '../components/ui'
 
@@ -57,6 +58,40 @@ export function Integrations() {
       : installed
         ? 'Connected'
         : 'Waiting for you to install it'
+
+  // disconnect forgets the App, so a new one can be made: after its secret
+  // was changed on GitHub, or the App was deleted there.
+  const disconnect = async () => {
+    const ok = await confirm({
+      title: 'Disconnect GitHub?',
+      body: (
+        <>
+          <p>
+            Pier forgets the App <span className="mono">{data?.slug}</span>. Pushes stop deploying, and builds waiting to start
+            are dismissed. Projects keep their repos and every deployment, and they deploy again once you connect a new App.
+          </p>
+          <p>The App itself stays in your GitHub account. Delete it there too if you won't use it again.</p>
+        </>
+      ),
+      action: 'Disconnect',
+      working: 'Disconnecting…',
+      danger: true,
+      run: async () => {
+        await api('/api/github', { method: 'DELETE' })
+        await reload()
+      },
+    })
+    if (ok) toast('Disconnected GitHub')
+  }
+  const dismiss = async (j: Job) => {
+    try {
+      await api('/api/github/jobs/' + j.id + '/dismiss', { method: 'POST' })
+      await reload()
+      toast(`Dismissed ${j.sha.slice(0, 7)}`)
+    } catch (e) {
+      failed(e)
+    }
+  }
 
   const resume = async (j: Job) => {
     const go = async () => {
@@ -118,6 +153,12 @@ export function Integrations() {
                 {catalog.data && !installed ? 'Install on GitHub' : 'Manage on GitHub'}
                 <Visit />
               </a>
+            )}
+            {data.slug && (
+              <Menu
+                label="More for GitHub"
+                items={[{ label: 'Disconnect', icon: <Trash />, danger: true, onSelect: disconnect }]}
+              />
             )}
           </header>
           {data.slug && hook ? (
@@ -194,6 +235,9 @@ export function Integrations() {
                       : j.detail}
                   </span>
                 </div>
+                <button className="btn quiet" onClick={() => dismiss(j)} data-tip={j.state === 'approval' ? "Don't build this commit" : 'Leave it failed'}>
+                  Dismiss
+                </button>
                 <button className="btn quiet" onClick={() => resume(j)}>
                   {j.state === 'approval' ? 'Review and approve' : 'Try again'}
                 </button>

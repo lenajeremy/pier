@@ -11,8 +11,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -75,7 +77,9 @@ func (app githubApp) jwt() (string, error) {
 	return data + "." + enc(sig), err
 }
 
-var githubHTTP = &http.Client{Timeout: 2 * time.Minute, CheckRedirect: func(r *http.Request, via []*http.Request) error {
+// githubRedirect follows GitHub's own redirects only, and keeps the token
+// from the host it wasn't issued for.
+func githubRedirect(r *http.Request, via []*http.Request) error {
 	if len(via) >= 4 || r.URL.Scheme != "https" || (r.URL.Host != "api.github.com" && r.URL.Host != "codeload.github.com") {
 		return http.ErrUseLastResponse
 	}
@@ -83,9 +87,45 @@ var githubHTTP = &http.Client{Timeout: 2 * time.Minute, CheckRedirect: func(r *h
 		r.Header.Del("Authorization")
 	}
 	return nil
+}
+
+var githubHTTP = &http.Client{Timeout: 2 * time.Minute, CheckRedirect: githubRedirect}
+
+// githubArchive downloads source archives. A client's Timeout also covers
+// reading the body, which would cap how large a repository a slow link can
+// fetch, so this one bounds each step up to the response instead. After
+// that, downloadGitHub ends a download that stops arriving.
+var githubArchive = &http.Client{CheckRedirect: githubRedirect, Transport: &http.Transport{
+	Proxy:                 http.ProxyFromEnvironment,
+	DialContext:           (&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+	ForceAttemptHTTP2:     true,
+	TLSHandshakeTimeout:   10 * time.Second,
+	ResponseHeaderTimeout: time.Minute,
+	IdleConnTimeout:       90 * time.Second,
 }}
 
+// ghError is a GitHub API call that failed. Status is the HTTP status, or 0
+// when no answer arrived.
+type ghError struct {
+	Status  int
+	Limited bool // GitHub refused the call for its rate limit
+	msg     string
+}
+
+func (e *ghError) Error() string { return e.msg }
+
+// temporary reports whether err is a failure that trying again may get past:
+// GitHub couldn't be reached, had an error of its own, or is limiting calls.
+func temporary(err error) bool {
+	var e *ghError
+	return errors.As(err, &e) && (e.Status == 0 || e.Status >= 500 || e.Limited)
+}
+
 func (a *API) ghRequest(ctx context.Context, method, path, token string, body any) (*http.Response, error) {
+	return a.ghSend(ctx, githubHTTP, method, path, token, body)
+}
+
+func (a *API) ghSend(ctx context.Context, client *http.Client, method, path, token string, body any) (*http.Response, error) {
 	var reader io.Reader
 	if body != nil {
 		raw, err := json.Marshal(body)
@@ -111,13 +151,17 @@ func (a *API) ghRequest(ctx context.Context, method, path, token string, body an
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	resp, err := githubHTTP.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("GitHub could not be reached")
+		return nil, &ghError{msg: "GitHub could not be reached"}
 	}
 	if resp.StatusCode/100 != 2 {
 		resp.Body.Close()
-		return nil, fmt.Errorf("GitHub returned %s", resp.Status)
+		// GitHub answers 429, or 403 with one of these headers, when it is
+		// limiting calls rather than refusing this one.
+		limited := resp.StatusCode == http.StatusTooManyRequests ||
+			resp.StatusCode == http.StatusForbidden && (resp.Header.Get("Retry-After") != "" || resp.Header.Get("X-RateLimit-Remaining") == "0")
+		return nil, &ghError{Status: resp.StatusCode, Limited: limited, msg: "GitHub returned " + resp.Status}
 	}
 	return resp, nil
 }
@@ -216,5 +260,9 @@ func (a *API) ghHead(ctx context.Context, token, repo, branch string, pr int) (s
 	}
 	var ref struct{ Commit struct{ SHA string } }
 	err := a.ghJSON(ctx, "GET", "/repos/"+repo+"/branches/"+url.PathEscape(branch), token, nil, &ref)
+	// A branch deleted since its push has no head, like a closed pull request.
+	if e := (*ghError)(nil); errors.As(err, &e) && e.Status == http.StatusNotFound {
+		return "", nil
+	}
 	return strings.ToLower(ref.Commit.SHA), err
 }

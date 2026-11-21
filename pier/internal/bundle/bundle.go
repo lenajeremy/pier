@@ -1,5 +1,6 @@
 // Package bundle packs a folder for pier deploy and unpacks it on the
-// server: a gzipped tar of regular files and folders, nothing else.
+// server: a gzipped tar of regular files and folders, nothing else. A GitHub
+// source archive may also hold links that stay inside the repository.
 package bundle
 
 import (
@@ -112,7 +113,7 @@ func Pack(w io.Writer, dir string, files []string) (int64, error) {
 }
 
 // ErrUnsafe means an upload tried to write outside its folder, or held
-// something other than files and folders.
+// something other than files, folders and links that stay inside it.
 var ErrUnsafe = errors.New("the upload holds a path Pier won't unpack")
 
 // Untar unpacks a gzipped tar from archive into dir. Only regular files and
@@ -121,6 +122,8 @@ var ErrUnsafe = errors.New("the upload holds a path Pier won't unpack")
 func Untar(archive, dir string) error { return unpack(archive, dir, false) }
 
 // UntarGitHub removes the enclosing directory in a GitHub source archive.
+// It also recreates the repository's symbolic links, as a git push does, when
+// their targets are relative and stay inside dir.
 func UntarGitHub(archive, dir string) error { return unpack(archive, dir, true) }
 
 func unpack(archive, dir string, github bool) error {
@@ -133,14 +136,22 @@ func unpack(archive, dir string, github bool) error {
 	if err != nil {
 		return fmt.Errorf("not a gzipped tar: %w", err)
 	}
+	// Every write goes through root, which refuses to follow a link out of
+	// dir, so a chain of links can't carry a later entry outside it.
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
 	tr := tar.NewReader(gz)
 	var prefix string
+	var links []string
 	var files int
 	var total int64
 	for {
 		h, err := tr.Next()
 		if errors.Is(err, io.EOF) {
-			return nil
+			return checkLinks(root, links)
 		}
 		if err != nil {
 			return err
@@ -170,23 +181,23 @@ func unpack(archive, dir string, github bool) error {
 			}
 			name = rest
 		}
-		target := filepath.Join(dir, filepath.FromSlash(name))
-		switch h.Typeflag {
-		case tar.TypeDir:
-			if err := os.MkdirAll(target, 0o755); err != nil {
+		target := filepath.FromSlash(name)
+		switch {
+		case h.Typeflag == tar.TypeDir:
+			if err := root.MkdirAll(target, 0o755); err != nil {
 				return err
 			}
-		case tar.TypeReg:
+		case h.Typeflag == tar.TypeReg:
 			if files++; files > MaxFiles {
 				return fmt.Errorf("the upload has more than %d files", MaxFiles)
 			}
 			if total += h.Size; total > MaxBytes {
 				return fmt.Errorf("the upload unpacks to more than %d GB", MaxBytes>>30)
 			}
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			if err := root.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 				return err
 			}
-			out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, fs.FileMode(h.Mode)&0o755|0o644)
+			out, err := root.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, fs.FileMode(h.Mode)&0o755|0o644)
 			if err != nil {
 				return err
 			}
@@ -195,8 +206,46 @@ func unpack(archive, dir string, github bool) error {
 			if err != nil {
 				return err
 			}
+		case h.Typeflag == tar.TypeSymlink && github:
+			if files++; files > MaxFiles {
+				return fmt.Errorf("the upload has more than %d files", MaxFiles)
+			}
+			if !linkInside(name, h.Linkname) {
+				return fmt.Errorf("%w: %s links outside the repository", ErrUnsafe, h.Name)
+			}
+			if err := root.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+				return err
+			}
+			if err := root.Symlink(filepath.FromSlash(h.Linkname), target); err != nil {
+				return err
+			}
+			links = append(links, target)
 		default:
 			return fmt.Errorf("%w: %s is a link or device", ErrUnsafe, h.Name)
 		}
 	}
+}
+
+// linkInside reports whether a link at name, with a relative target, points
+// at a path inside the tree. An absolute target would mean something else on
+// the server than it did in the repository.
+func linkInside(name, target string) bool {
+	if target == "" || path.IsAbs(target) || filepath.IsAbs(target) {
+		return false
+	}
+	to := path.Join(path.Dir(name), target)
+	return to != ".." && !strings.HasPrefix(to, "../")
+}
+
+// checkLinks follows every link once the tree is whole. Reading a target as
+// text misses a link that leaves the tree through another link, or leads
+// back to itself; root does not. A link to a file the repository doesn't
+// hold is left for the build to report, as it is for a git push.
+func checkLinks(root *os.Root, links []string) error {
+	for _, link := range links {
+		if _, err := root.Stat(link); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("%w: the link %s can't be followed inside the repository", ErrUnsafe, filepath.ToSlash(link))
+		}
+	}
+	return nil
 }
