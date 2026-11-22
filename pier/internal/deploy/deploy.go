@@ -63,6 +63,9 @@ type Deployer struct {
 	// Visited reports the last request a deployment answered, from the
 	// request log. Nil counts none.
 	Visited func(deployment string) time.Time
+	// Alerts hears about every build that fails, and the next one of the
+	// same address that works, and decides what to send. Nil sends nothing.
+	Alerts Alerter
 
 	mu         sync.Mutex
 	locks      map[string]*sync.Mutex
@@ -259,12 +262,16 @@ func (d *Deployer) run(ctx context.Context, project string, src Source, out io.W
 	unlock := d.lock(project)
 	defer unlock()
 	start := time.Now()
+	var dep store.Deployment
+	// The alert is told last, once the build log is complete, so a failure's
+	// alert can quote its last lines.
+	defer func() { d.reportBuild(context.WithoutCancel(ctx), dep, src) }()
 
 	p, err := d.Store.Project(ctx, project)
 	if err != nil {
 		return err
 	}
-	dep := store.Deployment{
+	dep = store.Deployment{
 		ID: names.NewID(), Project: project, Branch: src.Branch, Commit: src.Commit,
 		Message: src.Message, Status: store.Building, CreatedAt: start, Target: src.Target, Source: src.Kind,
 	}

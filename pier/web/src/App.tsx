@@ -1,6 +1,7 @@
 import { SharedVariables } from './pages/SharedVariables'
 import { Activity } from './pages/Activity'
 import { Server } from './pages/Server'
+import { Alerts } from './pages/Alerts'
 import { Settings } from './pages/Settings'
 import { GitHubImport } from './pages/GitHub'
 import { Integrations } from './pages/Integrations'
@@ -124,6 +125,8 @@ function Signed({ session, path, now }: { session: Session; path: string; now: n
     page = <SharedVariables projects={projects}/>
   } else if (path === '/server') {
     page = <Server version={session.server.version} />
+  } else if (path === '/alerts') {
+    page = <Alerts />
   } else if (path === '/settings') {
     page = <Settings/>
   } else {

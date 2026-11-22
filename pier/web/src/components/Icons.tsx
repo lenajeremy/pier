@@ -278,6 +278,48 @@ export const Calendar = ({ size = 14, color = 'currentColor' }: P) => (
   </svg>
 )
 
+// Bell, Mail, Chat, Hook, Clock and Play are drawn in the same line style as
+// the icons above, for alerts and scheduled jobs. They aren't on the board yet.
+export const Bell = ({ size = 17, color = 'currentColor' }: P) => (
+  <svg {...line(size, color)}>
+    <path d="M6.5 16.5V11A5.5 5.5 0 0 1 17.5 11V16.5L19 18H5Z" />
+    <path d="M10 20.5H14" />
+  </svg>
+)
+
+export const Mail = ({ size = 20, color = '#ECEEF4' }: P) => (
+  <svg {...line(size, color)}>
+    <rect x="3.5" y="5.5" width="17" height="13" rx="2" />
+    <path d="M4.5 7L12 12.5L19.5 7" />
+  </svg>
+)
+
+export const Chat = ({ size = 20, color = '#ECEEF4' }: P) => (
+  <svg {...line(size, color)}>
+    <path d="M5.5 5H18.5A1.5 1.5 0 0 1 20 6.5V15A1.5 1.5 0 0 1 18.5 16.5H10L6 19.5V16.5H5.5A1.5 1.5 0 0 1 4 15V6.5A1.5 1.5 0 0 1 5.5 5Z" />
+    <path d="M8 9.5H16M8 12.5H13" />
+  </svg>
+)
+
+export const Hook = ({ size = 20, color = '#ECEEF4' }: P) => (
+  <svg {...line(size, color)}>
+    <path d="M8.5 7.5L4 12L8.5 16.5M15.5 7.5L20 12L15.5 16.5M13.5 5L10.5 19" />
+  </svg>
+)
+
+export const Clock = ({ size = 16, color = '#A3ABBE' }: P) => (
+  <svg {...line(size, color)}>
+    <circle cx="12" cy="12" r="8" />
+    <path d="M12 7.5V12L15 14" />
+  </svg>
+)
+
+export const Play = ({ size = 16, color = '#A3ABBE' }: P) => (
+  <svg {...line(size, color)}>
+    <path d="M8 5.5L18 12L8 18.5Z" />
+  </svg>
+)
+
 export const GitHubMark = ({ size = 20 }: { size?: number }) => (
   <svg viewBox="0 0 24 24" fill="#ECEEF4" width={size} height={size} aria-hidden>
     <path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12" />

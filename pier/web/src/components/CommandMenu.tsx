@@ -21,6 +21,7 @@ const pages = [
   { to: '/shared-variables', label: 'Shared variables', icon: I.Braces },
   { to: '/members', label: 'Members', icon: I.Members },
   { to: '/server', label: 'Server', icon: I.Server },
+  { to: '/alerts', label: 'Alerts', icon: I.Bell },
   { to: '/settings', label: 'Settings', icon: I.Settings },
 ]
 const tabs = [

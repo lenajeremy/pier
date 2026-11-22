@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { ProjectSummary, Session } from '../lib/api'
-import { signOut } from '../lib/api'
+import { api, signOut } from '../lib/api'
+import { failed } from '../lib/actions'
 import { useData } from '../lib/data'
 import { Link } from '../lib/router'
 import { CommandMenu } from './CommandMenu'
 import * as I from './Icons'
 import { ProjectMark } from './ProjectMark'
 import { Spinner } from './Spinner'
+import { toast } from './Toast'
 import type { Sample } from './ServerCharts'
 
 const globals = [
@@ -16,6 +18,7 @@ const globals = [
   { to: '/shared-variables', label: 'Shared variables', icon: I.Braces },
   { to: '/members', label: 'Members', icon: I.Members },
   { to: '/server', label: 'Server', icon: I.Server },
+  { to: '/alerts', label: 'Alerts', icon: I.Bell },
   { to: '/settings', label: 'Settings', icon: I.Settings },
 ]
 
@@ -166,6 +169,24 @@ function Account({ session }: { session: Session }) {
   const ref = useRef<HTMLDivElement>(null)
   useClickAway(ref, () => setOpen(false))
   const version = session.server.version
+  // Whether this person gets alert emails: their own switch, asked for
+  // when the menu opens.
+  const mail = useData<{ email: boolean }>(open && session.user ? '/api/account/alerts' : null)
+  const [switching, setSwitching] = useState(false)
+  const alertEmails = async () => {
+    if (!mail.data) return
+    const on = !mail.data.email
+    setSwitching(true)
+    try {
+      await api('/api/account/alerts', { method: 'PUT', body: JSON.stringify({ email: on }) })
+      await mail.reload()
+      toast(on ? 'You get alert emails again' : "You won't get alert emails")
+    } catch (e) {
+      failed(e)
+    } finally {
+      setSwitching(false)
+    }
+  }
   const out = async () => {
     setLeaving(true)
     try {
@@ -191,6 +212,18 @@ function Account({ session }: { session: Session }) {
           <Link to="/settings" className="menu-item" role="menuitem" onClick={() => setOpen(false)}>
             Change password
           </Link>
+          {session.user && (
+            <button
+              className="menu-item"
+              role="menuitemcheckbox"
+              aria-checked={!!mail.data?.email}
+              disabled={!mail.data || switching}
+              onClick={alertEmails}
+            >
+              <span className="grow">Email me alerts</span>
+              {switching ? <Spinner /> : mail.data?.email && <I.Check size={14} color="#8DB2F8" />}
+            </button>
+          )}
           <div className="menu-sep" />
           <button className="menu-item" role="menuitem" disabled={leaving} onClick={out}>
             {leaving && <Spinner />}

@@ -265,6 +265,33 @@ var migrations = []string{
 	// 15: the name a project's production address has under the base domain,
 	// when the owner changed it from the project's name.
 	`ALTER TABLE projects ADD COLUMN subdomain TEXT NOT NULL DEFAULT '';`,
+
+	// 16: kept for teams, which another branch adds. When the two meet, its
+	// migration takes this place and this one goes.
+	`SELECT 1;`,
+
+	// 17: where alerts go, with their secrets sealed; the problems an alert
+	// has gone out for and nobody has seen fixed yet, so each is sent once;
+	// and who has turned alert emails off (everyone gets them until then).
+	`CREATE TABLE alert_channels (
+		kind          TEXT PRIMARY KEY,
+		config        TEXT NOT NULL DEFAULT '{}',
+		secret        TEXT NOT NULL DEFAULT '',
+		updated_at    INTEGER NOT NULL,
+		last_sent     INTEGER NOT NULL DEFAULT 0,
+		last_error    TEXT NOT NULL DEFAULT '',
+		last_error_at INTEGER NOT NULL DEFAULT 0
+	);
+	CREATE TABLE alert_incidents (
+		key       TEXT PRIMARY KEY,
+		project   TEXT NOT NULL DEFAULT '',
+		opened_at INTEGER NOT NULL,
+		last_at   INTEGER NOT NULL,
+		count     INTEGER NOT NULL DEFAULT 1
+	);
+	CREATE TABLE alert_email_off (
+		user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE
+	);`,
 }
 
 // Open opens (and if needed creates) the database at path.

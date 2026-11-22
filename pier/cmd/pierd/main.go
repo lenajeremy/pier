@@ -30,6 +30,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
+	"pier/internal/alerts"
 	"pier/internal/api"
 	"pier/internal/apphost"
 	"pier/internal/build"
@@ -238,6 +239,10 @@ func serve(args []string) int {
 		},
 	}
 
+	// Alerts go out in the background, so a deploy never waits for one.
+	notifier := &alerts.Notifier{Store: st, Box: box, Log: log, Dashboard: dep.URL(*address), Server: *address}
+	dep.Alerts = notifier
+
 	self, err := os.Executable()
 	if err != nil {
 		log.Error("find own binary", "err", err)
@@ -245,6 +250,7 @@ func serve(args []string) int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	go notifier.Run(ctx)
 
 	if challengeNS != "" {
 		go func() {
@@ -302,7 +308,7 @@ func serve(args []string) int {
 	// serves any more; the addresses above are up before any is stopped.
 	dep.StopSupersededLater("")
 
-	a := &api.API{StartedAt: time.Now(), Store: st, Deployer: dep, Token: tok, Log: log, Web: web.Handler(), Requests: reqs, SiteListener: dialable(*httpAddr)}
+	a := &api.API{StartedAt: time.Now(), Store: st, Deployer: dep, Token: tok, Log: log, Web: web.Handler(), Requests: reqs, SiteListener: dialable(*httpAddr), Alerts: notifier}
 	if err := a.ResumeCleanup(ctx); err != nil {
 		log.Warn("resume preview cleanup", "err", err)
 	}
