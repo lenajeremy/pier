@@ -155,11 +155,14 @@ type cockpit struct {
 
 	deployErr error // what pier deploy returns once the cockpit closes
 	ranDeploy bool
+
+	role string // this computer's account's role: owner, member or viewer
 }
 
 type cockpitData struct {
 	projects []cockpitProject
 	rows     []boardRow
+	role     string
 	name     string
 	detail   *projectDetail
 	depKey   string
@@ -276,6 +279,11 @@ func fetchCockpit(c config, name, depProject, depID string, spinner bool) cockpi
 		return out
 	}
 	out.projects = list.Projects
+	// The role is asked for with everything else, so a change the owner
+	// makes shows at the next refresh.
+	if who, err := whoAmI(ctx, c); err == nil {
+		out.role = who.Role
+	}
 	var b struct{ Rows []boardRow }
 	if out.err = get("Loading the board", "/api/board", &b); out.err != nil {
 		return out
@@ -369,6 +377,9 @@ func (m *cockpit) apply(d cockpitData) {
 		return
 	}
 	m.offline = nil
+	if d.role != "" {
+		m.role = d.role
+	}
 	keepProject := ""
 	if vis := m.visibleProjects(); m.pCursor < len(vis) {
 		keepProject = m.projects[vis[m.pCursor]].Name
@@ -509,6 +520,19 @@ func (m cockpit) paneRows() int { return bodyRows(m.height) }
 
 func (m *cockpit) say(text, ink string) {
 	m.notice, m.noticeInk = text, ink
+}
+
+// viewer says whether this computer's account can only look.
+func (m cockpit) viewer() bool { return m.role == "viewer" }
+
+// refused tells a viewer, in one sentence, that what they pressed is for
+// members, and says so; for anyone else it says nothing and returns false.
+func (m *cockpit) refused(does string) bool {
+	if !m.viewer() {
+		return false
+	}
+	m.say(viewerCant(does), coralTxt)
+	return true
 }
 
 func (m *cockpit) fail(err error) {
@@ -750,10 +774,19 @@ func (m cockpit) homeKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.scroll()
 		return m, nil
 	case "d", "D":
+		if m.refused("deploy") {
+			return m, nil
+		}
 		return m.deployKeyHome(k.String() == "D")
 	case "p":
+		if m.refused("promote deployments") {
+			return m, nil
+		}
 		return m.promoteSelected()
 	case "r":
+		if m.refused("roll back production") {
+			return m, nil
+		}
 		return m.askRollback()
 	case "l":
 		if m.shown == "" {
@@ -1204,6 +1237,7 @@ func (m cockpit) detailKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.copyAddress(deploymentURL(d))
 	case "p":
 		switch {
+		case m.refused("promote deployments"):
 		case dep.Role == "production":
 			m.say(dep.ID+" is already production.", coralTxt)
 		case dep.Status != "ready":
@@ -1213,6 +1247,9 @@ func (m cockpit) detailKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.askPromote(dep.ID)
 		}
 	case "r":
+		if m.refused("roll back production") {
+			return m, nil
+		}
 		m.shown = project
 		return m.askRollback()
 	case "l":
@@ -1224,6 +1261,9 @@ func (m cockpit) detailKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.openLogs(logSource{c: m.c, project: project, kind: "Runtime", deployment: dep.ID, limit: 200, follow: true})
 	case "R":
+		if m.refused("restart a deployment") {
+			return m, nil
+		}
 		if dep.Runtime == "" || dep.Status != "ready" {
 			m.say("Only a running server can be restarted.", coralTxt)
 			return m, nil
@@ -1235,6 +1275,9 @@ func (m cockpit) detailKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return actionDone{notice: "✓ Restarted " + dep.ID + ", and it answered its readiness check.", err: err}
 		})
 	case "a":
+		if m.refused("redeploy") {
+			return m, nil
+		}
 		if dep.Status == "building" {
 			m.say(dep.ID+" is still building.", coralTxt)
 			return m, nil

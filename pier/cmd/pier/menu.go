@@ -390,4 +390,5 @@ type deploymentSummary struct {
 	ID, Branch, Commit, Message, Status, Role, Framework, Runtime, URL, Error, Target, Source string
 	BuildMS                                                                                   int64     `json:"build_ms"`
 	CreatedAt                                                                                 time.Time `json:"created_at"`
+	SentBy                                                                                    string    `json:"sent_by"` // who uploaded or rebuilt it
 }

@@ -476,7 +476,7 @@ func (a *API) redeploy(w http.ResponseWriter, r *http.Request) {
 	started := make(chan string, 1)
 	failed := make(chan error, 1)
 	go func() {
-		err := a.Deployer.Redeploy(context.WithoutCancel(r.Context()), name, id, target, func(newID string) { started <- newID }, io.Discard)
+		err := a.Deployer.Redeploy(context.WithoutCancel(r.Context()), name, id, target, userFrom(r.Context()).DisplayName(), func(newID string) { started <- newID }, io.Discard)
 		if err != nil {
 			a.Log.Info("redeploy failed", "project", name, "from", id, "err", err)
 			failed <- err

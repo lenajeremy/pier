@@ -15,7 +15,8 @@ import (
 
 // homeActions are what the project pane offers: deploying this folder,
 // when the project is this folder's, rolling production back when there's
-// somewhere to go back to, and opening the production address.
+// somewhere to go back to, and opening the production address. A viewer is
+// offered only what looks, and told why if they press a key for the rest.
 func (m cockpit) homeActions() []action {
 	if m.shown == "" {
 		return nil
@@ -24,14 +25,14 @@ func (m cockpit) homeActions() []action {
 	switch {
 	case m.run != nil && !m.run.done:
 		out = append(out, action{"Show the deploy that's running", "d"})
-	case m.linked != "" && m.linked == m.shown:
+	case m.linked != "" && m.linked == m.shown && !m.viewer():
 		out = append(out, action{"Deploy this folder as a preview", "d"}, action{"Deploy this folder to production", "D"})
 	}
 	d := m.details[m.shown]
 	if d == nil || !hasProduction(d) {
 		return out
 	}
-	if len(rollbackChoices(d)) > 0 {
+	if len(rollbackChoices(d)) > 0 && !m.viewer() {
 		out = append(out, action{"Roll back production", "r"})
 	}
 	if d.URL != "" {
@@ -51,10 +52,11 @@ func (m cockpit) detailActions() []action {
 	}
 	dep := m.detail.Deployment
 	var out []action
-	if dep.Status == "ready" && dep.Role != "production" {
+	change := !m.viewer()
+	if dep.Status == "ready" && dep.Role != "production" && change {
 		out = append(out, action{"Promote to production", "p"})
 	}
-	if pd := m.details[m.detailProject]; dep.Role == "production" && pd != nil && len(rollbackChoices(pd)) > 0 {
+	if pd := m.details[m.detailProject]; dep.Role == "production" && pd != nil && len(rollbackChoices(pd)) > 0 && change {
 		out = append(out, action{"Roll back production", "r"})
 	}
 	if u := deploymentURL(m.detail); u != "" {
@@ -66,11 +68,11 @@ func (m cockpit) detailActions() []action {
 	out = append(out, action{"Build log", "l"})
 	if dep.Runtime != "" {
 		out = append(out, action{"Server log", "s"})
-		if dep.Status == "ready" {
+		if dep.Status == "ready" && change {
 			out = append(out, action{"Restart the server", "R"})
 		}
 	}
-	if dep.Status != "building" {
+	if dep.Status != "building" && change {
 		out = append(out, action{"Build again", "a"})
 	}
 	return append(out, back)

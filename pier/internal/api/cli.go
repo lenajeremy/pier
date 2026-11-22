@@ -14,9 +14,10 @@ import (
 )
 
 // pier login asks pierd for a code, shows it, and opens the dashboard's
-// approve page. The owner, signed in there, sees the computer's name and the
+// approve page. Whoever is signed in there sees the computer's name and the
 // same code and approves it; the CLI, asking every two seconds, then gets a
-// token of its own. Requests live only in memory and expire in 10 minutes.
+// token of its own, which acts as that person, with their role. Requests
+// live only in memory and expire in 10 minutes.
 
 const (
 	loginTTL     = 10 * time.Minute
@@ -32,6 +33,7 @@ type loginRequest struct {
 	PollHash string
 	Status   string // pending, approved, denied
 	Token    string // handed to the CLI once, after approval
+	Email    string // whose account the computer signs in to: whoever approved it
 }
 
 type logins struct {
@@ -70,7 +72,7 @@ func normalizeCode(s string) string {
 }
 
 // cliStart begins a pier login: no account needed, since all it can do is
-// put a request in front of the signed-in owner.
+// put a request in front of someone signed in.
 func (a *API) cliStart(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name string `json:"name"`
@@ -126,8 +128,7 @@ func (a *API) cliPoll(w http.ResponseWriter, r *http.Request) {
 		switch lr.Status {
 		case "approved":
 			delete(a.logins.m, code)
-			owner, _ := a.Store.Owner(r.Context())
-			writeJSON(w, http.StatusOK, map[string]any{"status": "approved", "token": lr.Token, "email": owner.Email})
+			writeJSON(w, http.StatusOK, map[string]any{"status": "approved", "token": lr.Token, "email": lr.Email})
 		case "denied":
 			delete(a.logins.m, code)
 			writeJSON(w, http.StatusOK, map[string]any{"status": "denied"})
@@ -199,7 +200,7 @@ func (a *API) cliAnswer(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, err)
 		return
 	}
-	lr.Status, lr.Token = "approved", token
+	lr.Status, lr.Token, lr.Email = "approved", token, u.Email
 	a.Log.Info("computer approved", "name", lr.Name, "ip", lr.IP)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "approved"})
 }

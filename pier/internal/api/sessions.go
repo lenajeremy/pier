@@ -11,7 +11,7 @@ import (
 // tell sessions apart, useless for signing in.
 const sessionIDLen = 16
 
-// sessions lists where the owner is signed in: browsers and computers.
+// sessions lists where the person asking is signed in: browsers and computers.
 func (a *API) sessions(w http.ResponseWriter, r *http.Request) {
 	u := userFrom(r.Context())
 	current, _ := r.Context().Value(sessionKey).(store.Session)

@@ -232,6 +232,10 @@ func (m cockpit) projectPane(w, rows int) ([]string, []hit, []keyHelp) {
 	focused := (m.focused() == projectPane || m.focused() == actionsPane) && active
 	acts := m.shownActions()
 	keys := []keyHelp{{"d", "deploy"}, {"D", "production"}, {"p", "promote"}, {"r", "roll back"}, {"l", "logs"}, {"b", "board"}, {"/", "find"}, {"?", "help"}, {"q", "quit"}}
+	if m.viewer() {
+		// A viewer looks: the keys that change something leave the bar.
+		keys = keys[4:]
+	}
 	// Keys the pane already shows as rows leave the key bar.
 	keys = withoutKeys(keys, acts)
 	if !m.wide() {
@@ -536,11 +540,21 @@ func (m cockpit) detailPane(w, rows int) ([]string, []hit, []keyHelp) {
 		}
 		from += d.Commit[:min(7, len(d.Commit))]
 	}
-	if d.Source == "cli" {
+	switch {
+	case d.Source == "cli":
 		if from != "" {
 			from += ", "
 		}
-		from += "sent by pier deploy"
+		if d.SentBy != "" {
+			from += "sent by " + d.SentBy + " with pier deploy"
+		} else {
+			from += "sent by pier deploy"
+		}
+	case d.SentBy != "":
+		if from != "" {
+			from += ", "
+		}
+		from += "rebuilt by " + d.SentBy
 	}
 	if from != "" {
 		field("From", text(from, fgSecondary))

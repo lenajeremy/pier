@@ -54,9 +54,10 @@ type Deployment struct {
 	BuildMS   int64     `json:"build_ms"`
 	Error     string    `json:"error,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
-	Target    string    `json:"target"`         // production or preview
-	Source    string    `json:"source"`         // git, github or cli
-	Plan      string    `json:"plan,omitempty"` // JSON: what the build ran
+	Target    string    `json:"target"`            // production or preview
+	Source    string    `json:"source"`            // git, github or cli
+	Plan      string    `json:"plan,omitempty"`    // JSON: what the build ran
+	SentBy    string    `json:"sent_by,omitempty"` // who uploaded or rebuilt it, by name; empty for a push
 }
 
 type Alias struct {
@@ -265,6 +266,36 @@ var migrations = []string{
 	// 15: the name a project's production address has under the base domain,
 	// when the owner changed it from the project's name.
 	`ALTER TABLE projects ADD COLUMN subdomain TEXT NOT NULL DEFAULT '';`,
+
+	// 16: teams. Every account has one role across the whole server: the
+	// owner (the account pierd init made), members, who deploy and change
+	// projects, and viewers, who only look. People join with an invite link;
+	// only a hash of its token is kept, and it works once. Activity and
+	// deployments remember who did them, by name, so the record stays true
+	// after someone leaves.
+	`ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'viewer';
+	ALTER TABLE users ADD COLUMN last_active_at INTEGER NOT NULL DEFAULT 0;
+	UPDATE users SET role='owner' WHERE id=(SELECT MIN(id) FROM users);
+	UPDATE users SET last_active_at=COALESCE((SELECT MAX(last_seen_at) FROM sessions WHERE user_id=users.id),created_at);
+	CREATE TABLE invites (
+		id         INTEGER PRIMARY KEY,
+		token_hash TEXT NOT NULL UNIQUE,
+		role       TEXT NOT NULL,
+		created_by INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		created_at INTEGER NOT NULL,
+		expires_at INTEGER NOT NULL,
+		used_at    INTEGER NOT NULL DEFAULT 0,
+		used_by    INTEGER REFERENCES users(id) ON DELETE SET NULL
+	);
+	ALTER TABLE activity ADD COLUMN actor TEXT NOT NULL DEFAULT '';
+	ALTER TABLE deployments ADD COLUMN sent_by TEXT NOT NULL DEFAULT '';
+	DROP TRIGGER activity_session;
+	CREATE TRIGGER activity_session AFTER INSERT ON sessions BEGIN
+		INSERT INTO activity(at,title,detail,actor) VALUES(NEW.created_at,CASE NEW.kind WHEN 'cli' THEN 'Approved a computer' ELSE 'Signed in' END,NEW.name,
+			COALESCE((SELECT CASE name WHEN '' THEN email ELSE name END FROM users WHERE id=NEW.user_id),'')); END;
+	DROP TRIGGER activity_deploy;
+	CREATE TRIGGER activity_deploy AFTER UPDATE OF status ON deployments WHEN NEW.status IN ('ready','failed') AND OLD.status!=NEW.status BEGIN
+		INSERT INTO activity(at,project,title,detail,deployment,actor) VALUES(CAST(unixepoch('subsec')*1000 AS INTEGER),NEW.project,CASE NEW.status WHEN 'failed' THEN 'Build failed' ELSE 'Build ready' END,NEW.message,NEW.id,NEW.sent_by); END;`,
 }
 
 // Open opens (and if needed creates) the database at path.
@@ -360,9 +391,9 @@ func insertDeployment(ctx context.Context, db execer, d Deployment) error {
 		d.CreatedAt = time.Now()
 	}
 	_, err := db.ExecContext(ctx,
-		`INSERT INTO deployments(id, project, branch, commit_sha, message, status, created_at, target, source)
-		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		d.ID, d.Project, d.Branch, d.Commit, d.Message, d.Status, d.CreatedAt.UnixMilli(), d.Target, orDefault(d.Source, SourceGit))
+		`INSERT INTO deployments(id, project, branch, commit_sha, message, status, created_at, target, source, sent_by)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		d.ID, d.Project, d.Branch, d.Commit, d.Message, d.Status, d.CreatedAt.UnixMilli(), d.Target, orDefault(d.Source, SourceGit), d.SentBy)
 	return err
 }
 
@@ -375,13 +406,13 @@ func (s *Store) FinishDeployment(ctx context.Context, d Deployment) error {
 	return err
 }
 
-const deploymentCols = `id, project, branch, commit_sha, message, status, framework, files, bytes, build_ms, error, created_at, target, source, plan, COALESCE((SELECT r.name FROM app_resources r WHERE r.deployment=id),'')`
+const deploymentCols = `id, project, branch, commit_sha, message, status, framework, files, bytes, build_ms, error, created_at, target, source, plan, sent_by, COALESCE((SELECT r.name FROM app_resources r WHERE r.deployment=id),'')`
 
 func scanDeployment(sc interface{ Scan(...any) error }) (Deployment, error) {
 	var d Deployment
 	var created int64
 	err := sc.Scan(&d.ID, &d.Project, &d.Branch, &d.Commit, &d.Message, &d.Status,
-		&d.Framework, &d.Files, &d.Bytes, &d.BuildMS, &d.Error, &created, &d.Target, &d.Source, &d.Plan, &d.Runtime)
+		&d.Framework, &d.Files, &d.Bytes, &d.BuildMS, &d.Error, &created, &d.Target, &d.Source, &d.Plan, &d.SentBy, &d.Runtime)
 	d.CreatedAt = time.UnixMilli(created)
 	return d, err
 }

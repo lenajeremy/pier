@@ -17,14 +17,6 @@ import (
 	"pier/internal/store"
 )
 
-func (a *API) domainRoutes(mux *http.ServeMux) {
-	const base = "/api/projects/{project}/domains"
-	mux.Handle("GET "+base, a.auth(http.HandlerFunc(a.domains)))
-	mux.Handle("POST "+base, a.auth(http.HandlerFunc(a.addDomain)))
-	mux.Handle("POST "+base+"/{host}/check", a.auth(http.HandlerFunc(a.checkDomain)))
-	mux.Handle("DELETE "+base+"/{host}", a.auth(http.HandlerFunc(a.removeDomain)))
-}
-
 func (a *API) addDomain(w http.ResponseWriter, r *http.Request) {
 	project := r.PathValue("project")
 	if _, ok := a.findProject(w, r, project); !ok {

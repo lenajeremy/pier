@@ -49,74 +49,9 @@ type BoardRow struct {
 	URL string `json:"url"`
 }
 
-// Public serves the dashboard and the authenticated API.
+// Public serves the dashboard and the API, every route behind its guard.
 func (a *API) Public() http.Handler {
-	mux := http.NewServeMux()
-	a.githubRoutes(mux)
-	a.domainRoutes(mux)
-	for _, route := range []string{"GET /api/settings", "PUT /api/settings"} {
-		mux.Handle(route, a.auth(http.HandlerFunc(a.serverSettings)))
-	}
-	mux.Handle("POST /api/settings/dns", a.auth(http.HandlerFunc(a.checkAddresses)))
-	mux.Handle("POST /api/settings/password", a.auth(http.HandlerFunc(a.password)))
-	mux.Handle("GET /api/server/history", a.auth(http.HandlerFunc(a.history)))
-	mux.Handle("GET /api/server", a.auth(http.HandlerFunc(a.health)))
-	mux.Handle("POST /api/server/cleanup/{kind}", a.auth(http.HandlerFunc(a.cleanup)))
-	mux.Handle("GET /api/activity", a.auth(http.HandlerFunc(a.activity)))
-	for _, route := range []string{"GET /api/shared-variables", "POST /api/shared-variables", "PUT /api/shared-variables/{name}", "DELETE /api/shared-variables/{name}"} {
-		mux.Handle(route, a.auth(http.HandlerFunc(a.shared)))
-	}
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "ok\n") })
-
-	mux.HandleFunc("POST /api/session", a.signIn)
-	mux.Handle("GET /api/session", a.auth(http.HandlerFunc(a.session)))
-	mux.Handle("DELETE /api/session", a.auth(http.HandlerFunc(a.signOut)))
-
-	mux.Handle("GET /api/board", a.auth(http.HandlerFunc(a.board)))
-	mux.Handle("GET /api/projects", a.auth(http.HandlerFunc(a.projects)))
-	mux.Handle("GET /api/version", a.auth(http.HandlerFunc(a.versionInfo)))
-	mux.Handle("POST /api/projects", a.auth(http.HandlerFunc(a.createProject)))
-	mux.Handle("DELETE /api/projects/{project}", a.auth(http.HandlerFunc(a.deleteProject)))
-	mux.Handle("GET /api/projects/{project}/settings", a.auth(http.HandlerFunc(a.settings)))
-	mux.Handle("PUT /api/projects/{project}/settings", a.auth(http.HandlerFunc(a.saveSettings)))
-	mux.Handle("PUT /api/projects/{project}/address", a.auth(http.HandlerFunc(a.setAddress)))
-	mux.Handle("GET /api/projects/{project}/folders", a.auth(http.HandlerFunc(a.projectFolders)))
-	mux.Handle("GET /api/github/repositories/{id}/folders", a.auth(http.HandlerFunc(a.repoFolders)))
-	mux.Handle("POST /api/projects/{project}/deployments", a.auth(http.HandlerFunc(a.upload)))
-	mux.Handle("POST /api/projects/{project}/promote", a.auth(http.HandlerFunc(a.promote)))
-	mux.Handle("POST /api/projects/{project}/redeploy", a.auth(http.HandlerFunc(a.redeploy)))
-	mux.Handle("GET /api/projects/{project}/variables", a.auth(http.HandlerFunc(a.variables)))
-	mux.Handle("GET /api/projects/{project}/requests", a.auth(http.HandlerFunc(a.requestLines)))
-	mux.Handle("GET /api/projects/{project}/requests/chart", a.auth(http.HandlerFunc(a.requestChart)))
-	mux.Handle("PUT /api/projects/{project}/variables", a.auth(http.HandlerFunc(a.setVariable)))
-	mux.Handle("POST /api/projects/{project}/variables/import", a.auth(http.HandlerFunc(a.importVariables)))
-	mux.Handle("POST /api/projects/{project}/variables/delete", a.auth(http.HandlerFunc(a.deleteVariable)))
-	mux.Handle("POST /api/projects/{project}/variables/reveal", a.auth(http.HandlerFunc(a.revealVariable)))
-	mux.Handle("POST /api/projects/{project}/rollback", a.auth(http.HandlerFunc(a.rollback)))
-	mux.Handle("POST /api/projects/{project}/rollback/undo", a.auth(http.HandlerFunc(a.undoRollback)))
-
-	mux.HandleFunc("POST /api/cli/login", a.cliStart)
-	mux.HandleFunc("POST /api/cli/login/poll", a.cliPoll)
-	mux.Handle("GET /api/cli/login/{code}", a.auth(http.HandlerFunc(a.cliRequest)))
-	mux.Handle("POST /api/cli/login/{code}/{answer}", a.auth(http.HandlerFunc(a.cliAnswer)))
-	mux.Handle("GET /api/sessions", a.auth(http.HandlerFunc(a.sessions)))
-	mux.Handle("DELETE /api/sessions/others", a.auth(http.HandlerFunc(a.signOutOthers)))
-	mux.Handle("DELETE /api/sessions/{id}", a.auth(http.HandlerFunc(a.signOutSession)))
-	mux.Handle("GET /api/projects/{project}", a.auth(http.HandlerFunc(a.project)))
-	mux.Handle("GET /api/projects/{project}/favicon", a.auth(http.HandlerFunc(a.favicon)))
-	mux.Handle("GET /api/projects/{project}/deployments", a.auth(http.HandlerFunc(a.deployments)))
-	mux.Handle("GET /api/projects/{project}/deployments/{id}", a.auth(http.HandlerFunc(a.deployment)))
-	mux.Handle("GET /api/projects/{project}/deployments/{id}/log", a.auth(http.HandlerFunc(a.deploymentLog)))
-	mux.Handle("GET /api/projects/{project}/deployments/{id}/runtime-log", a.auth(http.HandlerFunc(a.deploymentRuntimeLog)))
-	mux.Handle("POST /api/projects/{project}/deployments/{id}/restart", a.auth(http.HandlerFunc(a.deploymentRestart)))
-
-	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such API endpoint"})
-	})
-	if a.Web != nil {
-		mux.Handle("/", a.Web)
-	}
-	return securityHeaders(mux)
+	return securityHeaders(a.serve(a.routes()))
 }
 
 // Internal serves the git hook, on pierd's local socket only.
@@ -133,7 +68,8 @@ const (
 	sessionKey
 )
 
-// userFrom returns the signed-in user, or a zero User for the server token.
+// userFrom returns the signed-in user. For the server's own token it has no
+// ID and the owner's role: only someone on the server can read that token.
 func userFrom(ctx context.Context) store.User {
 	u, _ := ctx.Value(userKey).(store.User)
 	return u
@@ -143,12 +79,13 @@ func userFrom(ctx context.Context) store.User {
 // session token (the CLI), or the server's own token. Cookie requests that
 // change something must carry X-Pier, which another site's page can't send
 // without permission, so a signed-in browser can't be tricked into acting.
+// The user, and so their role, is read from the database on every request.
 func (a *API) auth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		if bearer, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); ok {
 			if a.Token != "" && subtle.ConstantTimeCompare([]byte(bearer), []byte(a.Token)) == 1 {
-				next.ServeHTTP(w, r)
+				next.ServeHTTP(w, r.WithContext(context.WithValue(ctx, userKey, store.User{Role: store.RoleOwner})))
 				return
 			}
 			if u, se, ok := a.lookupSession(ctx, bearer, r); ok {

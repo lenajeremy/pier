@@ -82,7 +82,7 @@ type signInRequest struct {
 	Password string `json:"password"`
 }
 
-// signIn checks the owner's email and password and starts a browser session.
+// signIn checks an email and password and starts a browser session.
 func (a *API) signIn(w http.ResponseWriter, r *http.Request) {
 	if r.Header.Get("X-Pier") == "" {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "missing the X-Pier header"})
@@ -114,10 +114,18 @@ func (a *API) signIn(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, err)
 		return
 	}
+	if !a.startSession(w, r, u) {
+		return
+	}
+	a.session(w, r.WithContext(context.WithValue(r.Context(), userKey, u)))
+}
+
+// startSession signs a browser in as u, with a cookie.
+func (a *API) startSession(w http.ResponseWriter, r *http.Request, u store.User) bool {
 	token, hash, err := auth.NewToken()
 	if err != nil {
 		a.fail(w, err)
-		return
+		return false
 	}
 	se := store.Session{
 		TokenHash: hash, UserID: u.ID, Kind: store.SessionBrowser,
@@ -125,11 +133,11 @@ func (a *API) signIn(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := a.Store.CreateSession(r.Context(), se); err != nil {
 		a.fail(w, err)
-		return
+		return false
 	}
 	a.Log.Info("signed in", "email", u.Email, "ip", se.IP)
 	a.setCookie(w, r, token, int(auth.SessionFor.Seconds()))
-	a.session(w, r.WithContext(context.WithValue(r.Context(), userKey, u)))
+	return true
 }
 
 func (a *API) signOut(w http.ResponseWriter, r *http.Request) {
@@ -154,7 +162,7 @@ func (a *API) session(w http.ResponseWriter, r *http.Request) {
 	u := userFrom(ctx)
 	var user any
 	if u.ID != 0 {
-		user = map[string]any{"name": u.Name, "email": u.Email}
+		user = map[string]any{"id": u.ID, "name": u.Name, "email": u.Email, "role": u.Role}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"user": user,

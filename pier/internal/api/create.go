@@ -258,7 +258,7 @@ func (a *API) upload(w http.ResponseWriter, r *http.Request) {
 
 	src := deploy.Source{
 		Branch: clip(q.Get("branch"), 200), Commit: clip(q.Get("commit"), 64), Message: clip(q.Get("message"), 300),
-		Target: target, Files: files, Tools: tools,
+		Target: target, Files: files, Tools: tools, SentBy: userFrom(r.Context()).DisplayName(),
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Trailer", "Pier-Result")

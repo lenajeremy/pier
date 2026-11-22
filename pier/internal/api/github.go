@@ -52,18 +52,6 @@ type pendingManifest struct {
 	Expires time.Time
 }
 
-func (a *API) githubRoutes(m *http.ServeMux) {
-	for route, fn := range map[string]http.HandlerFunc{
-		"GET /api/github": a.ghInfo, "GET /api/github/activity": a.ghActivity, "POST /api/github/manifest": a.ghManifest, "GET /github/callback": a.ghCallback,
-		"DELETE /api/github":           a.ghDisconnect,
-		"GET /api/github/repositories": a.ghList, "POST /api/github/import": a.ghImport,
-		"POST /api/github/jobs/{id}/resume": a.ghResume, "POST /api/github/jobs/{id}/dismiss": a.ghDismiss,
-	} {
-		m.Handle(route, a.auth(fn))
-	}
-	m.HandleFunc("POST /github/events", a.ghEvent)
-}
-
 func (a *API) loadApp(ctx context.Context) (githubApp, error) {
 	var app githubApp
 	sealed, err := a.Store.Setting(ctx, appSetting)

@@ -283,3 +283,45 @@ func TestPickersTakeClicks(t *testing.T) {
 		t.Fatal("clicking Cancel twice should give up signing in")
 	}
 }
+
+// A viewer is offered only what looks. Pressing a key for something else
+// says, in one sentence, why not and who can change it, and asks nothing.
+func TestViewerIsOfferedOnlyWhatLooks(t *testing.T) {
+	noClipboard(t)
+	m := fixture(96, 30, true)
+	m.role = "viewer"
+	m.linked = "landing"
+	for _, a := range m.homeActions() {
+		if a.key == "d" || a.key == "D" || a.key == "r" {
+			t.Errorf("a viewer is offered %q on the project", a.label)
+		}
+	}
+	server := detailOf(t, m, "c19e77")
+	server.detail.Deployment.Runtime = "node"
+	if got, want := labels(server.detailActions()), "Build log (l), Server log (s), Back to landing (esc)"; got != want {
+		t.Errorf("a viewer's deployment actions:\n got %s\nwant %s", got, want)
+	}
+	for key, want := range map[string]string{
+		"d": "Viewers can't deploy. Ask the owner to make you a member.",
+		"p": "Viewers can't promote deployments. Ask the owner to make you a member.",
+		"r": "Viewers can't roll back production. Ask the owner to make you a member.",
+	} {
+		next, _ := m.key(keyMsg(key))
+		got := next.(cockpit)
+		if got.notice != want || got.dialog != noDialog || got.view != homeView {
+			t.Errorf("%s as a viewer: notice %q, dialog %v, view %v", key, got.notice, got.dialog, got.view)
+		}
+	}
+	for key, want := range map[string]string{
+		"R": "Viewers can't restart a deployment. Ask the owner to make you a member.",
+		"a": "Viewers can't redeploy. Ask the owner to make you a member.",
+	} {
+		next, _ := server.key(keyMsg(key))
+		if got := next.(cockpit); got.notice != want || got.busy != "" {
+			t.Errorf("%s on a deployment as a viewer: notice %q, busy %q", key, got.notice, got.busy)
+		}
+	}
+	if view := ansi.Strip(m.View()); strings.Contains(view, "d deploy") || strings.Contains(view, "r roll back") {
+		t.Errorf("a viewer's key bar offers changes:\n%s", view)
+	}
+}

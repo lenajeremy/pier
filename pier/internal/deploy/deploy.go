@@ -125,6 +125,7 @@ type Source struct {
 	Files     int             // for an upload: how many files came
 	Tools     string          // for an upload: the package manager on the developer's computer, like pnpm@10.33.0
 	Note      string          // said first in the log, like what a redeploy rebuilds
+	SentBy    string          // who uploaded it or asked for the rebuild, by name; empty for a push
 	OnStart   func(id string) // told the new deployment's ID as soon as it exists
 	archive   string          // for an upload: the gzipped tar to build, kept afterwards as the source
 	extract   func(ctx context.Context, dir string) error
@@ -167,8 +168,8 @@ var ErrNoSource = errors.New("the source isn't kept any more")
 
 // Redeploy builds an existing deployment's source again, with the project's
 // settings and variables as they are now. target says where it goes;
-// empty keeps the old deployment's.
-func (d *Deployer) Redeploy(ctx context.Context, project, id, target string, onStart func(string), out io.Writer) error {
+// empty keeps the old deployment's. by is who asked, by name.
+func (d *Deployer) Redeploy(ctx context.Context, project, id, target, by string, onStart func(string), out io.Writer) error {
 	old, err := d.Store.Deployment(ctx, id)
 	if err != nil || old.Project != project {
 		return ErrNotServable
@@ -177,7 +178,7 @@ func (d *Deployer) Redeploy(ctx context.Context, project, id, target string, onS
 		target = old.Target
 	}
 	src := Source{
-		Kind: old.Source, Branch: old.Branch, Commit: old.Commit, Message: old.Message, Target: target,
+		Kind: old.Source, Branch: old.Branch, Commit: old.Commit, Message: old.Message, Target: target, SentBy: by,
 		Note: "redeploying " + id + " with today's settings and variables", OnStart: onStart,
 	}
 	switch old.Source {
@@ -267,6 +268,7 @@ func (d *Deployer) run(ctx context.Context, project string, src Source, out io.W
 	dep := store.Deployment{
 		ID: names.NewID(), Project: project, Branch: src.Branch, Commit: src.Commit,
 		Message: src.Message, Status: store.Building, CreatedAt: start, Target: src.Target, Source: src.Kind,
+		SentBy: src.SentBy,
 	}
 	for range 5 { // six hex characters can collide, rarely
 		if taken, err := d.Store.IDTaken(ctx, dep.ID); err == nil && !taken {

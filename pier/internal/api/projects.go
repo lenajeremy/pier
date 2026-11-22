@@ -391,13 +391,24 @@ func (a *API) deploymentLog(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": name + " has no deployment " + id})
 		return
 	}
+	hide, err := a.valueHider(r, name)
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	hideAll := func(lines []deploy.LogLine) []deploy.LogLine {
+		for i := range lines {
+			lines[i].Text = hide(lines[i].Text)
+		}
+		return nonNil(lines)
+	}
 	if r.URL.Query().Get("follow") == "1" {
 		tail, _ := strconv.Atoi(r.URL.Query().Get("tail"))
 		if tail <= 0 {
 			tail = 100
 		}
 		send := logStream(w)
-		err := a.Deployer.FollowLog(r.Context(), id, tail, func(lines []deploy.LogLine) error { return send(map[string]any{"lines": nonNil(lines)}) })
+		err := a.Deployer.FollowLog(r.Context(), id, tail, func(lines []deploy.LogLine) error { return send(map[string]any{"lines": hideAll(lines)}) })
 		if err != nil {
 			_ = send(map[string]string{"error": err.Error()})
 			return
@@ -415,7 +426,7 @@ func (a *API) deploymentLog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"lines": nonNil(lines),
+		"lines": hideAll(lines),
 		"next":  max(from, 0) + len(lines),
 		"done":  ps.deployments[i].Status != store.Building,
 	})
@@ -443,6 +454,11 @@ func (a *API) deploymentRuntimeLog(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Application runtime is unavailable."})
 		return
 	}
+	hide, err := a.valueHider(r, name)
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
 	tail, _ := strconv.Atoi(r.URL.Query().Get("tail"))
 	since := strings.TrimSpace(r.URL.Query().Get("since"))
 	if r.URL.Query().Get("follow") == "1" {
@@ -460,7 +476,10 @@ func (a *API) deploymentRuntimeLog(w http.ResponseWriter, r *http.Request) {
 		if send(map[string]any{"lines": []apphost.LogLine{}}) != nil {
 			return
 		}
-		err = apphost.FollowLogLines(rc, tty, func(line apphost.LogLine) error { return send(map[string]any{"lines": []apphost.LogLine{line}}) })
+		err = apphost.FollowLogLines(rc, tty, func(line apphost.LogLine) error {
+			line.Text = hide(line.Text)
+			return send(map[string]any{"lines": []apphost.LogLine{line}})
+		})
 		if err != nil {
 			_ = send(map[string]string{"error": err.Error()})
 			return
@@ -476,6 +495,9 @@ func (a *API) deploymentRuntimeLog(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		a.fail(w, err)
 		return
+	}
+	for i := range lines {
+		lines[i].Text = hide(lines[i].Text)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"runtime": d.Runtime,

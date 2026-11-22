@@ -194,7 +194,7 @@ func checkMachine(ctx context.Context, t *tty, data, ip string) {
 
 // createOwner asks for the owner's email and password and makes the account.
 func createOwner(ctx context.Context, t *tty, st *store.Store, email string) (store.User, bool) {
-	t.heading("Your account   " + t.dim("the only account that can sign in to this Pier"))
+	t.heading("Your account   " + t.dim("the owner's: it can do everything, and invite others"))
 	for {
 		if email == "" {
 			if !t.interactive {
@@ -516,12 +516,14 @@ func startService(t *tty, data string) {
 	t.line(t.waiting(), "Start pierd, or restart it so it uses these addresses:  pierd serve -data "+data)
 }
 
-// resetPassword is pierd reset-password: a new password for the owner, typed
-// on the server, which also signs out every browser and computer. Pier never
-// sends email, so this is the way back in.
+// resetPassword is pierd reset-password: a new password for one account,
+// the owner's unless -email names another, typed on the server. It also signs
+// that person out of every browser and computer. Pier never sends email, so
+// this is the way back in.
 func resetPassword(args []string) int {
 	fs := flag.NewFlagSet("reset-password", flag.ExitOnError)
 	data := dataFlag(fs)
+	email := fs.String("email", "", "whose password to reset; the owner's if left out")
 	pwStdin := fs.Bool("password-stdin", false, "read the new password from stdin, for scripts")
 	fs.Parse(args)
 	t := newTTY()
@@ -536,15 +538,25 @@ func resetPassword(args []string) int {
 		return 1
 	}
 	defer st.Close()
-	owner, err := st.Owner(ctx)
-	if errors.Is(err, store.ErrNotFound) {
-		fmt.Fprintln(os.Stderr, "pierd: nobody has an account here yet; run pierd init")
-		return 1
-	} else if err != nil {
+	var who store.User
+	if *email != "" {
+		who, err = st.UserByEmail(ctx, strings.TrimSpace(*email))
+		if errors.Is(err, store.ErrNotFound) {
+			fmt.Fprintf(os.Stderr, "pierd: there's no account for %s here\n", *email)
+			return 1
+		}
+	} else {
+		who, err = st.Owner(ctx)
+		if errors.Is(err, store.ErrNotFound) {
+			fmt.Fprintln(os.Stderr, "pierd: nobody has an account here yet; run pierd init")
+			return 1
+		}
+	}
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "pierd:", err)
 		return 1
 	}
-	t.printf("\nA new password for %s\n", owner.Email)
+	t.printf("\nA new password for %s\n", who.Email)
 	for {
 		pw, err := t.secret(t.field("Password", 10), fmt.Sprintf("%d characters or more", auth.MinPassword))
 		if err != nil {
@@ -569,7 +581,7 @@ func resetPassword(args []string) int {
 		}
 		hash, err := auth.HashPassword(pw)
 		if err == nil {
-			err = st.SetPassword(ctx, owner.ID, hash)
+			err = st.SetPassword(ctx, who.ID, hash)
 		}
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "pierd:", err)
@@ -577,7 +589,7 @@ func resetPassword(args []string) int {
 		}
 		break
 	}
-	n, err := st.DeleteSessions(ctx, owner.ID, "")
+	n, err := st.DeleteSessions(ctx, who.ID, "")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "pierd: sign out the old sessions:", err)
 		return 1

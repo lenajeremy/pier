@@ -59,6 +59,9 @@ func deploy(args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := mayChange(c, "deploy"); err != nil {
+		return err
+	}
 	dir := "."
 	if fs.NArg() > 0 {
 		dir = fs.Arg(0)

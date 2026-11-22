@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -32,23 +33,44 @@ func (s *Store) SetSetting(ctx context.Context, key, value string) error {
 	return err
 }
 
-// User is someone who can sign in. There's one, the owner, until teams come.
+// Roles. Every account has one, and it holds across the whole server.
+const (
+	RoleOwner  = "owner"  // the account pierd init made: everything, including members and the server's settings
+	RoleMember = "member" // deploys and changes every project
+	RoleViewer = "viewer" // looks, and never sees a variable's value
+)
+
+// ErrOwner means the change would remove or demote the owner, which nobody can.
+var ErrOwner = errors.New("the owner can't be removed or demoted")
+
+// User is someone who can sign in.
 type User struct {
 	ID           int64     `json:"id"`
 	Email        string    `json:"email"`
 	Name         string    `json:"name"`
+	Role         string    `json:"role"`
 	PasswordHash string    `json:"-"`
 	FailedLogins int       `json:"-"`
 	LockedUntil  time.Time `json:"-"`
 	CreatedAt    time.Time `json:"created_at"`
+	LastActiveAt time.Time `json:"last_active_at"`
 }
 
-const userCols = `id, email, name, password_hash, failed_logins, locked_until, created_at`
+// DisplayName is what activity and deployments call the person: their
+// name, or their email when they have none.
+func (u User) DisplayName() string {
+	if u.Name != "" {
+		return u.Name
+	}
+	return u.Email
+}
+
+const userCols = `id, email, name, role, password_hash, failed_logins, locked_until, created_at, last_active_at`
 
 func scanUser(sc interface{ Scan(...any) error }) (User, error) {
 	var u User
-	var locked, created int64
-	err := sc.Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.FailedLogins, &locked, &created)
+	var locked, created, active int64
+	err := sc.Scan(&u.ID, &u.Email, &u.Name, &u.Role, &u.PasswordHash, &u.FailedLogins, &locked, &created, &active)
 	if errors.Is(err, sql.ErrNoRows) {
 		return u, ErrNotFound
 	}
@@ -56,14 +78,21 @@ func scanUser(sc interface{ Scan(...any) error }) (User, error) {
 		u.LockedUntil = time.UnixMilli(locked)
 	}
 	u.CreatedAt = time.UnixMilli(created)
+	if active > 0 {
+		u.LastActiveAt = time.UnixMilli(active)
+	}
 	return u, err
 }
 
-// CreateUser adds an account and returns its ID.
+// CreateUser adds an account and returns its ID. The first account on a
+// server is its owner; anyone else joins with an invite (AcceptInvite),
+// which says their role, so an account made here any other way can only look.
 func (s *Store) CreateUser(ctx context.Context, email, name, passwordHash string) (int64, error) {
-	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO users(email, name, password_hash, created_at) VALUES(?, ?, ?, ?)`,
-		email, name, passwordHash, time.Now().UnixMilli())
+	now := time.Now().UnixMilli()
+	res, err := s.db.ExecContext(ctx, `
+		INSERT INTO users(email, name, password_hash, created_at, last_active_at, role)
+		VALUES(?, ?, ?, ?, ?, CASE WHEN EXISTS(SELECT 1 FROM users WHERE role = 'owner') THEN 'viewer' ELSE 'owner' END)`,
+		email, name, passwordHash, now, now)
 	if err != nil {
 		return 0, err
 	}
@@ -86,9 +115,73 @@ func (s *Store) UserByID(ctx context.Context, id int64) (User, error) {
 	return scanUser(s.db.QueryRowContext(ctx, `SELECT `+userCols+` FROM users WHERE id = ?`, id))
 }
 
-// Owner returns the first account, the one pierd init made.
+// Owner returns the owner's account, the one pierd init made.
 func (s *Store) Owner(ctx context.Context) (User, error) {
-	return scanUser(s.db.QueryRowContext(ctx, `SELECT `+userCols+` FROM users ORDER BY id LIMIT 1`))
+	return scanUser(s.db.QueryRowContext(ctx, `SELECT `+userCols+` FROM users WHERE role = 'owner' ORDER BY id LIMIT 1`))
+}
+
+// Users lists everyone who can sign in: the owner first, then by name.
+func (s *Store) Users(ctx context.Context) ([]User, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+userCols+` FROM users
+		ORDER BY role != 'owner', CASE name WHEN '' THEN email ELSE name END COLLATE NOCASE, id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []User{}
+	for rows.Next() {
+		u, err := scanUser(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+// SetRole makes someone a member or a viewer. The owner stays the owner, and
+// nobody else can become one.
+func (s *Store) SetRole(ctx context.Context, id int64, role string) (User, error) {
+	if role != RoleMember && role != RoleViewer {
+		return User{}, fmt.Errorf("unknown role %q", role)
+	}
+	u, err := s.UserByID(ctx, id)
+	if err != nil {
+		return u, err
+	}
+	if u.Role == RoleOwner {
+		return u, ErrOwner
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE users SET role = ? WHERE id = ? AND role != 'owner'`, role, id); err != nil {
+		return u, err
+	}
+	u.Role = role
+	return u, nil
+}
+
+// RemoveUser deletes an account and signs it out everywhere: its browser
+// sessions and the tokens its computers use go with it. The owner can't be
+// removed.
+func (s *Store) RemoveUser(ctx context.Context, id int64) (User, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return User{}, err
+	}
+	defer tx.Rollback()
+	u, err := scanUser(tx.QueryRowContext(ctx, `SELECT `+userCols+` FROM users WHERE id = ?`, id))
+	if err != nil {
+		return u, err
+	}
+	if u.Role == RoleOwner {
+		return u, ErrOwner
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ?`, id); err != nil {
+		return u, err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM users WHERE id = ? AND role != 'owner'`, id); err != nil {
+		return u, err
+	}
+	return u, tx.Commit()
 }
 
 // RecordFailedLogin counts a wrong password and, from the limit on, locks the
@@ -144,6 +237,10 @@ func (s *Store) CreateSession(ctx context.Context, se Session) error {
 		INSERT INTO sessions(token_hash, user_id, kind, name, ip, created_at, last_seen_at, expires_at)
 		VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
 		se.TokenHash, se.UserID, se.Kind, se.Name, se.IP, now.UnixMilli(), now.UnixMilli(), se.ExpiresAt.UnixMilli())
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `UPDATE users SET last_active_at = ? WHERE id = ?`, now.UnixMilli(), se.UserID)
 	return err
 }
 
@@ -162,11 +259,18 @@ func (s *Store) SessionByHash(ctx context.Context, hash string) (Session, error)
 	return se, err
 }
 
-// TouchSession records that a session was just used, and extends it.
+// TouchSession records that a session was just used, and extends it. Its
+// account was active then too, which the Members page shows.
 func (s *Store) TouchSession(ctx context.Context, hash, ip string, expires time.Time) error {
+	now := time.Now().UnixMilli()
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE sessions SET last_seen_at = ?, ip = ?, expires_at = ? WHERE token_hash = ?`,
-		time.Now().UnixMilli(), ip, expires.UnixMilli(), hash)
+		now, ip, expires.UnixMilli(), hash)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx,
+		`UPDATE users SET last_active_at = ? WHERE id = (SELECT user_id FROM sessions WHERE token_hash = ?)`, now, hash)
 	return err
 }
 
@@ -184,9 +288,13 @@ func (s *Store) DeleteSessions(ctx context.Context, userID int64, keep string) (
 	return res.RowsAffected()
 }
 
-// DeleteExpiredSessions clears sessions that ran out.
+// DeleteExpiredSessions clears sessions that ran out, and invites that did.
 func (s *Store) DeleteExpiredSessions(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE expires_at <= ?`, time.Now().UnixMilli())
+	now := time.Now().UnixMilli()
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE expires_at <= ?`, now); err != nil {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, `DELETE FROM invites WHERE expires_at <= ?`, now)
 	return err
 }
 

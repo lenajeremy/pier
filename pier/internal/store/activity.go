@@ -13,6 +13,7 @@ type Event struct {
 	Title      string `json:"title"`
 	Detail     string `json:"detail"`
 	Deployment string `json:"deployment,omitempty"`
+	Actor      string `json:"actor,omitempty"` // who did it, by name; empty for what Pier did on its own
 }
 
 // KeepEvents is how long activity is kept.
@@ -36,7 +37,7 @@ func eventsQuery(project string, before int64) (string, []any) {
 		where = append(where, "(at,id)<(SELECT at,id FROM activity WHERE id=?)")
 		args = append(args, before)
 	}
-	q := `SELECT id,at,project,title,detail,CASE WHEN EXISTS(SELECT 1 FROM deployments d WHERE d.id=activity.deployment AND d.project=activity.project) THEN deployment ELSE '' END FROM activity`
+	q := `SELECT id,at,project,title,detail,actor,CASE WHEN EXISTS(SELECT 1 FROM deployments d WHERE d.id=activity.deployment AND d.project=activity.project) THEN deployment ELSE '' END FROM activity`
 	if len(where) > 0 {
 		q += " WHERE " + strings.Join(where, " AND ")
 	}
@@ -53,15 +54,18 @@ func (s *Store) Events(ctx context.Context, project string, before int64) ([]Eve
 	out := []Event{}
 	for rows.Next() {
 		var e Event
-		if err := rows.Scan(&e.ID, &e.At, &e.Project, &e.Title, &e.Detail, &e.Deployment); err != nil {
+		if err := rows.Scan(&e.ID, &e.At, &e.Project, &e.Title, &e.Detail, &e.Actor, &e.Deployment); err != nil {
 			return nil, err
 		}
 		out = append(out, e)
 	}
 	return out, rows.Err()
 }
-func (s *Store) RecordEvent(ctx context.Context, project, title, detail, id string) error {
-	_, err := s.db.ExecContext(ctx, "INSERT INTO activity(at,project,title,detail,deployment) VALUES(?,?,?,?,?)", time.Now().UnixMilli(), project, title, detail, id)
+
+// RecordEvent adds a line to activity. actor is who did it, by name, or
+// empty for something Pier did on its own.
+func (s *Store) RecordEvent(ctx context.Context, project, title, detail, id, actor string) error {
+	_, err := s.db.ExecContext(ctx, "INSERT INTO activity(at,project,title,detail,deployment,actor) VALUES(?,?,?,?,?,?)", time.Now().UnixMilli(), project, title, detail, id, actor)
 	return err
 }
 

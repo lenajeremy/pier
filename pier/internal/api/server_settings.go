@@ -145,10 +145,13 @@ func (a *API) checkAddresses(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]string{"address": check(saved.Address, false), "base": check(saved.Base, true)})
 }
+
+// password changes the signed-in person's own password, whatever their
+// role, and signs them out everywhere.
 func (a *API) password(w http.ResponseWriter, r *http.Request) {
 	u := userFrom(r.Context())
 	if u.ID == 0 {
-		writeJSON(w, 403, map[string]string{"error": "Sign in as the owner to change the password."})
+		writeJSON(w, 403, map[string]string{"error": "Sign in to the dashboard to change your password."})
 		return
 	}
 	var req struct {
@@ -173,11 +176,11 @@ func (a *API) password(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, err)
 		return
 	}
-	if err = a.Store.ChangeOwnerPassword(r.Context(), u.ID, verified.PasswordHash, hash); err != nil {
+	if err = a.Store.ChangePassword(r.Context(), u.ID, verified.PasswordHash, hash); err != nil {
 		a.fail(w, err)
 		return
 	}
-	a.event(r.Context(), "", "Changed owner password", "", "")
+	a.event(r.Context(), "", "Changed password", "", "")
 	a.setCookie(w, r, "", -1)
 	writeJSON(w, 200, map[string]bool{"changed": true})
 }

@@ -20,6 +20,9 @@ func rollback(args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := mayChange(c, "roll back production"); err != nil {
+		return err
+	}
 	path := "/api/projects/" + url.PathEscape(project) + "/rollback"
 	body := map[string]string{}
 	if *undo {
@@ -107,6 +110,9 @@ func promote(args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := mayChange(c, "promote deployments"); err != nil {
+		return err
+	}
 	id := ""
 	if fs.NArg() == 1 {
 		id = fs.Arg(0)
@@ -171,6 +177,9 @@ func restart(args []string) error {
 	}
 	c, project, err := projectFor(*projectFlag)
 	if err != nil {
+		return err
+	}
+	if err := mayChange(c, "restart a deployment"); err != nil {
 		return err
 	}
 	id := *deploymentFlag

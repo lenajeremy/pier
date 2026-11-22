@@ -118,7 +118,10 @@ func (s *Store) AlignAliases(ctx context.Context, base string) error {
 	}
 	return tx.Commit()
 }
-func (s *Store) ChangeOwnerPassword(ctx context.Context, id int64, previous, hash string) error {
+
+// ChangePassword changes someone's password, if it's still the one they
+// confirmed, and signs them out everywhere.
+func (s *Store) ChangePassword(ctx context.Context, id int64, previous, hash string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
