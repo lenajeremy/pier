@@ -10,6 +10,7 @@ import { Menu } from '../components/Menu'
 import { Spinner, useBusy } from '../components/Spinner'
 import { toast } from '../components/Toast'
 import { PageHeading, Paging, Problem, SearchField, Skeleton, usePaged, When } from '../components/ui'
+import { Gate, onlyOwner, useRole, viewerCant } from '../lib/role'
 
 // A job waits for the owner once per commit: a monorepo's projects that the
 // same push would build come as one, named in projects.
@@ -41,6 +42,7 @@ export function Integrations() {
   const now = useNow()
   const [query, setQuery] = useState('')
   const [working, run] = useBusy<string>() // a job being dismissed or tried again
+  const { change, owner } = useRole()
 
   const installs = catalog.data?.installations ?? []
   const installed = installs.length > 0
@@ -161,12 +163,14 @@ export function Integrations() {
               {status}
             </span>
             {data.slug && (
-              <a className="btn quiet visit" href={catalog.data && !installed ? installURL : managed} target="_blank" rel="noreferrer">
-                {catalog.data && !installed ? 'Install on GitHub' : 'Manage on GitHub'}
-                <Visit />
-              </a>
+              <Gate allow={owner} reason={onlyOwner('manage the GitHub App')}>
+                <a className="btn quiet visit" href={catalog.data && !installed ? installURL : managed} target="_blank" rel="noreferrer">
+                  {catalog.data && !installed ? 'Install on GitHub' : 'Manage on GitHub'}
+                  <Visit />
+                </a>
+              </Gate>
             )}
-            {data.slug && (
+            {data.slug && owner && (
               <Menu
                 label="More for GitHub"
                 items={[{ label: 'Disconnect', icon: <Trash />, danger: true, onSelect: disconnect }]}
@@ -252,19 +256,23 @@ export function Integrations() {
                       : j.detail}
                   </span>
                 </div>
-                <button
-                  className="btn quiet"
-                  disabled={working?.endsWith(' ' + j.id)}
-                  onClick={() => dismiss(j)}
-                  data-tip={j.state === 'approval' ? "Don't build this commit" : 'Leave it failed'}
-                >
-                  {working === 'dismiss ' + j.id && <Spinner />}
-                  {working === 'dismiss ' + j.id ? 'Dismissing…' : 'Dismiss'}
-                </button>
-                <button className="btn quiet" disabled={working?.endsWith(' ' + j.id)} onClick={() => resume(j)}>
-                  {working === 'retry ' + j.id && <Spinner />}
-                  {working === 'retry ' + j.id ? 'Trying again…' : j.state === 'approval' ? 'Review and approve' : 'Try again'}
-                </button>
+                <Gate allow={change} reason={viewerCant('dismiss builds')}>
+                  <button
+                    className="btn quiet"
+                    disabled={working?.endsWith(' ' + j.id)}
+                    onClick={() => dismiss(j)}
+                    data-tip={j.state === 'approval' ? "Don't build this commit" : 'Leave it failed'}
+                  >
+                    {working === 'dismiss ' + j.id && <Spinner />}
+                    {working === 'dismiss ' + j.id ? 'Dismissing…' : 'Dismiss'}
+                  </button>
+                </Gate>
+                <Gate allow={change} reason={viewerCant('start builds')}>
+                  <button className="btn quiet" disabled={working?.endsWith(' ' + j.id)} onClick={() => resume(j)}>
+                    {working === 'retry ' + j.id && <Spinner />}
+                    {working === 'retry ' + j.id ? 'Trying again…' : j.state === 'approval' ? 'Review and approve' : 'Try again'}
+                  </button>
+                </Gate>
               </div>
             ))}
           </div>
@@ -279,7 +287,7 @@ export function Integrations() {
               {repos.length > 0 && <span className="count">{repos.length}</span>}
             </div>
             {repos.length > 8 && <SearchField value={query} onChange={setQuery} placeholder="Search repos" hotkey="/" />}
-            {installed && (
+            {installed && owner && (
               <a className="btn quiet visit" href={installs.length === 1 ? installs[0].html_url : installURL} target="_blank" rel="noreferrer">
                 Choose repos on GitHub
                 <Visit />
@@ -300,9 +308,11 @@ export function Integrations() {
                   ? 'On GitHub, choose which repos the App can read. They show up here, ready to import.'
                   : "Install the App on your account or an organisation, and pick the repos it can read. Pier can't see any others."}
               </span>
-              <a className="btn primary" href={installed ? installs[0].html_url : installURL} target="_blank" rel="noreferrer">
-                {installed ? 'Choose repos on GitHub' : 'Install on GitHub'}
-              </a>
+              <Gate allow={owner} reason={onlyOwner('manage the GitHub App')}>
+                <a className="btn primary" href={installed ? installs[0].html_url : installURL} target="_blank" rel="noreferrer">
+                  {installed ? 'Choose repos on GitHub' : 'Install on GitHub'}
+                </a>
+              </Gate>
             </div>
           ) : (
             <RepoTable repos={paged.shown} owners={installs.length > 1} now={now} query={shown.length === 0 ? query : ''} onClear={() => setQuery('')} />
@@ -323,6 +333,7 @@ export function RepoTable({ repos, owners, now, query, onClear }: {
   query?: string // a search that found nothing
   onClear?: () => void
 }) {
+  const { change } = useRole()
   return (
     <div className="table repos">
       <div className="t-head">
@@ -359,9 +370,11 @@ export function RepoTable({ repos, owners, now, query, onClear }: {
           {r.pushed_at ? <When at={r.pushed_at} now={now} className="t-muted" /> : <span />}
           <span className="row-end">
             {/* One repo can deploy several projects, a monorepo's apps each as its own. */}
-            <Link className={'btn ' + (r.projects?.length ? 'quiet' : 'primary')} to={'/new/github/' + r.id}>
-              {r.projects?.length ? 'Add project' : 'Import'}
-            </Link>
+            <Gate allow={change} reason={viewerCant('import repositories')}>
+              <Link className={'btn ' + (r.projects?.length ? 'quiet' : 'primary')} to={'/new/github/' + r.id}>
+                {r.projects?.length ? 'Add project' : 'Import'}
+              </Link>
+            </Gate>
           </span>
         </div>
       ))}
@@ -395,6 +408,7 @@ function Durations({ deliveries }: { deliveries: Delivery[] }) {
 }
 
 function Connect() {
+  const { owner } = useRole()
   const [hook, setHook] = useState(location.protocol === 'https:' ? location.origin + '/github/events' : '')
   const [busy, setBusy] = useState(false)
   const [failure, setFailure] = useState('')
@@ -451,6 +465,7 @@ function Connect() {
             setFailure('')
           }}
           placeholder="https://pier.example.com/github/events"
+          disabled={!owner}
           spellCheck={false}
           autoCapitalize="off"
         />
@@ -464,10 +479,12 @@ function Connect() {
       </label>
       <div className="form-foot">
         <span className="t-note">GitHub opens with the App filled in. Name it, pick the repos, and GitHub sends you back here.</span>
-        <button className="btn primary" disabled={busy || !hook}>
-          {busy && <Spinner />}
-          {busy ? 'Opening GitHub…' : 'Create the GitHub App'}
-        </button>
+        <Gate allow={owner} reason={onlyOwner('connect a GitHub App')}>
+          <button className="btn primary" disabled={busy || !hook}>
+            {busy && <Spinner />}
+            {busy ? 'Opening GitHub…' : 'Create the GitHub App'}
+          </button>
+        </Gate>
       </div>
     </form>
   )

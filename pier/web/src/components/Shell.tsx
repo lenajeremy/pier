@@ -8,6 +8,7 @@ import * as I from './Icons'
 import { ProjectMark } from './ProjectMark'
 import { Spinner } from './Spinner'
 import type { Sample } from './ServerCharts'
+import { useRole } from '../lib/role'
 
 const globals = [
   { to: '/', label: 'Projects', icon: I.Projects },
@@ -30,6 +31,7 @@ type Props = {
 // Shell is the sidebar and the content beside it: the sidebar answers
 // "which project", the project's tabs answer "which part of it".
 export function Shell({ session, projects, path, project, children }: Props) {
+  const { change } = useRole()
   const recent = useData<{ samples: Sample[] }>('/api/server/history?range=latest', () => true, 60000)
   const sample = recent.data?.samples.at(-1)
   const pressure = sample && (sample.disk >= 85 ? 'The disk is more than 85% full' : sample.memory >= 90 ? 'Memory is more than 90% used' : '')
@@ -84,9 +86,11 @@ export function Shell({ session, projects, path, project, children }: Props) {
         <nav className="nav side-projects" aria-label="Projects">
           <div className="side-projects-head">
             <span className="t-note">Projects</span>
-            <Link to="/new" className="icon-btn-24" aria-label="New project" data-tip="New project">
-              <I.Plus />
-            </Link>
+            {change && (
+              <Link to="/new" className="icon-btn-24" aria-label="New project" data-tip="New project">
+                <I.Plus />
+              </Link>
+            )}
           </div>
           <div className="side-projects-list">
             {projects.map((p) => (
@@ -113,6 +117,7 @@ export function Shell({ session, projects, path, project, children }: Props) {
 }
 
 function Switcher({ session, projects, project }: { session: Session; projects: ProjectSummary[]; project?: string }) {
+  const { change } = useRole()
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
   useClickAway(ref, () => setOpen(false))
@@ -149,11 +154,15 @@ function Switcher({ session, projects, project }: { session: Session; projects: 
               {p.name === project && <I.Check size={14} color="#8DB2F8" />}
             </Link>
           ))}
-          <div className="menu-sep" />
-          <Link to="/new" className="menu-item" role="menuitem" onClick={() => setOpen(false)}>
-            <I.Plus size={14} />
-            <span className="grow">New project</span>
-          </Link>
+          {change && (
+            <>
+              <div className="menu-sep" />
+              <Link to="/new" className="menu-item" role="menuitem" onClick={() => setOpen(false)}>
+                <I.Plus size={14} />
+                <span className="grow">New project</span>
+              </Link>
+            </>
+          )}
         </div>
       )}
     </div>

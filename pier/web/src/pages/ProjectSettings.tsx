@@ -8,6 +8,8 @@ import { Dialog } from '../components/Dialog'
 import { Spinner } from '../components/Spinner'
 import { toast } from '../components/Toast'
 import { Problem, Skeleton } from '../components/ui'
+import { Info } from '../components/Icons'
+import { Gate, useRole, viewerCant } from '../lib/role'
 
 const empty: Build = { root: '', preset: '', install: '', command: '', output: '' }
 const emptyRuntime: RuntimeSettings = { start_command: '', health_path: '', memory_mb: 0, cpus: 0 }
@@ -25,6 +27,7 @@ export function ProjectSettings({ project, address, onDeleted }: { project: stri
   const [saved, setSaved] = useState<Draft | null>(null)
   const [state, setState] = useState<{ saving?: boolean; error?: string; field?: string }>({})
   const [deleting, setDeleting] = useState(false)
+  const { change: may } = useRole()
 
   useEffect(() => {
     if (!data) return
@@ -88,107 +91,119 @@ export function ProjectSettings({ project, address, onDeleted }: { project: stri
 
   return (
     <main className="main">
-      <form className="settings" onSubmit={save} noValidate>
-        <section className="panel form-panel">
-          <h2 className="t-small t-strong">Project</h2>
-          <div className="form-grid two">
-            <label className="field">
-              <span className="field-label">Project name</span>
-              <input className="input mono" value={project} readOnly tabIndex={-1} />
-              <span className="t-note">
-                It lives at {address}. The name is set when the project is made; the address can change under{' '}
-                <Link to={`/projects/${encodeURIComponent(project)}/domains`}>Domains</Link>.
-              </span>
-            </label>
-            <label className={field('production_branch')}>
-              <span className="field-label">Production branch</span>
-              <input
-                className="input mono"
-                placeholder={data.default_branch}
-                value={draft.branch}
-                onChange={(e) => change({ branch: e.target.value })}
-                spellCheck={false}
-                autoCapitalize="off"
-              />
-              {help(
-                'production_branch',
-                `Pushes to ${draft.branch || data.default_branch} go to production. Every other branch gets a preview, and so does pier deploy without --prod.`,
-              )}
-            </label>
+      {!may && (
+        <div className="alert info">
+          <Info />
+          <div>
+            <span className="t-small t-strong">You can look at these settings, not change them</span>
+            <span className="t-caption t-muted">{viewerCant("change a project's settings")}</span>
           </div>
-        </section>
-
-        <section className="panel form-panel">
-          <h2 className="t-small t-strong">Build</h2>
-          <BuildFields
-            build={b}
-            onChange={(build) => change({ build })}
-            plan={data.last_build_plan}
-            problem={state}
-            folders={tree.error ? undefined : { data: tree.data, loading: !tree.data }}
-            github={!!data.project.repo}
-          />
-        </section>
-
-        {!staticOnly && (
+        </div>
+      )}
+      <form className="settings" onSubmit={save} noValidate>
+        {/* A viewer's fields are all switched off at once. */}
+        <fieldset className="settings-fields" disabled={!may}>
           <section className="panel form-panel">
-            <div className="form-title">
-              <h2 className="t-small t-strong">Runtime</h2>
-              <span className="t-note">For server apps. A change applies from the next deployment.</span>
-            </div>
+            <h2 className="t-small t-strong">Project</h2>
             <div className="form-grid two">
-              <label className={field('start_command')}>
-                <span className="field-label">Start command</span>
+              <label className="field">
+                <span className="field-label">Project name</span>
+                <input className="input mono" value={project} readOnly tabIndex={-1} />
+                <span className="t-note">
+                  It lives at {address}. The name is set when the project is made; the address can change under{' '}
+                  <Link to={`/projects/${encodeURIComponent(project)}/domains`}>Domains</Link>.
+                </span>
+              </label>
+              <label className={field('production_branch')}>
+                <span className="field-label">Production branch</span>
                 <input
                   className="input mono"
-                  placeholder="The image's own"
-                  value={rt.start_command}
-                  onChange={(e) => setRt({ start_command: e.target.value })}
+                  placeholder={data.default_branch}
+                  value={draft.branch}
+                  onChange={(e) => change({ branch: e.target.value })}
                   spellCheck={false}
                   autoCapitalize="off"
                 />
-                {help('start_command', 'What the container runs. Leave it empty to use what the image starts with.')}
-              </label>
-              <label className={field('health_path')}>
-                <span className="field-label">Health check path</span>
-                <input
-                  className="input mono"
-                  placeholder="/"
-                  value={rt.health_path}
-                  onChange={(e) => setRt({ health_path: e.target.value })}
-                  spellCheck={false}
-                  autoCapitalize="off"
-                />
-                {help('health_path', 'Pier asks for this path, and sends visitors to a new container only once it answers.')}
-              </label>
-              <label className={field('memory_mb')}>
-                <span className="field-label">Memory limit</span>
-                <select className="input" value={String(rt.memory_mb)} onChange={(e) => setRt({ memory_mb: Number(e.target.value) })}>
-                  <option value="0">The server's default, {defaultMem >= 1024 ? `${defaultMem / 1024} GB` : `${defaultMem} MB`}</option>
-                  <option value="256">256 MB</option>
-                  <option value="512">512 MB</option>
-                  <option value="1024">1 GB</option>
-                  <option value="2048">2 GB</option>
-                  <option value="4096">4 GB</option>
-                  <option value="8192">8 GB</option>
-                  <option value="-1">No limit</option>
-                </select>
-                {help('memory_mb', "Stops one container from using up the server's memory.")}
-              </label>
-              <label className={field('cpus')}>
-                <span className="field-label">CPU limit</span>
-                <select className="input" value={String(rt.cpus)} onChange={(e) => setRt({ cpus: Number(e.target.value) })}>
-                  <option value="0">No limit</option>
-                  <option value="0.5">Half a CPU</option>
-                  <option value="1">1 CPU</option>
-                  <option value="2">2 CPUs</option>
-                  <option value="4">4 CPUs</option>
-                </select>
-                {help('cpus', 'The most CPU time the container can take.')}
+                {help(
+                  'production_branch',
+                  `Pushes to ${draft.branch || data.default_branch} go to production. Every other branch gets a preview, and so does pier deploy without --prod.`,
+                )}
               </label>
             </div>
           </section>
-        )}
+
+          <section className="panel form-panel">
+            <h2 className="t-small t-strong">Build</h2>
+            <BuildFields
+              build={b}
+              onChange={(build) => change({ build })}
+              plan={data.last_build_plan}
+              problem={state}
+              folders={tree.error ? undefined : { data: tree.data, loading: !tree.data }}
+              github={!!data.project.repo}
+            />
+          </section>
+
+          {!staticOnly && (
+            <section className="panel form-panel">
+              <div className="form-title">
+                <h2 className="t-small t-strong">Runtime</h2>
+                <span className="t-note">For server apps. A change applies from the next deployment.</span>
+              </div>
+              <div className="form-grid two">
+                <label className={field('start_command')}>
+                  <span className="field-label">Start command</span>
+                  <input
+                    className="input mono"
+                    placeholder="The image's own"
+                    value={rt.start_command}
+                    onChange={(e) => setRt({ start_command: e.target.value })}
+                    spellCheck={false}
+                    autoCapitalize="off"
+                  />
+                  {help('start_command', 'What the container runs. Leave it empty to use what the image starts with.')}
+                </label>
+                <label className={field('health_path')}>
+                  <span className="field-label">Health check path</span>
+                  <input
+                    className="input mono"
+                    placeholder="/"
+                    value={rt.health_path}
+                    onChange={(e) => setRt({ health_path: e.target.value })}
+                    spellCheck={false}
+                    autoCapitalize="off"
+                  />
+                  {help('health_path', 'Pier asks for this path, and sends visitors to a new container only once it answers.')}
+                </label>
+                <label className={field('memory_mb')}>
+                  <span className="field-label">Memory limit</span>
+                  <select className="input" value={String(rt.memory_mb)} onChange={(e) => setRt({ memory_mb: Number(e.target.value) })}>
+                    <option value="0">The server's default, {defaultMem >= 1024 ? `${defaultMem / 1024} GB` : `${defaultMem} MB`}</option>
+                    <option value="256">256 MB</option>
+                    <option value="512">512 MB</option>
+                    <option value="1024">1 GB</option>
+                    <option value="2048">2 GB</option>
+                    <option value="4096">4 GB</option>
+                    <option value="8192">8 GB</option>
+                    <option value="-1">No limit</option>
+                  </select>
+                  {help('memory_mb', "Stops one container from using up the server's memory.")}
+                </label>
+                <label className={field('cpus')}>
+                  <span className="field-label">CPU limit</span>
+                  <select className="input" value={String(rt.cpus)} onChange={(e) => setRt({ cpus: Number(e.target.value) })}>
+                    <option value="0">No limit</option>
+                    <option value="0.5">Half a CPU</option>
+                    <option value="1">1 CPU</option>
+                    <option value="2">2 CPUs</option>
+                    <option value="4">4 CPUs</option>
+                  </select>
+                  {help('cpus', 'The most CPU time the container can take.')}
+                </label>
+              </div>
+            </section>
+          )}
+        </fieldset>
 
         {(dirty || state.error) && (
           <div className="save-bar" role="region" aria-label="Unsaved changes">
@@ -221,9 +236,11 @@ export function ProjectSettings({ project, address, onDeleted }: { project: stri
             Takes {address} offline and removes every deployment, variable, domain and log of {project}. It can't be undone.
           </p>
         </div>
-        <button className="btn danger" type="button" onClick={() => setDeleting(true)}>
-          Delete project
-        </button>
+        <Gate allow={may} reason={viewerCant('delete projects')}>
+          <button className="btn danger" type="button" onClick={() => setDeleting(true)}>
+            Delete project
+          </button>
+        </Gate>
       </section>
 
       {deleting && (

@@ -8,12 +8,14 @@ import { ProjectMark } from '../components/ProjectMark'
 import { copy } from '../components/Toast'
 import { PageHeading, Paging, SearchField, statusWord, usePaged, When } from '../components/ui'
 import { StatusFlaps } from '../flap/Flaps'
+import { Gate, useRole, viewerCant } from '../lib/role'
 
 const PAGE = 20
 
 // Projects is the home: every project with what it's serving, or, before
 // the first deploy, the getting-started checklist (B2).
 export function Projects({ session, projects, now }: { session: Session; projects: ProjectSummary[]; now: number }) {
+  const { change } = useRole()
   const [query, setQuery] = useState('')
   const shown = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -26,9 +28,11 @@ export function Projects({ session, projects, now }: { session: Session; project
     <main className="main global">
       <PageHeading title="Projects" note={`${projects.length === 1 ? 'One project' : `${projects.length} projects`} on ${session.server.address}`}>
         {projects.length > 6 && <SearchField value={query} onChange={setQuery} placeholder="Search projects" hotkey="/" />}
-        <Link to="/new" className="btn primary">
-          New project
-        </Link>
+        <Gate allow={change} reason={viewerCant('create projects')}>
+          <Link to="/new" className="btn primary">
+            New project
+          </Link>
+        </Gate>
       </PageHeading>
       <div className="stack">
         <div className="panel">
@@ -103,6 +107,7 @@ function ProjectRow({ p, now }: { p: ProjectSummary; now: number }) {
 }
 
 function GettingStarted({ session }: { session: Session }) {
+  const { change } = useRole()
   const { address, base_domain: base } = session.server
   return (
     <main className="main global">
@@ -131,9 +136,11 @@ function GettingStarted({ session }: { session: Session }) {
               Import a GitHub repository or deploy a folder from your computer with pier deploy.
             </span>
           </div>
-          <Link to="/new" className="btn primary">
-            New project
-          </Link>
+          <Gate allow={change} reason={viewerCant('create projects')}>
+            <Link to="/new" className="btn primary">
+              New project
+            </Link>
+          </Gate>
         </div>
       </div>
     </main>

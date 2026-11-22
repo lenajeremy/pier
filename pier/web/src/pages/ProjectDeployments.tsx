@@ -10,6 +10,7 @@ import { Spinner, useBusy } from '../components/Spinner'
 import { copy } from '../components/Toast'
 import { Badge, Empty, Paging, SearchField, usePaged, When } from '../components/ui'
 import { Flaps } from '../flap/Flaps'
+import { Gate, useRole, viewerCant } from '../lib/role'
 
 type Filter = 'all' | 'production' | 'previews'
 const PAGE = 20
@@ -26,6 +27,7 @@ export function ProjectDeployments({ project, session, now, reload }: {
   const [query, setQuery] = useState('')
   const [oldest, setOldest] = useState(false)
   const [busy, run] = useBusy<'undo' | 'restart'>()
+  const { change } = useRole()
 
   const prodBranch = project.production_branch || session.server.production_branch
   const live = project.production?.deployment
@@ -118,10 +120,12 @@ export function ProjectDeployments({ project, session, now, reload }: {
                 undo to go back to <span className="mono">{project.rolled_back_from}</span>.
               </span>
             </div>
-            <button className="btn quiet" disabled={busy === 'undo'} onClick={() => run('undo', () => undoRollBack(project.name, reload))}>
-              {busy === 'undo' && <Spinner />}
-              {busy === 'undo' ? 'Undoing…' : 'Undo rollback'}
-            </button>
+            <Gate allow={change} reason={viewerCant('undo a rollback')}>
+              <button className="btn quiet" disabled={busy === 'undo'} onClick={() => run('undo', () => undoRollBack(project.name, reload))}>
+                {busy === 'undo' && <Spinner />}
+                {busy === 'undo' ? 'Undoing…' : 'Undo rollback'}
+              </button>
+            </Gate>
           </div>
         )}
         {container && live && (
@@ -147,14 +151,16 @@ export function ProjectDeployments({ project, session, now, reload }: {
                   : `It's ${container.state.replace('_', ' ')}${container.restarts ? `, after ${plural(container.restarts, 'restart')}` : ''}.`}
               </span>
             </div>
-            <button
-              className="btn quiet"
-              disabled={busy === 'restart'}
-              onClick={() => run('restart', () => restart(project.name, live.id, reload))}
-            >
-              {busy === 'restart' && <Spinner />}
-              {busy === 'restart' ? 'Restarting…' : 'Restart'}
-            </button>
+            <Gate allow={change} reason={viewerCant('restart a deployment')}>
+              <button
+                className="btn quiet"
+                disabled={busy === 'restart'}
+                onClick={() => run('restart', () => restart(project.name, live.id, reload))}
+              >
+                {busy === 'restart' && <Spinner />}
+                {busy === 'restart' ? 'Restarting…' : 'Restart'}
+              </button>
+            </Gate>
           </div>
         )}
         <div className="panel">
@@ -166,14 +172,16 @@ export function ProjectDeployments({ project, session, now, reload }: {
             rolledBack={!!project.rolled_back_from}
             action={
               project.rollback_to ? (
-                <button
-                  className="btn quiet icon"
-                  data-tip={`Back to ${project.rollback_to}`}
-                  onClick={() => rollBack(target, project.rollback_to, reload)}
-                >
-                  <RollBack />
-                  Roll back
-                </button>
+                <Gate allow={change} reason={viewerCant('roll back production')}>
+                  <button
+                    className="btn quiet icon"
+                    data-tip={`Back to ${project.rollback_to}`}
+                    onClick={() => rollBack(target, project.rollback_to, reload)}
+                  >
+                    <RollBack />
+                    Roll back
+                  </button>
+                </Gate>
               ) : null
             }
           />
@@ -183,9 +191,11 @@ export function ProjectDeployments({ project, session, now, reload }: {
               address={preview}
               now={now}
               action={
-                <button className="btn primary" onClick={() => promote(target, preview.deployment!, reload)}>
-                  Promote to production
-                </button>
+                <Gate allow={change} reason={viewerCant('promote deployments')}>
+                  <button className="btn primary" onClick={() => promote(target, preview.deployment!, reload)}>
+                    Promote to production
+                  </button>
+                </Gate>
               }
             />
           )}
@@ -261,10 +271,13 @@ export function ProjectDeployments({ project, session, now, reload }: {
 type Target = { project: string; host: string; current?: string; branch: string }
 
 function DeploymentRow({ d, now, target, reload }: { d: Deployment; now: number; target: Target; reload: () => void }) {
+  const { change } = useRole()
   const page = `/projects/${d.project}/deployments/${d.id}`
   const ready = d.status === 'ready'
+  // A viewer's menu has only what looks; the switched-off buttons on the
+  // page say why.
   const items: MenuItem[] = [
-    ...(ready && d.role !== 'production'
+    ...(ready && d.role !== 'production' && change
       ? [{ label: 'Promote to production', icon: <ArrowUp />, onSelect: () => promote(target, d, reload) } as MenuItem]
       : []),
     ...(ready
@@ -274,7 +287,7 @@ function DeploymentRow({ d, now, target, reload }: { d: Deployment; now: number;
         ]
       : []),
     { label: 'View build log', icon: <Rows />, to: page },
-    ...(d.status !== 'building'
+    ...(d.status !== 'building' && change
       ? [{ label: 'Redeploy', icon: <Redeploy color="#A3ABBE" />, onSelect: () => redeploy(target, d) } as MenuItem]
       : []),
   ]
@@ -364,7 +377,7 @@ function AddressRow({ kind, address, fallbackHost, now, rolledBack, action }: {
               </button>
             )}
             <span>
-              {d.source === 'cli' ? (d.branch ? `uploaded from ${d.branch}` : 'uploaded with pier deploy') : `from ${d.branch}`}
+              {sentFrom(d)}
               {d.message ? `: ${d.message}` : ''}
             </span>
           </span>
@@ -373,6 +386,16 @@ function AddressRow({ kind, address, fallbackHost, now, rolledBack, action }: {
       {action && <div className="address-action">{action}</div>}
     </div>
   )
+}
+
+// sentFrom says where a deployment came from, and who sent it when a
+// person did: "uploaded by Ada from main".
+export function sentFrom(d: Deployment): string {
+  if (d.source === 'cli') {
+    const by = d.sent_by ? ` by ${d.sent_by}` : ''
+    return d.branch ? `uploaded${by} from ${d.branch}` : d.sent_by ? `uploaded${by} with pier deploy` : 'uploaded with pier deploy'
+  }
+  return `from ${d.branch}${d.sent_by ? `, rebuilt by ${d.sent_by}` : ''}`
 }
 
 type Day = { requests: number; e4xx: number; e5xx: number }

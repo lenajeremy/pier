@@ -5,10 +5,13 @@ import { ago } from '../lib/format'
 import { Link } from '../lib/router'
 import { Mark } from '../components/Icons'
 import { Spinner } from '../components/Spinner'
+import { useRole } from '../lib/role'
 
 // Approve lets a computer that ran pier login in: it shows the computer's
-// name and the code the terminal printed, so the owner can check they match.
+// name and the code the terminal printed, so whoever is signed in can check
+// they match. The computer then acts as them, with their role.
 export function Approve({ code, now }: { code: string; now: number }) {
+  const { change } = useRole()
   const { data, error } = useData<LoginRequest>(code ? `/api/cli/login/${encodeURIComponent(code)}` : null)
   const [answer, setAnswer] = useState<'approved' | 'denied' | ''>('')
   const [failed, setFailed] = useState('')
@@ -65,7 +68,8 @@ export function Approve({ code, now }: { code: string; now: number }) {
           <span className="mono t-title">{data.code}</span>
         </div>
         <p className="t-caption t-muted" style={{ margin: 0 }}>
-          Check it matches what pier login printed. Once approved, this computer can deploy to every project as you.
+          Check it matches what pier login printed. Once approved, this computer acts as you
+          {change ? ', and can deploy to every project.' : ': as a viewer, it can look at every project but not deploy.'}
         </p>
         {failed && (
           <span className="field-message" role="alert">

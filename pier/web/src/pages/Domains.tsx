@@ -8,6 +8,7 @@ import { Menu } from '../components/Menu'
 import { Spinner, useBusy } from '../components/Spinner'
 import { copy, toast } from '../components/Toast'
 import { Problem, Skeleton, When } from '../components/ui'
+import { Gate, useRole, viewerCant } from '../lib/role'
 
 type Domain = {
   host: string
@@ -79,6 +80,7 @@ export function Domains({ project, now }: { project: string; now: number }) {
   const [problem, setProblem] = useState('')
   const [renaming, setRenaming] = useState(false)
   const [checking, check] = useBusy<string>()
+  const { change } = useRole()
 
   const add = async (e: FormEvent) => {
     e.preventDefault()
@@ -145,6 +147,7 @@ export function Domains({ project, now }: { project: string; now: number }) {
             autoComplete="off"
             spellCheck={false}
             placeholder="yourdomain.com"
+            disabled={!change}
             value={host}
             onChange={(e) => {
               setHost(e.target.value.replace(/^https?:\/\//, '').replace(/[\s/]/g, ''))
@@ -152,10 +155,12 @@ export function Domains({ project, now }: { project: string; now: number }) {
             }}
           />
         </label>
-        <button className="btn primary large" disabled={busy || !host.trim()}>
-          {busy && <Spinner />}
-          {busy ? 'Adding…' : 'Add domain'}
-        </button>
+        <Gate allow={change} reason={viewerCant('add domains')}>
+          <button className="btn primary large" disabled={busy || !host.trim()}>
+            {busy && <Spinner />}
+            {busy ? 'Adding…' : 'Add domain'}
+          </button>
+        </Gate>
       </form>
       {problem && <Problem>{problem}</Problem>}
       {error && <Problem>{error.message}</Problem>}
@@ -200,19 +205,23 @@ export function Domains({ project, now }: { project: string; now: number }) {
                   actions={
                     <>
                       {!live && (
-                        <button className="btn quiet icon" disabled={checking === d.host} onClick={() => checkNow(d)}>
-                          {checking === d.host ? <Spinner /> : <Redeploy size={14} />}
-                          {checking === d.host ? 'Checking…' : 'Check now'}
-                        </button>
+                        <Gate allow={change} reason={viewerCant('check domains')}>
+                          <button className="btn quiet icon" disabled={checking === d.host} onClick={() => checkNow(d)}>
+                            {checking === d.host ? <Spinner /> : <Redeploy size={14} />}
+                            {checking === d.host ? 'Checking…' : 'Check now'}
+                          </button>
+                        </Gate>
                       )}
                       <Menu
                         label={`Actions for ${d.host}`}
                         items={[
                           ...(live ? [{ label: 'Visit', icon: <Visit color="#A3ABBE" />, href: scheme + d.host }] : []),
                           { label: 'Copy address', icon: <Copy />, onSelect: () => copy(scheme + d.host) },
-                          ...(live ? [{ label: 'Check the DNS again', icon: <Redeploy color="#A3ABBE" />, onSelect: () => checkNow(d) }] : []),
-                          'separator' as const,
-                          { label: 'Remove', icon: <Trash />, danger: true, onSelect: () => remove(d) },
+                          // A viewer's menu has only what looks.
+                          ...(live && change ? [{ label: 'Check the DNS again', icon: <Redeploy color="#A3ABBE" />, onSelect: () => checkNow(d) }] : []),
+                          ...(change
+                            ? ['separator' as const, { label: 'Remove', icon: <Trash />, danger: true, onSelect: () => remove(d) }]
+                            : []),
                         ]}
                       />
                     </>
@@ -289,9 +298,11 @@ export function Domains({ project, now }: { project: string; now: number }) {
             live={data.deployed && (!data.https || data.default_tls)}
             actions={
               <>
-                <button className="btn quiet small" onClick={() => setRenaming(true)}>
-                  Change
-                </button>
+                <Gate allow={change} reason={viewerCant("change a project's address")}>
+                  <button className="btn quiet small" onClick={() => setRenaming(true)}>
+                    Change
+                  </button>
+                </Gate>
                 <button className="copy shown" onClick={() => copy(scheme + data.default_host)} aria-label={`Copy ${data.default_host}`} data-tip="Copy address">
                   <Copy />
                 </button>

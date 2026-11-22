@@ -21,11 +21,14 @@ import { ProjectSettings } from './pages/ProjectSettings'
 import { Variables } from './pages/Variables'
 import { Domains } from './pages/Domains'
 import { Logs } from './pages/Logs'
+import { Invite } from './pages/Invite'
+import { RoleProvider } from './lib/role'
 
 type Auth = { state: 'loading' } | { state: 'out'; address: string } | { state: 'in'; session: Session }
 
 export function App() {
   const [auth, setAuth] = useState<Auth>({ state: 'loading' })
+  const path = usePath()
 
   const check = useCallback(async () => {
     try {
@@ -38,13 +41,29 @@ export function App() {
   useEffect(() => {
     check()
     const out = () => setAuth({ state: 'out', address: '' })
+    // pierd reads a role on every request, so when it refuses something
+    // the role has changed since the page loaded: ask again, and the page
+    // switches off what the new role can't use.
+    const changed = () => check()
     window.addEventListener('pier:signed-out', out)
-    return () => window.removeEventListener('pier:signed-out', out)
+    window.addEventListener('pier:role-changed', changed)
+    return () => {
+      window.removeEventListener('pier:signed-out', out)
+      window.removeEventListener('pier:role-changed', changed)
+    }
   }, [check])
 
   if (auth.state === 'loading') return null
+  // An invite link opens its page signed in or not: it makes a new account.
+  if (path === '/invite') {
+    return <Invite signedIn={auth.state === 'in' ? auth.session : null} onJoined={(session) => setAuth({ state: 'in', session })} />
+  }
   if (auth.state === 'out') return <SignIn address={auth.address} onSignedIn={(session) => setAuth({ state: 'in', session })} />
-  return <Dashboard session={auth.session} />
+  return (
+    <RoleProvider role={auth.session.user?.role ?? 'viewer'}>
+      <Dashboard session={auth.session} />
+    </RoleProvider>
+  )
 }
 
 function Dashboard({ session }: { session: Session }) {
@@ -125,7 +144,7 @@ function Signed({ session, path, now }: { session: Session; path: string; now: n
   } else if (path === '/server') {
     page = <Server version={session.server.version} />
   } else if (path === '/settings') {
-    page = <Settings/>
+    page = <Settings email={session.user?.email ?? ''} />
   } else {
     page = (
       <main className="main global">

@@ -11,6 +11,7 @@ import { Spinner, useBusy } from '../components/Spinner'
 import { copy } from '../components/Toast'
 import { deploymentStatus, Problem, Skeleton, When } from '../components/ui'
 import { StatusFlaps } from '../flap/Flaps'
+import { Gate, useRole, viewerCant } from '../lib/role'
 
 type Detail = { deployment: Deployment; addresses: Address[]; container?: ContainerStatus | null }
 
@@ -30,6 +31,7 @@ export function DeploymentPage({ project, id, now, host, current, branch }: {
     1500,
   )
   const [busy, run] = useBusy<'restart'>()
+  const { change } = useRole()
   if (error) {
     return (
       <main className="main">
@@ -55,11 +57,12 @@ export function DeploymentPage({ project, id, now, host, current, branch }: {
   const visit = (live ?? data.addresses[0])?.url
   const target = { project, host, current, branch }
   const stopped = data.container?.state === 'exited'
+  // A viewer's menu has only what looks.
   const more: MenuItem[] = [
-    ...(!building
+    ...(!building && change
       ? [{ label: 'Redeploy', icon: <I.Redeploy color="#A3ABBE" />, onSelect: () => redeploy(target, d) } as MenuItem]
       : []),
-    ...(ready && d.runtime
+    ...(ready && d.runtime && change
       ? [
           {
             label: stopped ? 'Start the container' : 'Restart the container',
@@ -86,9 +89,11 @@ export function DeploymentPage({ project, id, now, host, current, branch }: {
           <h2 className="t-small t-strong">Deployment details</h2>
           <div className="card-actions">
             {ready && d.role !== 'production' && (
-              <button className="btn primary" onClick={() => promote(target, d, reload)}>
-                Promote to production
-              </button>
+              <Gate allow={change} reason={viewerCant('promote deployments')}>
+                <button className="btn primary" onClick={() => promote(target, d, reload)}>
+                  Promote to production
+                </button>
+              </Gate>
             )}
             {ready && visit && (
               <a className="btn quiet visit" href={visit} target="_blank" rel="noreferrer">
@@ -144,7 +149,10 @@ export function DeploymentPage({ project, id, now, host, current, branch }: {
               )}
             </Field>
             <Field label="Source">
-              {d.source === 'cli' && <span className="t-muted">Uploaded with pier deploy</span>}
+              {d.source === 'cli' && (
+                <span className="t-muted">{d.sent_by ? `Uploaded by ${d.sent_by} with pier deploy` : 'Uploaded with pier deploy'}</span>
+              )}
+              {d.source !== 'cli' && d.sent_by && <span className="t-muted">Rebuilt by {d.sent_by}</span>}
               {d.branch && (
                 <span className="line">
                   <I.Branch />

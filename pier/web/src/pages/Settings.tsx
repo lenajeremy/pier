@@ -6,14 +6,17 @@ import { confirm } from '../components/Dialog'
 import { Spinner } from '../components/Spinner'
 import { toast } from '../components/Toast'
 import { PageHeading, Problem, Skeleton } from '../components/ui'
+import { Gate, onlyOwner, useRole } from '../lib/role'
 
 type Addresses = { address: string; base: string }
 type Setup = { saved: Addresses; active: Addresses; pending: boolean; ip: string }
 const message = (e: unknown) => (e instanceof Error ? e.message : "Can't reach pierd.")
 const good = (result: string) => /^(Matches|Local)/.test(result)
 
-// Settings is K4: where the server is reached, and the owner's password.
-export function Settings() {
+// Settings is K4: where the server is reached, which only the owner
+// changes, and your own password, which everyone can.
+export function Settings({ email }: { email: string }) {
+  const { owner } = useRole()
   const { data, error, reload } = useData<Setup>('/api/settings')
   const [draft, setDraft] = useState<Addresses | null>(null)
   const [dns, setDns] = useState<Addresses | null>(null)
@@ -107,6 +110,7 @@ export function Settings() {
                 <input
                   className="input mono"
                   value={values.address}
+                  disabled={!owner}
                   spellCheck={false}
                   autoCapitalize="off"
                   onChange={(e) => {
@@ -121,6 +125,7 @@ export function Settings() {
                 <input
                   className="input mono"
                   value={values.base}
+                  disabled={!owner}
                   spellCheck={false}
                   autoCapitalize="off"
                   onChange={(e) => {
@@ -144,6 +149,7 @@ export function Settings() {
             )}
             <div className="form-foot">
               <span className="t-note">
+                {!owner && 'Only the owner can change these. '}
                 {dirty
                   ? 'Saved addresses take effect when pierd restarts.'
                   : data.ip
@@ -154,10 +160,12 @@ export function Settings() {
                 {busy === 'dns' && <Spinner />}
                 {busy === 'dns' ? 'Checking…' : 'Check DNS'}
               </button>
-              <button className="btn primary" type="submit" disabled={!!busy || !dirty}>
-                {busy === 'save' && <Spinner />}
-                {busy === 'save' ? 'Saving…' : 'Save addresses'}
-              </button>
+              <Gate allow={owner} reason={onlyOwner("change the server's addresses")}>
+                <button className="btn primary" type="submit" disabled={!!busy || !dirty}>
+                  {busy === 'save' && <Spinner />}
+                  {busy === 'save' ? 'Saving…' : 'Save addresses'}
+                </button>
+              </Gate>
             </div>
           </form>
 
@@ -209,8 +217,17 @@ export function Settings() {
             </div>
             <div className="form-foot">
               <span className="t-note">
-                Changing it signs out every browser and linked computer. If you've lost it, run{' '}
-                <span className="mono">pierd reset-password</span> on the server.
+                Changing it signs out every browser and linked computer.{' '}
+                {owner ? (
+                  <>
+                    If you've lost it, run <span className="mono">pierd reset-password</span> on the server.
+                  </>
+                ) : (
+                  <>
+                    If you lose it, the owner resets it on the server with{' '}
+                    <span className="mono">pierd reset-password -email {email}</span>.
+                  </>
+                )}
               </span>
               <button className="btn quiet" type="submit" disabled={!current || !password || !again}>
                 Change password

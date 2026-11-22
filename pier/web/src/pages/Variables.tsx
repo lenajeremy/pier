@@ -10,6 +10,7 @@ import { Menu } from '../components/Menu'
 import { Spinner } from '../components/Spinner'
 import { copy, toast } from '../components/Toast'
 import { Badge, Paging, Problem, SearchField, Skeleton, usePaged, When } from '../components/ui'
+import { Gate, useRole, viewerCant } from '../lib/role'
 
 export type Scope = 'production' | 'preview'
 type Entry = { name: string; scopes: Scope[]; updated_at: string }
@@ -88,6 +89,7 @@ export function Variables({ project, now }: { project: string; now: number }) {
   const { data, error, reload } = useData<Data>(`${base}/variables`)
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState<Open>(null)
+  const { change } = useRole()
 
   const shown = useMemo(
     () => (data?.variables ?? []).filter((v) => v.name.toLowerCase().includes(query.trim().toLowerCase())),
@@ -169,9 +171,11 @@ export function Variables({ project, now }: { project: string; now: number }) {
             </span>
             <span className="t-caption t-muted">Redeploy production so its build and its running process get the new values.</span>
           </div>
-          <button className="btn quiet" onClick={redeploy}>
-            Redeploy
-          </button>
+          <Gate allow={change} reason={viewerCant('redeploy')}>
+            <button className="btn quiet" onClick={redeploy}>
+              Redeploy
+            </button>
+          </Gate>
         </div>
       )}
 
@@ -182,12 +186,16 @@ export function Variables({ project, now }: { project: string; now: number }) {
             <span className="count">{data.variables.length.toLocaleString('en-GB')}</span>
           </div>
           {data.variables.length > 5 && <SearchField value={query} onChange={setQuery} placeholder="Search variables" hotkey="/" width={260} />}
-          <button className="btn quiet" onClick={() => setOpen({ kind: 'import' })}>
-            Import .env
-          </button>
-          <button className="btn primary" onClick={() => setOpen({ kind: 'add' })}>
-            Add variable
-          </button>
+          <Gate allow={change} reason={viewerCant('import variables')}>
+            <button className="btn quiet" onClick={() => setOpen({ kind: 'import' })}>
+              Import .env
+            </button>
+          </Gate>
+          <Gate allow={change} reason={viewerCant('change variables')}>
+            <button className="btn primary" onClick={() => setOpen({ kind: 'add' })}>
+              Add variable
+            </button>
+          </Gate>
         </div>
 
         {data.variables.length === 0 ? (
@@ -198,12 +206,16 @@ export function Variables({ project, now }: { project: string; now: number }) {
               prefix, like <span className="mono">VITE_</span>, end up in the browser.
             </span>
             <div className="page-actions">
-              <button className="btn quiet" onClick={() => setOpen({ kind: 'import' })}>
-                Import .env
-              </button>
-              <button className="btn primary" onClick={() => setOpen({ kind: 'add' })}>
-                Add variable
-              </button>
+              <Gate allow={change} reason={viewerCant('import variables')}>
+                <button className="btn quiet" onClick={() => setOpen({ kind: 'import' })}>
+                  Import .env
+                </button>
+              </Gate>
+              <Gate allow={change} reason={viewerCant('change variables')}>
+                <button className="btn primary" onClick={() => setOpen({ kind: 'add' })}>
+                  Add variable
+                </button>
+              </Gate>
             </div>
           </div>
         ) : (
@@ -216,7 +228,15 @@ export function Variables({ project, now }: { project: string; now: number }) {
               <span />
             </div>
             {paged.shown.map((v) => (
-              <Row key={v.name + v.scopes.join()} v={v} base={base} now={now} onChange={() => setOpen({ kind: 'change', entry: v })} onDelete={() => remove(v)} />
+              <Row
+                key={v.name + v.scopes.join()}
+                v={v}
+                base={base}
+                now={now}
+                change={change}
+                onChange={() => setOpen({ kind: 'change', entry: v })}
+                onDelete={() => remove(v)}
+              />
             ))}
             {shown.length === 0 && (
               <div className="t-empty">
@@ -315,10 +335,11 @@ export function Names({ names }: { names: string[] }) {
   )
 }
 
-function Row({ v, base, now, onChange, onDelete }: {
+function Row({ v, base, now, change, onChange, onDelete }: {
   v: Entry
   base: string
   now: number
+  change: boolean // a viewer sees the name only: never the value, and nothing to change
   onChange: () => void
   onDelete: () => void
 }) {
@@ -349,18 +370,26 @@ function Row({ v, base, now, onChange, onDelete }: {
         {revealed !== null && revealed.includes('\n') ? (
           <pre className="mono">{revealed}</pre>
         ) : (
-          <span className={'mono' + (revealed === null ? ' t-quiet' : '')}>{revealed ?? '••••••••••••'}</span>
+          <span
+            className={'mono' + (revealed === null ? ' t-quiet' : '')}
+            aria-label={change ? undefined : 'Hidden value'}
+            data-tip={change ? undefined : viewerCant('see variable values')}
+          >
+            {revealed ?? '••••••••••••'}
+          </span>
         )}
-        <button
-          className="reveal"
-          disabled={revealing}
-          onClick={reveal}
-          aria-label={revealed === null ? `Show ${v.name}` : `Hide ${v.name}`}
-          aria-pressed={revealed !== null}
-          data-tip={revealed === null ? 'Show the value' : 'Hide the value'}
-        >
-          {revealing ? <Spinner className="t-muted" /> : <Eye color={revealed === null ? '#8A92A8' : '#ECEEF4'} />}
-        </button>
+        {change && (
+          <button
+            className="reveal"
+            disabled={revealing}
+            onClick={reveal}
+            aria-label={revealed === null ? `Show ${v.name}` : `Hide ${v.name}`}
+            aria-pressed={revealed !== null}
+            data-tip={revealed === null ? 'Show the value' : 'Hide the value'}
+          >
+            {revealing ? <Spinner className="t-muted" /> : <Eye color={revealed === null ? '#8A92A8' : '#ECEEF4'} />}
+          </button>
+        )}
       </span>
       <span className="scopes">
         {v.scopes.map((s) => (
@@ -369,23 +398,25 @@ function Row({ v, base, now, onChange, onDelete }: {
       </span>
       <When at={v.updated_at} now={now} className="t-muted" />
       <span className="row-more">
-        <Menu
-          label={`Actions for ${v.name}`}
-          className="icon-btn bare"
-          items={[
-            { label: 'Change value', icon: <Pencil />, onSelect: onChange },
-            {
-              label: 'Copy value',
-              icon: <Copy />,
-              onSelect: () =>
-                read()
-                  .then((value) => copy(value, v.name))
-                  .catch(failed),
-            },
-            'separator',
-            { label: 'Delete', icon: <Trash />, danger: true, onSelect: onDelete },
-          ]}
-        />
+        {change && (
+          <Menu
+            label={`Actions for ${v.name}`}
+            className="icon-btn bare"
+            items={[
+              { label: 'Change value', icon: <Pencil />, onSelect: onChange },
+              {
+                label: 'Copy value',
+                icon: <Copy />,
+                onSelect: () =>
+                  read()
+                    .then((value) => copy(value, v.name))
+                    .catch(failed),
+              },
+              'separator',
+              { label: 'Delete', icon: <Trash />, danger: true, onSelect: onDelete },
+            ]}
+          />
+        )}
       </span>
     </div>
   )

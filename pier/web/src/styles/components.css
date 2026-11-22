@@ -602,6 +602,16 @@
   border-color: transparent;
   opacity: 0.6;
 }
+/* A control the signed-in person's role can't use: switched off where it
+   stands. The wrapper takes the pointer, so hovering it says why. */
+.locked {
+  display: inline-flex;
+  flex: none;
+  border-radius: var(--radius-pill);
+}
+.locked > * {
+  pointer-events: none;
+}
 .icon-btn.bare:hover,
 .icon-btn.bare:focus-visible,
 .icon-btn.bare[aria-expanded='true'] {
@@ -2320,10 +2330,17 @@ select.input {
 
 /* ---- Forms in a panel: project settings (D2), server settings (K4) ------ */
 
-.settings {
+.settings,
+.settings-fields {
   display: flex;
   flex-direction: column;
   gap: 20px;
+}
+.settings-fields {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: none;
 }
 .form-panel :is(h2, p) {
   margin: 0;
@@ -2481,6 +2498,31 @@ select.input.compact,
 }
 .activity-row.sessions {
   grid-template-columns: minmax(0, 1fr) 120px 140px 92px;
+}
+/* People on the Members page (K3): who, their role, when they were last
+   active, and the owner's menu for them. */
+.activity-row.people {
+  grid-template-columns: minmax(0, 1fr) 120px 196px 32px;
+}
+.activity-row.people .when {
+  white-space: nowrap;
+}
+.activity-row > .row-more {
+  display: flex;
+  justify-content: flex-end;
+}
+.activity-row:hover .row-more .icon-btn.bare {
+  opacity: 1;
+}
+/* The roles to invite someone as, each with what it can do. */
+.role-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.role-choice > span:first-of-type {
+  flex: none;
+  width: 64px;
 }
 .activity-row .event > :is(i, svg) {
   margin-top: 8px;

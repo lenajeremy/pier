@@ -4,6 +4,7 @@ import { Link, navigate } from '../lib/router'
 import { ChevronRight, Terminal } from '../components/Icons'
 import { Spinner } from '../components/Spinner'
 import { GitHubRepos } from './GitHub'
+import { Gate, useRole, viewerCant } from '../lib/role'
 
 const nameRule = /^[a-z0-9]([a-z0-9-]{0,37}[a-z0-9])?$/
 
@@ -13,6 +14,7 @@ export function NewProject({ session, onCreated }: { session: Session; onCreated
   const [name, setName] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const { change } = useRole()
   const domain = session.server.domain
   const shown = name || 'my-site'
 
@@ -81,10 +83,12 @@ export function NewProject({ session, onCreated }: { session: Session; onCreated
                 }}
               />
             </label>
-            <button className="btn quiet large" type="submit" disabled={busy || !name}>
-              {busy && <Spinner />}
-              {busy ? 'Creating…' : 'Create empty project'}
-            </button>
+            <Gate allow={change} reason={viewerCant('create projects')}>
+              <button className="btn quiet large" type="submit" disabled={busy || !name}>
+                {busy && <Spinner />}
+                {busy ? 'Creating…' : 'Create empty project'}
+              </button>
+            </Gate>
           </div>
           {error ? (
             <span className="field-message" role="alert">

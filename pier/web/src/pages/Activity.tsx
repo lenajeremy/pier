@@ -6,7 +6,7 @@ import { Link } from '../lib/router'
 import { ChevronLeft, ChevronRight } from '../components/Icons'
 import { PageHeading, Problem, Skeleton, When } from '../components/ui'
 
-type Event = { id: number; at: number; project: string; title: string; detail: string; deployment?: string }
+type Event = { id: number; at: number; project: string; title: string; detail: string; deployment?: string; actor?: string }
 const PAGE = 100 // what pierd sends at a time
 
 // The swatch says what kind of thing happened, in the colours the rest of
@@ -112,7 +112,12 @@ export function Activity({ projects, now }: { projects: ProjectSummary[]; now: n
                           </>
                         )}
                       </span>
-                      {e.detail && <span className="t-note">{e.detail}</span>}
+                      {(e.detail || e.actor) && (
+                        <span className="t-note">
+                          {e.detail}
+                          {e.actor && (e.detail ? `, by ${e.actor}` : `By ${e.actor}`)}
+                        </span>
+                      )}
                     </div>
                   </div>
                   {e.project ? (

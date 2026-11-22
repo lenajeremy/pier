@@ -6,6 +6,7 @@ import { confirm } from '../components/Dialog'
 import { UsageChart, type History } from '../components/ServerCharts'
 import { toast } from '../components/Toast'
 import { PageHeading, Problem, Skeleton } from '../components/ui'
+import { Gate, onlyOwner, useRole } from '../lib/role'
 
 type Health = {
   os: string
@@ -55,6 +56,7 @@ export function Server({ version: pierd }: { version?: string }) {
   const [range, setRange] = useState<'24h' | '7d'>('24h')
   const history = useData<History>('/api/server/history?range=' + range, () => true, 60000)
   const [hover, setHover] = useState<number | null>(null)
+  const { owner } = useRole()
 
   const clean = (kind: Clean, bytes: number | null) => {
     const freed = bytes ? ` (${size(bytes)})` : ''
@@ -213,9 +215,11 @@ export function Server({ version: pierd }: { version?: string }) {
                   <span className="amount">{i.bytes == null ? <span className="t-quiet">Not measured</span> : size(i.bytes)}</span>
                   <span className="act">
                     {action && (
-                      <button className="btn quiet" onClick={() => clean(action, i.bytes)}>
-                        {action === 'cache' ? 'Clear' : 'Prune'}
-                      </button>
+                      <Gate allow={owner} reason={onlyOwner('clean up the server')}>
+                        <button className="btn quiet" onClick={() => clean(action, i.bytes)}>
+                          {action === 'cache' ? 'Clear' : 'Prune'}
+                        </button>
+                      </Gate>
                     )}
                   </span>
                 </div>
@@ -234,9 +238,11 @@ export function Server({ version: pierd }: { version?: string }) {
               <span className="amount">{data.previews > 0 ? data.previews.toLocaleString('en-GB') : ''}</span>
               <span className="act">
                 {data.previews > 0 && (
-                  <button className="btn quiet" onClick={() => clean('previews', null)}>
-                    Remove
-                  </button>
+                  <Gate allow={owner} reason={onlyOwner('clean up the server')}>
+                    <button className="btn quiet" onClick={() => clean('previews', null)}>
+                      Remove
+                    </button>
+                  </Gate>
                 )}
               </span>
             </div>

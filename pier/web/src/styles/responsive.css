@@ -140,6 +140,13 @@
   .project-row .status {
     width: auto;
   }
+  /* People keep their role and give up when they were last active. */
+  .activity-row.people {
+    grid-template-columns: minmax(0, 1fr) 88px 32px;
+  }
+  .activity-row.people > :nth-child(3) {
+    display: none;
+  }
   .feed .activity-row {
     grid-template-columns: minmax(0, 1fr) 88px;
   }

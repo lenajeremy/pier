@@ -8,6 +8,7 @@ import { ChevronRight, GitHubMark, Visit } from '../components/Icons'
 import { Spinner } from '../components/Spinner'
 import { Paging, Problem, SearchField, Skeleton, usePaged } from '../components/ui'
 import { RepoTable, type Repo as Listed } from './Integrations'
+import { Gate, useRole, viewerCant } from '../lib/role'
 
 type Repo = Listed & { default_branch: string; installation: number }
 type Catalog = { repositories: Repo[]; installations?: { html_url: string }[] }
@@ -162,6 +163,7 @@ function useRoots(projects: string[]): Record<string, string> {
 }
 
 function Configure({ repo, session, onCreated }: { repo: Repo; session: Session; onCreated: () => void }) {
+  const { change } = useRole()
   const repoName = repo.full_name.split('/')[1]
   const [name, setName] = useState(slug(repoName))
   const [named, setNamed] = useState(false) // the owner typed a name, so choosing an app leaves it
@@ -311,10 +313,12 @@ function Configure({ repo, session, onCreated }: { repo: Repo; session: Session;
         </section>
         {problem.error && !problem.field && <Problem>{problem.error}</Problem>}
         <div className="form-foot">
-          <button disabled={busy || !name || !branch} className="btn primary large">
-            {busy && <Spinner />}
-            {busy ? 'Starting the first build…' : `Deploy ${name || 'the project'}`}
-          </button>
+          <Gate allow={change} reason={viewerCant('import repositories')}>
+            <button disabled={busy || !name || !branch} className="btn primary large">
+              {busy && <Spinner />}
+              {busy ? 'Starting the first build…' : `Deploy ${name || 'the project'}`}
+            </button>
+          </Gate>
           <span className="t-note">Pier builds {branch || repo.default_branch} now, and again on every push. Variables can be added once it exists.</span>
         </div>
       </form>

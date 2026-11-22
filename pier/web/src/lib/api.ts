@@ -25,6 +25,7 @@ export interface Deployment {
   target: 'production' | 'preview'
   source: 'git' | 'cli' | 'github'
   plan?: string
+  sent_by?: string // who uploaded it or asked for the rebuild; empty for a push
 }
 
 export interface Address {
@@ -91,9 +92,31 @@ export interface LogLine {
   text: string
 }
 
+// MemberRole is what someone may do across the whole server: the owner
+// everything, a member deploy and change projects, a viewer only look.
+export type MemberRole = 'owner' | 'member' | 'viewer'
+
 export interface Session {
-  user: { name: string; email: string } | null
+  user: { id: number; name: string; email: string; role: MemberRole } | null
   server: { address: string; base_domain: string; domain: string; production_branch: string; version?: string }
+}
+
+export interface Member {
+  id: number
+  name: string
+  email: string
+  role: MemberRole
+  created_at: string
+  last_active_at: string
+  you: boolean
+}
+
+export interface Invite {
+  id: number
+  role: 'member' | 'viewer'
+  created_by: string
+  created_at: string
+  expires_at: string
 }
 
 export class ApiError extends Error {
@@ -120,6 +143,9 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
   if (!resp.ok) {
     if (resp.status === 401 && path !== '/api/session') window.dispatchEvent(new Event('pier:signed-out'))
+    // A refusal that names the role it needs: the role changed since the
+    // page loaded.
+    if (resp.status === 403 && typeof body.need === 'string') window.dispatchEvent(new Event('pier:role-changed'))
     throw new ApiError(resp.status, body)
   }
   return body as T

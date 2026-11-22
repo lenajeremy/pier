@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { api, signOut, type Deployment, type Project, type ProjectSummary } from '../lib/api'
 import { rollBack } from '../lib/actions'
 import { navigate } from '../lib/router'
+import { useRole } from '../lib/role'
 import * as I from './Icons'
 
 type Item = {
@@ -40,6 +41,7 @@ export function CommandMenu({ projects, project, branch, onClose }: {
   branch: string // the server's production branch
   onClose: () => void
 }) {
+  const { change } = useRole()
   const [query, setQuery] = useState('')
   const [at, setAt] = useState(0)
   const [open, setOpen] = useState<Project | null>(null)
@@ -71,7 +73,7 @@ export function CommandMenu({ projects, project, branch, onClose }: {
     const out: Item[] = []
 
     // Actions come first, as in the design: they're what a typed verb means.
-    if (open?.rollback_to && has('roll back', 'rollback', open.name)) {
+    if (change && open?.rollback_to && has('roll back', 'rollback', open.name)) {
       out.push({
         group: 'Actions',
         label: `Roll back ${open.name} to ${open.rollback_to}`,
@@ -86,7 +88,7 @@ export function CommandMenu({ projects, project, branch, onClose }: {
           ),
       })
     }
-    if (has('new project', 'create', 'import')) {
+    if (change && has('new project', 'create', 'import')) {
       out.push({ group: 'Actions', label: 'New project', icon: <I.Plus size={18} color="#A3ABBE" />, run: go('/new') })
     }
     if (q && has('sign out', 'log out')) {
@@ -139,7 +141,7 @@ export function CommandMenu({ projects, project, branch, onClose }: {
       }
     }
     return out.slice(0, 40)
-  }, [query, projects, project, open, branch])
+  }, [query, projects, project, open, branch, change])
 
   useEffect(() => setAt(0), [query])
   useEffect(() => {

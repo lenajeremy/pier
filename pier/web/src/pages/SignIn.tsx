@@ -3,8 +3,8 @@ import { ApiError, signIn, type Session } from '../lib/api'
 import { Mark } from '../components/Icons'
 import { Spinner } from '../components/Spinner'
 
-// SignIn is B1: the owner's email and password. Pier never sends email, so
-// a forgotten password is reset on the server.
+// SignIn is B1: an email and password. Pier never sends email, so a
+// forgotten password is reset on the server.
 export function SignIn({ address, onSignedIn }: { address: string; onSignedIn: (s: Session) => void }) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -83,7 +83,7 @@ export function SignIn({ address, onSignedIn }: { address: string; onSignedIn: (
           {busy ? 'Signing in…' : 'Sign in'}
         </button>
         <p className="forgot">
-          Forgot your password? Run <span className="mono t-muted">pierd reset-password</span> on the server.
+          Forgot your password? The owner resets it on the server with <span className="mono t-muted">pierd reset-password</span>.
         </p>
       </form>
     </main>

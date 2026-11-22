@@ -9,6 +9,7 @@ import { toast } from '../components/Toast'
 import { Badge, PageHeading, Paging, Problem, SearchField, Skeleton, usePaged } from '../components/ui'
 import { Spinner } from '../components/Spinner'
 import { LongValue, ScopePicker, type Scope } from './Variables'
+import { Gate, useRole, viewerCant } from '../lib/role'
 
 type Shared = { name: string; projects: string[]; production: boolean; preview: boolean }
 const PAGE = 50
@@ -19,6 +20,7 @@ export function SharedVariables({ projects }: { projects: ProjectSummary[] }) {
   const { data, error, reload } = useData<{ variables: Shared[] }>('/api/shared-variables')
   const [open, setOpen] = useState<Shared | 'new' | null>(null)
   const [query, setQuery] = useState('')
+  const { change } = useRole()
 
   const all = data?.variables ?? []
   const shown = useMemo(() => {
@@ -58,9 +60,11 @@ export function SharedVariables({ projects }: { projects: ProjectSummary[] }) {
       >
         {all.length > 5 && <SearchField value={query} onChange={setQuery} placeholder="Search shared variables" hotkey="/" width={280} />}
         {all.length > 0 && (
-          <button className="btn primary" onClick={() => setOpen('new')}>
-            Add variable
-          </button>
+          <Gate allow={change} reason={viewerCant('add shared variables')}>
+            <button className="btn primary" onClick={() => setOpen('new')}>
+              Add variable
+            </button>
+          </Gate>
         )}
       </PageHeading>
       {error && <Problem>{error.message}</Problem>}
@@ -76,9 +80,11 @@ export function SharedVariables({ projects }: { projects: ProjectSummary[] }) {
             A shared variable is one value, like an analytics key or an npm token, that several projects use. Change it here and
             every linked project gets the new value on its next deployment.
           </span>
-          <button className="btn primary" onClick={() => setOpen('new')}>
-            Add variable
-          </button>
+          <Gate allow={change} reason={viewerCant('add shared variables')}>
+            <button className="btn primary" onClick={() => setOpen('new')}>
+              Add variable
+            </button>
+          </Gate>
         </div>
       )}
       {data && all.length > 0 && (
@@ -107,15 +113,17 @@ export function SharedVariables({ projects }: { projects: ProjectSummary[] }) {
                   {v.projects.length ? listed(v.projects, 2) : 'No project yet'}
                 </span>
                 <span className="row-more">
-                  <Menu
-                    label={`Actions for ${v.name}`}
-                    className="icon-btn bare"
-                    items={[
-                      { label: 'Edit', icon: <Pencil />, onSelect: () => setOpen(v) },
-                      'separator',
-                      { label: 'Delete', icon: <Trash />, danger: true, onSelect: () => remove(v) },
-                    ]}
-                  />
+                  {change && (
+                    <Menu
+                      label={`Actions for ${v.name}`}
+                      className="icon-btn bare"
+                      items={[
+                        { label: 'Edit', icon: <Pencil />, onSelect: () => setOpen(v) },
+                        'separator',
+                        { label: 'Delete', icon: <Trash />, danger: true, onSelect: () => remove(v) },
+                      ]}
+                    />
+                  )}
                 </span>
               </div>
             ))}
