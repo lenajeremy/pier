@@ -112,6 +112,10 @@ func (m cockpit) rightPane() ([]string, []hit, []keyHelp) {
 		return m.deployPane(rw, rows)
 	case detailView:
 		return m.detailPane(rw, rows)
+	case jobsView:
+		return m.jobsPane(rw, rows)
+	case jobView:
+		return m.jobPane(rw, rows)
 	}
 	return m.projectPane(rw, rows)
 }
@@ -231,7 +235,7 @@ func (m cockpit) projectPane(w, rows int) ([]string, []hit, []keyHelp) {
 	active := m.dialog == noDialog
 	focused := (m.focused() == projectPane || m.focused() == actionsPane) && active
 	acts := m.shownActions()
-	keys := []keyHelp{{"d", "deploy"}, {"D", "production"}, {"p", "promote"}, {"r", "roll back"}, {"l", "logs"}, {"b", "board"}, {"/", "find"}, {"?", "help"}, {"q", "quit"}}
+	keys := []keyHelp{{"d", "deploy"}, {"D", "production"}, {"p", "promote"}, {"r", "roll back"}, {"l", "logs"}, {"b", "board"}, {"J", "jobs"}, {"/", "find"}, {"?", "help"}, {"q", "quit"}}
 	if m.viewer() {
 		// A viewer looks: the keys that change something leave the bar.
 		keys = keys[4:]

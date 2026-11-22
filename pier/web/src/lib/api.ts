@@ -231,6 +231,7 @@ export interface JobRun {
   job: number
   project: string
   started_by: 'schedule' | 'manual'
+  run_by?: string
   status: 'running' | 'succeeded' | 'failed' | 'skipped'
   deployment?: string
   scheduled_for?: string

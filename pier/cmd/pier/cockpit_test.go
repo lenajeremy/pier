@@ -155,7 +155,7 @@ func TestCockpitMatchesTheDesign(t *testing.T) {
 		}
 	}
 	// The actions the pane shows as rows leave the key bar.
-	if !strings.HasPrefix(lines[29], " p promote    l logs    b board    / find    ? help    q quit") {
+	if !strings.HasPrefix(lines[29], " p promote    l logs    b board    J jobs    / find    ? help    q quit") {
 		t.Fatalf("keys %q", lines[29])
 	}
 	for _, want := range []string{"Actions", "Deploy this folder as a preview", "Deploy this folder to production", "Roll back production", "Open landing.thesunset.live"} {

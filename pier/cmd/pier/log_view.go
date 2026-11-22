@@ -22,6 +22,7 @@ const (
 
 type logRow struct {
 	stamp, clock, label, message, tone string
+	ink                                string // the message's colour, when it isn't the usual one
 }
 
 func cleanLog(s string) string { return singleLine(ansi.Strip(s)) }
@@ -38,7 +39,7 @@ func requestRow(l requests.Line) logRow {
 		tone = lavender
 	}
 	return logRow{at.Format(time.RFC3339), at.Format("15:04:05"), strconv.Itoa(l.Status),
-		fmt.Sprintf("%s %q  %.1f ms  %s", cleanLog(l.Method), l.Path, l.MS, cleanLog(l.Deployment)), tone}
+		fmt.Sprintf("%s %q  %.1f ms  %s", cleanLog(l.Method), l.Path, l.MS, cleanLog(l.Deployment)), tone, ""}
 }
 
 func runtimeRow(l apphost.LogLine) logRow {
@@ -50,7 +51,7 @@ func runtimeRow(l apphost.LogLine) logRow {
 	if l.Stream == "stderr" {
 		tone = coral
 	}
-	return logRow{cleanLog(l.At), clock, cleanLog(l.Stream), cleanLog(l.Text), tone}
+	return logRow{cleanLog(l.At), clock, cleanLog(l.Stream), cleanLog(l.Text), tone, ""}
 }
 
 type buildLine struct {
@@ -60,7 +61,7 @@ type buildLine struct {
 
 func buildRow(l buildLine) logRow {
 	stamp := fmt.Sprintf("+%.1fs", float64(l.MS)/1000)
-	return logRow{stamp, stamp, cleanLog(l.Tag), cleanLog(l.Text), narrationTone(cleanLog(l.Tag))}
+	return logRow{stamp, stamp, cleanLog(l.Tag), cleanLog(l.Text), narrationTone(cleanLog(l.Tag)), ""}
 }
 
 func (r logRow) format(styled, color bool) string {
@@ -88,12 +89,16 @@ func (r logRow) wrapped(width int, color bool) []string {
 	if width < gutter+18 {
 		return strings.Split(ansi.Hardwrap(r.format(true, color), width, false), "\n")
 	}
+	ink := r.ink
+	if ink == "" {
+		ink = fgSecondary
+	}
 	parts := strings.Split(ansi.Hardwrap(r.message, width-gutter, false), "\n")
 	parts[0] = sgr(fmt.Sprintf("%8s", r.clock), fgDim, "", false, color) + "  " +
 		sgr(fmt.Sprintf("%-6s", r.label), r.tone, "", false, color) + "  " +
-		sgr(parts[0], fgSecondary, "", false, color)
+		sgr(parts[0], ink, "", false, color)
 	for i := 1; i < len(parts); i++ {
-		parts[i] = strings.Repeat(" ", gutter) + sgr(parts[i], fgSecondary, "", false, color)
+		parts[i] = strings.Repeat(" ", gutter) + sgr(parts[i], ink, "", false, color)
 	}
 	return parts
 }
@@ -241,6 +246,8 @@ func (m logView) View() string {
 	}
 	timeLabel, tagLabel, detailLabel := "Time", "Status", "Request"
 	switch m.source.kind {
+	case "Run":
+		timeLabel, tagLabel, detailLabel = "Elapsed", "Stream", "Output"
 	case "Runtime":
 		tagLabel, detailLabel = "Stream", "Output"
 	case "Build":
@@ -307,6 +314,11 @@ func (m logView) View() string {
 func (s logSource) title() string {
 	of := cleanLog(s.deployment)
 	switch s.kind {
+	case "Run":
+		if s.jobName == "" {
+			return fmt.Sprintf("Run %d", s.run)
+		}
+		return fmt.Sprintf("Run %d of %s", s.run, cleanLog(s.jobName))
 	case "Build":
 		if of == "" {
 			return "The latest build of " + cleanLog(s.project)

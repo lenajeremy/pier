@@ -50,7 +50,8 @@ type JobRun struct {
 	ID           int64     `json:"id"`
 	Job          int64     `json:"job"`
 	Project      string    `json:"project"`
-	StartedBy    string    `json:"started_by"` // schedule or manual
+	StartedBy    string    `json:"started_by"`       // schedule or manual
+	RunBy        string    `json:"run_by,omitempty"` // who ran it by hand, by name
 	Status       string    `json:"status"`
 	Deployment   string    `json:"deployment,omitempty"` // what production served when it ran
 	ScheduledFor time.Time `json:"scheduled_for,omitzero"`
@@ -159,13 +160,13 @@ func (s *Store) JobByID(ctx context.Context, project string, id int64) (Job, err
 	return scanScheduledJob(s.db.QueryRowContext(ctx, `SELECT `+jobCols+` FROM jobs WHERE id = ? AND project = ?`, id, project))
 }
 
-const runCols = `id, job, project, started_by, status, deployment, scheduled_for, started_at, finished_at, exit_code, http_status, detail`
+const runCols = `id, job, project, started_by, status, deployment, scheduled_for, started_at, finished_at, exit_code, http_status, detail, run_by`
 
 func scanRun(sc interface{ Scan(...any) error }) (JobRun, error) {
 	var r JobRun
 	var scheduled, started, finished int64
 	var exit, status sql.NullInt64
-	err := sc.Scan(&r.ID, &r.Job, &r.Project, &r.StartedBy, &r.Status, &r.Deployment, &scheduled, &started, &finished, &exit, &status, &r.Detail)
+	err := sc.Scan(&r.ID, &r.Job, &r.Project, &r.StartedBy, &r.Status, &r.Deployment, &scheduled, &started, &finished, &exit, &status, &r.Detail, &r.RunBy)
 	if errors.Is(err, sql.ErrNoRows) {
 		return r, ErrNotFound
 	}
@@ -191,9 +192,9 @@ func nullInt(v *int) any {
 // StartRun records a run that has started, or one that was skipped, and
 // returns its ID.
 func (s *Store) StartRun(ctx context.Context, r JobRun) (int64, error) {
-	res, err := s.db.ExecContext(ctx, `INSERT INTO job_runs(job, project, started_by, status, deployment, scheduled_for, started_at, finished_at, exit_code, http_status, detail)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		r.Job, r.Project, r.StartedBy, r.Status, r.Deployment, ms(r.ScheduledFor), r.StartedAt.UnixMilli(), ms(r.FinishedAt), nullInt(r.ExitCode), nullInt(r.HTTPStatus), r.Detail)
+	res, err := s.db.ExecContext(ctx, `INSERT INTO job_runs(job, project, started_by, status, deployment, scheduled_for, started_at, finished_at, exit_code, http_status, detail, run_by)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		r.Job, r.Project, r.StartedBy, r.Status, r.Deployment, ms(r.ScheduledFor), r.StartedAt.UnixMilli(), ms(r.FinishedAt), nullInt(r.ExitCode), nullInt(r.HTTPStatus), r.Detail, r.RunBy)
 	if err != nil {
 		return 0, err
 	}

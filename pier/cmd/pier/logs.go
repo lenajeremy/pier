@@ -20,6 +20,8 @@ import (
 type logSource struct {
 	c                         config
 	project, kind, deployment string
+	job, run                  int64  // a job's run, for kind Run
+	jobName                   string // the job's name, for the title
 	query                     url.Values
 	limit                     int
 	follow                    bool
@@ -135,6 +137,9 @@ func waitForLogs(ctx context.Context) error {
 }
 
 func (s logSource) read(ctx context.Context, emit func([]logRow) error) error {
+	if s.kind == "Run" {
+		return s.readRun(ctx, emit)
+	}
 	base := "/api/projects/" + url.PathEscape(s.project)
 	q := url.Values{}
 	if s.follow {
@@ -264,4 +269,87 @@ func (s logSource) resolveDeployment(ctx context.Context, base string) (string, 
 		}
 	}
 	return "", fmt.Errorf("%s has no running server deployment", s.project)
+}
+
+// runLine is one line of a job's run as pierd keeps it.
+type runLine struct {
+	MS     int64  `json:"ms"`
+	Stream string `json:"stream"`
+	Text   string `json:"text"`
+}
+
+// readRun reads a job's run from the start, asking for what's new every
+// second while it runs, and ends with how it went.
+func (s logSource) readRun(ctx context.Context, emit func([]logRow) error) error {
+	path := fmt.Sprintf("%s/%d/runs/%d", jobsPath(s.project), s.job, s.run)
+	from := 0
+	said := "" // pierd's last words in the log, which the end needn't repeat
+	for {
+		var res struct {
+			Run   jobRun
+			Lines []runLine
+			Next  int
+			Done  bool
+		}
+		if err := callContext(ctx, s.c, "GET", path+"?from="+strconv.Itoa(from), nil, &res); err != nil {
+			return err
+		}
+		rows := make([]logRow, 0, len(res.Lines)+1)
+		for _, l := range res.Lines {
+			rows = append(rows, runRow(l))
+			if l.Stream == "pier" {
+				said = cleanLog(l.Text)
+			}
+		}
+		from = res.Next
+		if res.Done {
+			rows = append(rows, runEnd(res.Run, said))
+		}
+		if err := emit(rows); err != nil {
+			return err
+		}
+		if res.Done {
+			return nil
+		}
+		if err := waitForLogs(ctx); err != nil {
+			return err
+		}
+	}
+}
+
+// runRow is a line of a run coloured the way the job page colours it:
+// Pier's own words in violet, the run's output in pink, and what it wrote
+// to stderr in coral.
+func runRow(l runLine) logRow {
+	stamp := fmt.Sprintf("+%.2fs", float64(l.MS)/1000)
+	r := logRow{stamp: stamp, clock: stamp, label: cleanLog(l.Stream), message: cleanLog(l.Text), tone: pink}
+	switch l.Stream {
+	case "pier":
+		r.tone = lavender
+	case "stderr":
+		r.tone, r.ink = coral, coralTxt
+	}
+	return r
+}
+
+// runEnd is the last line of a run's log: how it went, how long it took,
+// its exit code or HTTP status, and why it failed or was skipped, unless
+// pierd's last line in the log said why already.
+func runEnd(r jobRun, said string) logRow {
+	row := logRow{label: "pier", tone: lavender}
+	switch r.Status {
+	case "succeeded":
+		row.message, row.ink = "Succeeded in "+runTook(r), mint
+	case "skipped":
+		row.message, row.ink = "Skipped", asleep
+	default:
+		row.message, row.ink = "Failed after "+runTook(r), coralTxt
+	}
+	if res := runResult(r); res != "" {
+		row.message += ", " + res
+	}
+	if r.Detail != "" && r.Status != "succeeded" && cleanLog(r.Detail) != said {
+		row.message += ": " + cleanLog(r.Detail)
+	}
+	return row
 }

@@ -312,6 +312,8 @@ const (
 	hitAction
 	hitChoice
 	hitKey
+	hitJob
+	hitRun
 )
 
 // hitAt finds what was drawn under a cell.

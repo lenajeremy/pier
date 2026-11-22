@@ -23,6 +23,9 @@ type jobSummary struct {
 	Command     string     `json:"command"`
 	Method      string     `json:"method"`
 	Path        string     `json:"path"`
+	Schedule    string     `json:"schedule"`
+	Timezone    string     `json:"timezone"`
+	TimeoutS    int        `json:"timeout_s"`
 	Enabled     bool       `json:"enabled"`
 	Description string     `json:"description"`
 	NextRun     *time.Time `json:"next_run"`
@@ -31,13 +34,16 @@ type jobSummary struct {
 }
 
 type jobRun struct {
-	ID         int64     `json:"id"`
-	Status     string    `json:"status"`
-	StartedAt  time.Time `json:"started_at"`
-	FinishedAt time.Time `json:"finished_at"`
-	ExitCode   *int      `json:"exit_code"`
-	HTTPStatus *int      `json:"http_status"`
-	Detail     string    `json:"detail"`
+	ID           int64     `json:"id"`
+	Status       string    `json:"status"`
+	StartedBy    string    `json:"started_by"` // schedule or manual
+	RunBy        string    `json:"run_by"`     // who ran it by hand
+	ScheduledFor time.Time `json:"scheduled_for"`
+	StartedAt    time.Time `json:"started_at"`
+	FinishedAt   time.Time `json:"finished_at"`
+	ExitCode     *int      `json:"exit_code"`
+	HTTPStatus   *int      `json:"http_status"`
+	Detail       string    `json:"detail"`
 }
 
 func (j jobSummary) what() string {

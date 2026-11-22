@@ -395,6 +395,9 @@ var migrations = []string{
 		done_at    INTEGER NOT NULL DEFAULT 0
 	);
 	CREATE INDEX alert_deliveries_by_state ON alert_deliveries(state, next_at);`,
+	// 21: who ran a job by hand, by name, so a run's history says who
+	// pressed Run now, as a deployment says who sent it.
+	`ALTER TABLE job_runs ADD COLUMN run_by TEXT NOT NULL DEFAULT '';`,
 }
 
 // Open opens (and if needed creates) the database at path.

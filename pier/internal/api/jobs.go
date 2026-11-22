@@ -295,7 +295,7 @@ func (a *API) runJob(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	id, err := a.Jobs.RunNow(r.Context(), j)
+	id, err := a.Jobs.RunNowBy(r.Context(), j, userFrom(r.Context()).DisplayName())
 	if errors.Is(err, jobs.ErrRunning) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": j.Name + " is running now. A new run can start once this one ends."})
 		return

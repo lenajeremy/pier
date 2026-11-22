@@ -34,6 +34,9 @@ const (
 	detailView
 	logsView
 	helpView
+	jobsView // a project's scheduled jobs
+	jobView  // one job, and its runs
+	viewCount
 )
 
 // The panes home's keys can act on: the projects, the project's actions,
@@ -145,7 +148,7 @@ type cockpit struct {
 
 	// actKeys remembers the focused action on each screen by its key, so
 	// focus stays on the same action when the list around it changes.
-	actKeys   [helpView + 1]string
+	actKeys   [viewCount]string
 	lastClick click
 
 	run     *deployRun
@@ -169,22 +172,49 @@ type cockpit struct {
 	ranDeploy bool
 
 	role string // this computer's account's role: owner, member or viewer
+
+	// The jobs and job screens: each project's jobs as last loaded, the
+	// open job's runs as far as they've been scrolled, and which of the
+	// list or its actions has the keys.
+	jobs          map[string]*projectJobs
+	jCursor, jOff int
+	jobID         int64
+	jobRuns       []jobRun
+	runsTotal     int
+	runsFor       int64
+	rCursor, rOff int
+	jobFocus      pane
+	loadingRuns   bool
 }
 
 type cockpitData struct {
-	projects []cockpitProject
-	rows     []boardRow
-	role     string
-	name     string
-	detail   *projectDetail
-	depKey   string
-	dep      *deploymentDetail
-	err      error
+	projects  []cockpitProject
+	rows      []boardRow
+	role      string
+	name      string
+	detail    *projectDetail
+	depKey    string
+	dep       *deploymentDetail
+	jobs      *projectJobs
+	runsJob   int64
+	runs      []jobRun
+	runsTotal int
+	err       error
+}
+
+// want is what a refresh asks pierd for beyond the projects and the board:
+// the shown project, the open deployment, and the open job's runs, as many
+// as have been scrolled to.
+type want struct {
+	name, depProject, depID string
+	job                     int64
+	runs                    int
 }
 
 type detailData struct {
 	name   string
 	detail *projectDetail
+	jobs   *projectJobs
 	err    error
 }
 
@@ -222,6 +252,7 @@ func openCockpit(c config, start view, project string, focus pane, dep *pendingD
 		height:  30,
 		color:   os.Getenv("NO_COLOR") == "",
 		details: map[string]*projectDetail{},
+		jobs:    map[string]*projectJobs{},
 		view:    start,
 		back:    homeView,
 		focus:   focus,
@@ -238,7 +269,7 @@ func openCockpit(c config, start view, project string, focus pane, dep *pendingD
 	if dep != nil {
 		project = dep.project
 	}
-	data := fetchCockpit(c, project, "", "", true)
+	data := fetchCockpit(c, want{name: project}, true)
 	if data.err != nil {
 		return data.err
 	}
@@ -275,7 +306,8 @@ func (m cockpit) Init() tea.Cmd {
 
 // fetchCockpit asks pierd for everything the screens show: the projects,
 // the board, and the shown project's and deployment's details.
-func fetchCockpit(c config, name, depProject, depID string, spinner bool) cockpitData {
+func fetchCockpit(c config, w want, spinner bool) cockpitData {
+	name, depProject, depID := w.name, w.depProject, w.depID
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	get := func(label, path string, into any) error {
@@ -318,6 +350,14 @@ func fetchCockpit(c config, name, depProject, depID string, spinner bool) cockpi
 			out.dep, out.depKey = &d, depProject+"/"+depID
 		}
 	}
+	if out.detail != nil {
+		out.jobs = loadJobs(ctx, c, name)
+	}
+	if w.job != 0 && name != "" {
+		if runs, total, err := loadRuns(ctx, c, name, w.job, 0, max(25, w.runs)); err == nil {
+			out.runsJob, out.runs, out.runsTotal = w.job, runs, total
+		}
+	}
 	return out
 }
 
@@ -328,14 +368,22 @@ func (m *cockpit) refresh() tea.Cmd {
 		return nil
 	}
 	m.loading = true
-	c, name := m.c, m.shown
-	depProject, depID := "", ""
-	if m.view == detailView {
-		depProject, depID = m.detailProject, m.detailID
-	}
+	c, w := m.c, m.refreshWant()
 	return func() tea.Msg {
-		return fetchCockpit(c, name, depProject, depID, false)
+		return fetchCockpit(c, w, false)
 	}
+}
+
+// refreshWant is what the screen on show needs from pierd.
+func (m cockpit) refreshWant() want {
+	w := want{name: m.shown}
+	if m.view == detailView {
+		w.depProject, w.depID = m.detailProject, m.detailID
+	}
+	if m.view == jobView || (m.view == logsView && m.back == jobView) {
+		w.job, w.runs = m.jobID, len(m.jobRuns)
+	}
+	return w
 }
 
 // nextTick waits 3 seconds while anything builds or restarts, so the
@@ -374,6 +422,19 @@ func (m cockpit) active() bool {
 			}
 		}
 	}
+	// A job running is followed the way a build is.
+	if pj := m.jobs[m.shown]; pj != nil {
+		for _, j := range pj.Jobs {
+			if j.Running {
+				return true
+			}
+		}
+	}
+	for _, r := range m.jobRuns {
+		if r.Status == "running" {
+			return true
+		}
+	}
 	return false
 }
 
@@ -406,6 +467,12 @@ func (m *cockpit) apply(d cockpitData) {
 	m.rows = d.rows
 	if d.detail != nil {
 		m.details[d.name] = d.detail
+	}
+	if d.jobs != nil {
+		m.keepJobs(d.name, d.jobs)
+	}
+	if d.runsJob != 0 && d.runsJob == m.jobID {
+		m.keepRuns(d.runs, d.runsTotal, true)
 	}
 	if d.dep != nil && d.depKey == m.detailProject+"/"+m.detailID {
 		m.detail = d.dep
@@ -526,6 +593,10 @@ func (m *cockpit) scroll() {
 	m.dOff = window(m.dCursor, m.dOff, len(m.visibleDeployments()), m.deploymentRows())
 	m.bOff = window(m.bCursor, m.bOff, len(m.rows), m.paneRows()-3)
 	m.dlgOff = window(m.dlgCursor, m.dlgOff, len(m.dialogVisible()), dialogListRows)
+	if pj := m.shownJobs(); pj != nil {
+		m.jOff = window(m.jCursor, m.jOff, len(pj.Jobs), m.jobListRows())
+	}
+	m.rOff = window(m.rCursor, m.rOff, len(m.jobRuns), m.runRows())
 }
 
 func (m cockpit) paneRows() int { return bodyRows(m.height) }
@@ -576,6 +647,9 @@ func (m cockpit) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.apply(v)
 		return m, m.nextTick()
 	case detailData:
+		if v.jobs != nil {
+			m.keepJobs(v.name, v.jobs)
+		}
 		if v.err == nil && v.detail != nil {
 			m.details[v.name] = v.detail
 			if v.name == m.shown {
@@ -629,6 +703,24 @@ func (m cockpit) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		next, cmd := m.logs.Update(v.msg)
 		m.logs = next.(logView)
 		return m, wrapLog(v.gen, cmd)
+	case jobsData:
+		if v.jobs != nil {
+			m.keepJobs(v.project, v.jobs)
+		}
+		return m, nil
+	case runsData:
+		m.loadingRuns = false
+		if v.err == nil && v.job == m.jobID {
+			m.keepRuns(v.runs, v.total, v.fresh)
+		}
+		return m, nil
+	case jobStarted:
+		m.busy = ""
+		if v.err != nil {
+			m.fail(v.err)
+			return m, nil
+		}
+		return m, tea.Batch(m.openLogs(m.runSource(v.job, v.run, true)), m.kick())
 	case tea.KeyMsg:
 		return m.key(v)
 	case tea.MouseMsg:
@@ -656,7 +748,11 @@ func (m *cockpit) fetchDetail(name string) tea.Cmd {
 		defer cancel()
 		var d projectDetail
 		err := callContext(ctx, c, http.MethodGet, "/api/projects/"+url.PathEscape(name), nil, &d)
-		return detailData{name: name, detail: &d, err: err}
+		if err != nil {
+			return detailData{name: name, err: err}
+		}
+		// Its jobs come with it, so home's Jobs row shows with the rest.
+		return detailData{name: name, detail: &d, jobs: loadJobs(ctx, c, name)}
 	}
 }
 
@@ -703,6 +799,10 @@ func (m cockpit) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.boardKey(k)
 	case detailView:
 		return m.detailKey(k)
+	case jobsView:
+		return m.jobsKey(k)
+	case jobView:
+		return m.jobKey(k)
 	}
 	return m.homeKey(k)
 }
@@ -785,6 +885,8 @@ func (m cockpit) homeKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.view = boardView
 		m.scroll()
 		return m, nil
+	case "J":
+		return m, m.openJobs()
 	case "d", "D":
 		if m.refused("deploy") {
 			return m, nil
@@ -1361,7 +1463,8 @@ func (m cockpit) logsKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.logOpen = false
 		m.logGen++
 		m.view = m.back
-		return m, tea.EnableMouseCellMotion
+		// Coming back from a run's output, its job shows how it ended.
+		return m, tea.Batch(tea.EnableMouseCellMotion, m.kick())
 	case "r":
 		if m.logs.ended {
 			return m, m.openLogs(m.logs.source)
