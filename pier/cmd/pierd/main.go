@@ -376,6 +376,7 @@ func serve(args []string) int {
 
 	go dep.KeepSynced(ctx, 5*time.Second)
 	go dep.SleepIdle(ctx, sweepEvery(*sleepAfter))
+	go dep.WatchHealth(ctx, deploy.HealthEvery)
 	go func() {
 		t := time.NewTicker(time.Minute)
 		defer t.Stop()

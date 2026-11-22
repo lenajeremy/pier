@@ -29,6 +29,11 @@ import (
 
 const ownerLabel = "io.pier.instance"
 
+// healthLabel is "off" on a container whose project checks only that its
+// process runs: its startup check waits for the port to open, and asks for
+// no path.
+const healthLabel = "io.pier.health"
+
 var loopback = netip.MustParseAddr("127.0.0.1")
 
 type Host struct {
@@ -130,6 +135,7 @@ const DefaultMemoryMB = 1024
 type StartOptions struct {
 	StartCommand string
 	HealthPath   string
+	HealthOff    bool // check only that the process runs and listens
 	MemoryMB     int
 	CPUs         float64
 }
@@ -214,7 +220,11 @@ func (h *Host) StartWithOptions(ctx context.Context, name string, env []string, 
 	if err := socket.Close(); err != nil {
 		return err
 	}
-	config := &container.Config{Env: env, Labels: h.Labels(), ExposedPorts: network.PortSet{port: {}}}
+	labels := h.Labels()
+	if opts.HealthOff {
+		labels[healthLabel] = "off"
+	}
+	config := &container.Config{Env: env, Labels: labels, ExposedPorts: network.PortSet{port: {}}}
 	if opts.StartCommand != "" {
 		config.Entrypoint = []string{"/bin/sh", "-c"}
 		config.Cmd = []string{opts.StartCommand}
@@ -426,7 +436,16 @@ func (h *Host) Ready(ctx context.Context, name string) error {
 		if app.State.Health != nil && app.State.Health.Status == container.Unhealthy {
 			return errors.New("image HEALTHCHECK failed")
 		}
-		if app.NetworkSettings != nil && (app.State.Health == nil || app.State.Health.Status != container.Starting) {
+		if app.NetworkSettings != nil && app.Config.Labels[healthLabel] == "off" && (app.State.Health == nil || app.State.Health.Status != container.Starting) {
+			// No request: the process is ready once its port takes connections.
+			for _, b := range loopbackPorts(app) {
+				if conn, err := net.DialTimeout("tcp", "127.0.0.1:"+b, 2*time.Second); err == nil {
+					conn.Close()
+					return nil
+				}
+			}
+			reason = "waiting for the port to open"
+		} else if app.NetworkSettings != nil && (app.State.Health == nil || app.State.Health.Status != container.Starting) {
 			path := envValue(app.Config.Env, "PIER_HEALTH_PATH")
 			strict := path != ""
 			if !strict {

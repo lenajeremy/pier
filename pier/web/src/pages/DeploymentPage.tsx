@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { Address, ContainerStatus, Deployment, LogLine } from '../lib/api'
+import type { Address, ContainerStatus, Deployment, Health, LogLine } from '../lib/api'
 import { api, ApiError } from '../lib/api'
 import { promote, redeploy, restart } from '../lib/actions'
 import { useData } from '../lib/data'
@@ -11,8 +11,9 @@ import { Spinner, useBusy } from '../components/Spinner'
 import { copy } from '../components/Toast'
 import { deploymentStatus, Problem, Skeleton, When } from '../components/ui'
 import { StatusFlaps } from '../flap/Flaps'
+import { HealthLines } from '../components/Health'
 
-type Detail = { deployment: Deployment; addresses: Address[]; container?: ContainerStatus | null }
+type Detail = { deployment: Deployment; addresses: Address[]; container?: ContainerStatus | null; health?: Health | null }
 
 // DeploymentPage is one deployment (D3, D4, E3): what it is, where it's
 // served, and its build log, which follows the build while it runs.
@@ -26,8 +27,10 @@ export function DeploymentPage({ project, id, now, host, current, branch }: {
 }) {
   const { data, error, reload } = useData<Detail>(
     `/api/projects/${project}/deployments/${id}`,
-    (d) => d.deployment.status === 'building' || d.container?.state === 'restarting',
-    1500,
+    (d) => d.deployment.status === 'building' || d.container?.state === 'restarting' || !!d.health,
+    // A server production serves is checked every 30 seconds, so its page
+    // keeps up with that; a build or a restart is followed closely.
+    (d) => (d.deployment.status === 'building' || d.container?.state === 'restarting' || d.health?.state === 'restarting' ? 1500 : 10_000),
   )
   const [busy, run] = useBusy<'restart'>()
   if (error) {
@@ -125,6 +128,11 @@ export function DeploymentPage({ project, id, now, host, current, branch }: {
                   sleeps={d.role === 'kept' || d.role === 'preview'}
                   asked={busy === 'restart' ? (stopped ? 'Starting…' : 'Restarting…') : ''}
                 />
+              </Field>
+            )}
+            {data.health && (
+              <Field label="Health check">
+                <HealthLines h={data.health} now={now} />
               </Field>
             )}
             <Field label="Domains">

@@ -292,6 +292,25 @@ var migrations = []string{
 	CREATE TABLE alert_email_off (
 		user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE
 	);`,
+
+	// 18: a project can turn its health check's request off, so only its
+	// process is watched; and how production's server did at its last
+	// health check, kept so a restart of pierd doesn't forget a failure.
+	`ALTER TABLE projects ADD COLUMN health_off INTEGER NOT NULL DEFAULT 0;
+	CREATE TABLE health (
+		deployment      TEXT PRIMARY KEY,
+		project         TEXT NOT NULL,
+		state           TEXT NOT NULL,
+		asked           TEXT NOT NULL DEFAULT '',
+		failures        INTEGER NOT NULL DEFAULT 0,
+		checked_at      INTEGER NOT NULL DEFAULT 0,
+		since           INTEGER NOT NULL DEFAULT 0,
+		last_failure    TEXT NOT NULL DEFAULT '',
+		last_failure_at INTEGER NOT NULL DEFAULT 0,
+		restarts        INTEGER NOT NULL DEFAULT 0,
+		restarted_at    INTEGER NOT NULL DEFAULT 0,
+		next_restart    INTEGER NOT NULL DEFAULT 0
+	);`,
 }
 
 // Open opens (and if needed creates) the database at path.

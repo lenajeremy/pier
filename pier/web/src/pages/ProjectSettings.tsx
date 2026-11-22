@@ -10,7 +10,7 @@ import { toast } from '../components/Toast'
 import { Problem, Skeleton } from '../components/ui'
 
 const empty: Build = { root: '', preset: '', install: '', command: '', output: '' }
-const emptyRuntime: RuntimeSettings = { start_command: '', health_path: '', memory_mb: 0, cpus: 0 }
+const emptyRuntime: RuntimeSettings = { start_command: '', health_path: '', health_off: false, memory_mb: 0, cpus: 0 }
 type Draft = { build: Build; runtime: RuntimeSettings; branch: string }
 
 // ProjectSettings is the project's Settings tab: the Project and Build
@@ -28,7 +28,7 @@ export function ProjectSettings({ project, address, onDeleted }: { project: stri
 
   useEffect(() => {
     if (!data) return
-    const d = { build: data.project.build, runtime: data.project.runtime ?? emptyRuntime, branch: data.project.production_branch }
+    const d = { build: data.project.build, runtime: { ...emptyRuntime, ...data.project.runtime }, branch: data.project.production_branch }
     setDraft(d)
     setSaved(d)
   }, [data])
@@ -149,18 +149,33 @@ export function ProjectSettings({ project, address, onDeleted }: { project: stri
                 />
                 {help('start_command', 'What the container runs. Leave it empty to use what the image starts with.')}
               </label>
-              <label className={field('health_path')}>
-                <span className="field-label">Health check path</span>
+              <div className={field('health_path')}>
+                <div className="field-top">
+                  <label className="field-label" htmlFor="health-path">
+                    Health check path
+                  </label>
+                  <label className="check">
+                    <input type="checkbox" checked={!rt.health_off} onChange={(e) => setRt({ health_off: !e.target.checked })} />
+                    <span>Ask for a path</span>
+                  </label>
+                </div>
                 <input
+                  id="health-path"
                   className="input mono"
-                  placeholder="/"
-                  value={rt.health_path}
+                  placeholder={rt.health_off ? 'Not asked' : '/'}
+                  disabled={rt.health_off}
+                  value={rt.health_off ? '' : rt.health_path}
                   onChange={(e) => setRt({ health_path: e.target.value })}
                   spellCheck={false}
                   autoCapitalize="off"
                 />
-                {help('health_path', 'Pier asks for this path, and sends visitors to a new container only once it answers.')}
-              </label>
+                {help(
+                  'health_path',
+                  rt.health_off
+                    ? 'Pier only checks that the process runs, every 30 seconds while production serves it, and restarts it after three failures in a row.'
+                    : 'Asked before a deployment goes live, then every 30 seconds while production serves it. Three failures in a row restart it. Empty uses PIER_HEALTH_PATH, or /.',
+                )}
+              </div>
               <label className={field('memory_mb')}>
                 <span className="field-label">Memory limit</span>
                 <select className="input" value={String(rt.memory_mb)} onChange={(e) => setRt({ memory_mb: Number(e.target.value) })}>

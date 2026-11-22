@@ -226,12 +226,14 @@ func (a *API) project(w http.ResponseWriter, r *http.Request) {
 	}
 	host := names.Production(ps.label, a.Deployer.Domain)
 	var containerStatus *apphost.ContainerStatus
+	var health *store.Health
 	if ps.production != nil && ps.production.Deployment != nil && ps.production.Deployment.Runtime != "" && a.Deployer.Apps != nil {
 		sctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 		if st, err := a.Deployer.Apps.Status(sctx, ps.production.Deployment.Runtime); err == nil {
 			containerStatus = &st
 		}
 		cancel()
+		health = a.healthOf(r.Context(), ps.production.Deployment.ID)
 	}
 	// A project GitHub deploys says what's waiting to build, so the page can
 	// show an import's first build coming before it has a record.
@@ -252,6 +254,7 @@ func (a *API) project(w http.ResponseWriter, r *http.Request) {
 		"status":            ps.status(),
 		"production":        ps.production,
 		"container":         containerStatus,
+		"health":            health,
 		"preview":           ps.latestPreview(),
 		"branches":          nonNil(ps.branches),
 		"deployments":       nonNil(ps.deployments),
@@ -368,14 +371,19 @@ func (a *API) deployment(w http.ResponseWriter, r *http.Request) {
 		addrs = append(addrs, Address{Host: d.Host, URL: d.URL, Kind: "deployment"})
 	}
 	var containerStatus *apphost.ContainerStatus
+	var health *store.Health
 	if d.Runtime != "" && d.Status == store.Ready && a.Deployer.Apps != nil {
 		sctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 		if st, err := a.Deployer.Apps.Status(sctx, d.Runtime); err == nil {
 			containerStatus = &st
 		}
 		cancel()
+		// Only what production serves is checked.
+		if d.Role == RoleProduction {
+			health = a.healthOf(r.Context(), d.ID)
+		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"deployment": d, "addresses": addrs, "container": containerStatus})
+	writeJSON(w, http.StatusOK, map[string]any{"deployment": d, "addresses": addrs, "container": containerStatus, "health": health})
 }
 
 // deploymentLog returns a build's log from line `from` onwards, so the
@@ -520,6 +528,22 @@ func (a *API) deploymentRestart(w http.ResponseWriter, r *http.Request) {
 	a.event(r.Context(), name, "Restarted container", id, id)
 	a.Log.Info("container restarted", "project", name, "deployment", id, "runtime", d.Runtime)
 	writeJSON(w, http.StatusOK, map[string]any{"container": st})
+}
+
+// healthOf is how a production server did at its health checks, or nil
+// before its first one.
+func (a *API) healthOf(ctx context.Context, deployment string) *store.Health {
+	h, ok, err := a.Store.HealthOf(ctx, deployment)
+	if err != nil {
+		if ctx.Err() == nil {
+			a.Log.Warn("read health", "deployment", deployment, "err", err)
+		}
+		return nil
+	}
+	if !ok {
+		return nil
+	}
+	return &h
 }
 
 // favicon serves the icon of the project's production deployment, so the

@@ -166,7 +166,7 @@ function ProjectPage({ name, path, visit, children }: {
     (p) =>
       p.github?.queued
         ? 2000
-        : p.deployments.some((d) => d.status === 'building') || p.container?.state === 'restarting'
+        : p.deployments.some((d) => d.status === 'building') || p.container?.state === 'restarting' || p.health?.state === 'restarting'
           ? 3000
           : 15_000,
   )

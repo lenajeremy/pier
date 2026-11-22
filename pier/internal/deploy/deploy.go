@@ -84,6 +84,11 @@ type Deployer struct {
 	woken     map[string]time.Time // deployment -> when it was last woken or restarted
 	wakeFails map[string]time.Time // application -> when it last failed to start for a visit
 	boot      time.Time            // when the first sweep ran, which stands for pierd's start
+
+	healthMu   sync.Mutex
+	health     map[string]*healthState // deployment -> how its checks are going, while production serves it
+	healthOpen map[string]bool         // project -> whether an alert about its health may still be open
+	clock      func() time.Time        // what time it is; tests move it on. Nil is time.Now.
 }
 
 // RepoPath is where a project's bare repository lives.
@@ -484,6 +489,7 @@ func (d *Deployer) build(ctx context.Context, dep store.Deployment, src Source, 
 		}
 		opts := apphost.StartOptions{
 			HealthPath: runtime.HealthPath,
+			HealthOff:  runtime.HealthOff,
 			MemoryMB:   runtime.MemoryMB,
 			CPUs:       runtime.CPUs,
 		}

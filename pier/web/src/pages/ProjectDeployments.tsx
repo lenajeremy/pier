@@ -9,6 +9,7 @@ import { Menu, type MenuItem } from '../components/Menu'
 import { Spinner, useBusy } from '../components/Spinner'
 import { copy } from '../components/Toast'
 import { Badge, Empty, Paging, SearchField, usePaged, When } from '../components/ui'
+import { HealthAlert, trouble } from '../components/Health'
 import { Flaps } from '../flap/Flaps'
 
 type Filter = 'all' | 'production' | 'previews'
@@ -104,6 +105,9 @@ export function ProjectDeployments({ project, session, now, reload }: {
   }
 
   const container = project.container && live?.runtime && project.container.state !== 'running' ? project.container : null
+  // A container that isn't running says so itself; one that runs but fails
+  // its health check says that instead.
+  const health = !container && live?.runtime && trouble(project.health) ? project.health : null
 
   return (
     <main className="main">
@@ -156,6 +160,24 @@ export function ProjectDeployments({ project, session, now, reload }: {
               {busy === 'restart' ? 'Restarting…' : 'Restart'}
             </button>
           </div>
+        )}
+        {health && live && (
+          <HealthAlert
+            h={health}
+            now={now}
+            action={
+              health.state !== 'restarting' && (
+                <button
+                  className="btn quiet"
+                  disabled={busy === 'restart'}
+                  onClick={() => run('restart', () => restart(project.name, live.id, reload))}
+                >
+                  {busy === 'restart' && <Spinner />}
+                  {busy === 'restart' ? 'Restarting…' : 'Restart'}
+                </button>
+              )
+            }
+          />
         )}
         <div className="panel">
           <AddressRow

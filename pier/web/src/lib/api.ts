@@ -65,6 +65,22 @@ export interface ContainerStatus {
   cpu_limit?: number
 }
 
+// Health is how production's server did at its health checks, which pierd
+// runs every 30 seconds while production serves it.
+export interface Health {
+  deployment: string
+  state: 'healthy' | 'failing' | 'unhealthy' | 'restarting'
+  asked: string // "GET /health", or "the process"
+  failures: number // in a row
+  checked_at?: string
+  since?: string // when the state began
+  last_failure?: string
+  last_failure_at?: string
+  restarts: number
+  restarted_at?: string
+  next_restart?: string
+}
+
 export interface Project {
   name: string
   address: string
@@ -75,6 +91,7 @@ export interface Project {
   status: Status
   production: Address | null
   container?: ContainerStatus | null
+  health?: Health | null
   preview: Address | null
   branches: Address[]
   deployments: Deployment[]
@@ -149,6 +166,7 @@ export function changePreset(build: Build, preset: Build['preset']): Build {
 export interface RuntimeSettings {
   start_command: string
   health_path: string
+  health_off: boolean // check only that the process runs
   memory_mb: number
   cpus: number
 }

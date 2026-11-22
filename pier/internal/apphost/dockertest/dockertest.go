@@ -34,8 +34,9 @@ type Container struct {
 
 type app struct {
 	Container
-	port   int
-	server *httptest.Server
+	port    int
+	server  *httptest.Server
+	answers map[string]int // a status for a path, set by Answer
 }
 
 // Engine is the stand-in engine. Its exported fields are set before use.
@@ -84,10 +85,10 @@ func Start(t testing.TB) *Engine {
 
 // Add creates a container and returns the loopback address it publishes.
 func (e *Engine) Add(c Container) string {
-	a := &app{Container: c}
-	a.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	a := &app{Container: c, answers: map[string]int{}}
+	a.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		e.mu.Lock()
-		running, probed := a.Running, e.Probed
+		running, probed, status := a.Running, e.Probed, a.answers[r.URL.Path]
 		e.mu.Unlock()
 		if !running {
 			http.Error(w, "stopped", http.StatusServiceUnavailable)
@@ -96,6 +97,9 @@ func (e *Engine) Add(c Container) string {
 		if probed != nil {
 			probed(a.Name)
 		}
+		if status != 0 {
+			w.WriteHeader(status)
+		}
 		w.Write([]byte("hello from " + a.Name))
 	}))
 	a.port = a.server.Listener.Addr().(*net.TCPAddr).Port
@@ -103,6 +107,22 @@ func (e *Engine) Add(c Container) string {
 	defer e.mu.Unlock()
 	e.apps[c.Name] = a
 	return a.server.Listener.Addr().String()
+}
+
+// Answer makes a container answer path with status from now on, until it's
+// told otherwise. Status 0 goes back to answering 200.
+func (e *Engine) Answer(name, path string, status int) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.apps[name].answers[path] = status
+}
+
+// Exit stops a container's process as a crash would, with Docker not
+// bringing it back.
+func (e *Engine) Exit(name string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.apps[name].Running = false
 }
 
 // SetDown makes every call fail, as while the engine restarts or is too busy
