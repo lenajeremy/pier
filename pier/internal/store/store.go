@@ -375,6 +375,26 @@ var migrations = []string{
 	CREATE INDEX job_runs_by_time ON job_runs(started_at);
 	ALTER TABLE projects ADD COLUMN cron_secret    TEXT NOT NULL DEFAULT '';
 	ALTER TABLE projects ADD COLUMN cron_secret_at INTEGER NOT NULL DEFAULT 0;`,
+
+	// 20: each alert's delivery through each channel, and to each person for
+	// email, kept until it's done, so one waiting for its next try when
+	// pierd stops still goes out when it starts again. Event is the alert as
+	// JSON. A done delivery is delivered, failed (its tries ran out, or the
+	// failure was final) or dropped (it was too old to send by the time
+	// pierd started); done ones are cleared after a few days.
+	`CREATE TABLE alert_deliveries (
+		id         INTEGER PRIMARY KEY,
+		kind       TEXT NOT NULL,
+		recipient  TEXT NOT NULL DEFAULT '',
+		event      TEXT NOT NULL,
+		created_at INTEGER NOT NULL,
+		attempts   INTEGER NOT NULL DEFAULT 0,
+		next_at    INTEGER NOT NULL,
+		state      TEXT NOT NULL DEFAULT 'pending',
+		last_error TEXT NOT NULL DEFAULT '',
+		done_at    INTEGER NOT NULL DEFAULT 0
+	);
+	CREATE INDEX alert_deliveries_by_state ON alert_deliveries(state, next_at);`,
 }
 
 // Open opens (and if needed creates) the database at path.

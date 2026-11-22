@@ -432,6 +432,9 @@ pierd %s is running
 	defer cancel()
 	public.Shutdown(shut)
 	internal.Shutdown(shut)
+	// Alert deliveries stop with ctx and stay waiting in the database for
+	// the next start; let each finish noting where it got to first.
+	notifier.Wait()
 	os.Remove(paths.socket)
 	return 0
 }

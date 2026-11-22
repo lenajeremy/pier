@@ -2,7 +2,9 @@
 // and again when it's fixed: by email, in a Slack or Discord channel, or
 // with a signed webhook. Each problem is an incident, sent once however
 // often it happens again, and once more when it recovers. Alerts are sent in
-// the background, with retries, so nothing waits for them.
+// the background, with retries, so nothing waits for them. Each delivery is
+// kept in SQLite until it's done, so pierd stopping between tries loses
+// nothing: it carries on when pierd starts again.
 package alerts
 
 import (
@@ -162,17 +164,62 @@ func (n *Notifier) enqueue(r request) {
 	}
 }
 
-// Run handles events one at a time, in the order they came, until ctx ends.
-// Deliveries carry on in the background.
+// Run picks up the deliveries pierd stopped in the middle of, then handles
+// events one at a time, in the order they came, until ctx ends. Deliveries
+// carry on in the background.
 func (n *Notifier) Run(ctx context.Context) {
 	n.init()
+	n.resume(ctx)
+	prune := time.NewTicker(time.Hour)
+	defer prune.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case r := <-n.queue:
 			n.handle(ctx, r)
+		case <-prune.C:
+			n.prune(ctx)
 		}
+	}
+}
+
+// StaleAfter is how old a delivery still waiting when pierd starts can be
+// and still go out. An older one is dropped: an alert a day late says
+// something that's long out of date.
+const StaleAfter = 24 * time.Hour
+
+// KeepDeliveries is how long a delivery that's done is kept.
+const KeepDeliveries = 3 * 24 * time.Hour
+
+// resume carries on with the deliveries still waiting, each from its next
+// try, after dropping the ones too old to send. A drop is recorded in the
+// delivery and in the activity, so it's not silent.
+func (n *Notifier) resume(ctx context.Context) {
+	dropped, err := n.Store.DropStaleAlerts(ctx, time.Now().Add(-StaleAfter), "It was more than a day old when pierd started, so it wasn't sent late.")
+	if err != nil {
+		n.Log.Warn("drop old alerts", "err", err)
+	}
+	if dropped > 0 {
+		n.Log.Warn("dropped alerts that were more than a day old", "count", dropped)
+		if err := n.Store.RecordEvent(ctx, "", "Dropped old alerts", fmt.Sprintf("%s more than a day old when pierd started, so they weren't sent late", plural(int(dropped), "delivery")), "", ""); err != nil {
+			n.Log.Warn("record activity", "err", err)
+		}
+	}
+	waiting, err := n.Store.PendingAlerts(ctx)
+	if err != nil {
+		n.Log.Warn("read the alerts waiting to go out", "err", err)
+		return
+	}
+	for _, d := range waiting {
+		n.begin(ctx, d)
+	}
+	n.prune(ctx)
+}
+
+func (n *Notifier) prune(ctx context.Context) {
+	if _, err := n.Store.PruneAlerts(ctx, time.Now().Add(-KeepDeliveries)); err != nil {
+		n.Log.Warn("clear old alert deliveries", "err", err)
 	}
 }
 
@@ -244,7 +291,8 @@ func (n *Notifier) allow(now time.Time) (int, bool) {
 	return held, true
 }
 
-// send delivers an event through every channel that's set up, each in the
+// send queues an event for every channel that's set up, once per channel,
+// and once per person for email, and starts each delivery in the
 // background with its own retries.
 func (n *Notifier) send(ctx context.Context, e Event) {
 	chans, err := n.channels(ctx)
@@ -252,32 +300,116 @@ func (n *Notifier) send(ctx context.Context, e Event) {
 		n.Log.Warn("read alert channels", "err", err)
 		return
 	}
+	body, err := json.Marshal(e)
+	if err != nil {
+		n.Log.Warn("keep an alert", "err", err)
+		return
+	}
+	now := time.Now()
 	for _, c := range chans {
-		n.pending.Add(1)
-		go func() {
-			defer n.pending.Done()
-			n.deliver(ctx, c, e)
-		}()
+		to := []string{""}
+		if c.kind == Email {
+			people, err := n.Store.AlertRecipients(ctx)
+			if err != nil {
+				n.Log.Warn("read who gets alert emails", "err", err)
+				continue
+			}
+			if len(people) == 0 {
+				n.recordDelivery(ctx, Email, permanentError{errors.New("nobody on this server has alert emails on")})
+				continue
+			}
+			to = to[:0]
+			for _, p := range people {
+				to = append(to, p.Email)
+			}
+		}
+		for _, rcpt := range to {
+			d := store.AlertDelivery{Kind: c.kind, Recipient: rcpt, Event: string(body), CreatedAt: now, NextAt: now}
+			if d.ID, err = n.Store.QueueAlert(ctx, d); err != nil {
+				n.Log.Warn("keep an alert", "channel", c.kind, "err", err)
+				continue
+			}
+			n.begin(ctx, d)
+		}
 	}
 }
 
-func (n *Notifier) deliver(ctx context.Context, c channel, e Event) {
-	for try := 0; ; try++ {
-		err := n.sendTo(ctx, c, e)
-		if err == nil || try >= len(n.Retries) || permanent(err) || ctx.Err() != nil {
-			if rerr := n.Store.RecordAlertDelivery(context.WithoutCancel(ctx), c.kind, err); rerr != nil {
-				n.Log.Warn("record an alert's delivery", "err", rerr)
+// begin tries a delivery in the background.
+func (n *Notifier) begin(ctx context.Context, d store.AlertDelivery) {
+	n.pending.Add(1)
+	go func() {
+		defer n.pending.Done()
+		n.deliver(ctx, d)
+	}()
+}
+
+// deliver tries a delivery until it goes, a failure is final, or the
+// retries run out, waiting Retries between tries. Each try is recorded, so
+// when ctx ends (pierd is stopping) the delivery stays waiting, and the next
+// start carries on from its next try.
+func (n *Notifier) deliver(ctx context.Context, d store.AlertDelivery) {
+	bg := context.WithoutCancel(ctx)
+	var e Event
+	if err := json.Unmarshal([]byte(d.Event), &e); err != nil {
+		n.Store.FinishAlert(bg, d.ID, store.DeliveryFailed, d.Attempts, "the alert couldn't be read: "+err.Error())
+		return
+	}
+	for {
+		if wait := time.Until(d.NextAt); wait > 0 {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(wait):
 			}
-			if err != nil {
-				n.Log.Warn("alert not delivered", "channel", c.kind, "title", e.Title, "err", err)
-			}
+		}
+		if ctx.Err() != nil {
 			return
 		}
-		n.Log.Info("alert delivery failed; trying again", "channel", c.kind, "in", n.Retries[try], "err", err)
-		select {
-		case <-ctx.Done():
-		case <-time.After(n.Retries[try]):
+		err := n.attempt(ctx, d, e)
+		if err != nil && ctx.Err() != nil {
+			return // cut short by pierd stopping: this try didn't count
 		}
+		d.Attempts++
+		if err != nil && !permanent(err) && d.Attempts <= len(n.Retries) {
+			d.NextAt = time.Now().Add(n.Retries[d.Attempts-1])
+			if rerr := n.Store.RetryAlert(bg, d.ID, d.Attempts, d.NextAt, err.Error()); rerr != nil {
+				n.Log.Warn("record an alert's try", "err", rerr)
+			}
+			n.Log.Info("alert delivery failed; trying again", "channel", d.Kind, "in", n.Retries[d.Attempts-1], "err", err)
+			continue
+		}
+		state, msg := store.DeliveryDelivered, ""
+		if err != nil {
+			state, msg = store.DeliveryFailed, err.Error()
+			n.Log.Warn("alert not delivered", "channel", d.Kind, "title", e.Title, "err", err)
+		}
+		if rerr := n.Store.FinishAlert(bg, d.ID, state, d.Attempts, msg); rerr != nil {
+			n.Log.Warn("record an alert's delivery", "err", rerr)
+		}
+		n.recordDelivery(bg, d.Kind, err)
+		return
+	}
+}
+
+// attempt is one try of a delivery, through its channel as it's set up now.
+func (n *Notifier) attempt(ctx context.Context, d store.AlertDelivery, e Event) error {
+	chans, err := n.channels(ctx)
+	if err != nil {
+		return err
+	}
+	for _, c := range chans {
+		if c.kind == d.Kind {
+			return n.sendTo(ctx, c, e, d.Recipient)
+		}
+	}
+	return permanentError{errors.New("the channel was removed before the alert went out")}
+}
+
+// recordDelivery notes on the channel when an alert last went out, or why
+// it didn't, for the Alerts page.
+func (n *Notifier) recordDelivery(ctx context.Context, kind string, err error) {
+	if rerr := n.Store.RecordAlertDelivery(ctx, kind, err); rerr != nil {
+		n.Log.Warn("record an alert's delivery", "err", rerr)
 	}
 }
 
@@ -298,10 +430,8 @@ func (n *Notifier) Test(ctx context.Context, kind string) error {
 			Summary: "Alerts from " + n.Server + " reach you here. Pier sends one when a deploy fails, when production stops passing its health check, and when a scheduled job fails, and another when each is fixed.",
 			Link:    "/alerts",
 		}
-		err := n.sendTo(ctx, c, e)
-		if rerr := n.Store.RecordAlertDelivery(context.WithoutCancel(ctx), kind, err); rerr != nil {
-			n.Log.Warn("record an alert's delivery", "err", rerr)
-		}
+		err := n.sendTo(ctx, c, e, "")
+		n.recordDelivery(context.WithoutCancel(ctx), kind, err)
 		return err
 	}
 	return ErrNotSetUp
@@ -318,11 +448,13 @@ func (n *Notifier) link(path string) string {
 	return strings.TrimRight(n.Dashboard, "/") + path
 }
 
-func (n *Notifier) sendTo(ctx context.Context, c channel, e Event) error {
+// sendTo sends an event through a channel: by email to one person, or to
+// everyone who has alert emails on when to is empty.
+func (n *Notifier) sendTo(ctx context.Context, c channel, e Event, to string) error {
 	e.Link = n.link(e.Link)
 	switch c.kind {
 	case Email:
-		return n.sendEmail(ctx, c, e)
+		return n.sendEmail(ctx, c, e, to)
 	case Chat:
 		return n.sendChat(ctx, c, e)
 	case Webhook:

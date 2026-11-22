@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -492,6 +493,9 @@ func TestEmailOverSMTP(t *testing.T) {
 	mail.mu.Lock()
 	mails := mail.mails
 	mail.mu.Unlock()
+	// Each person's email is its own delivery, so they can arrive in either
+	// order.
+	sort.Slice(mails, func(i, j int) bool { return strings.Contains(mails[i].to, "owner@example.com") })
 	if len(mails) != 2 || !strings.Contains(mails[0].to, "owner@example.com") || !strings.Contains(mails[1].to, "member@example.com") {
 		t.Fatalf("mails = %+v", mails)
 	}

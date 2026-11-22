@@ -38,17 +38,22 @@ func EmailAddress(s string) (string, error) {
 	return a.Name + " <" + a.Address + ">", nil
 }
 
-func (n *Notifier) sendEmail(ctx context.Context, c channel, e Event) error {
-	people, err := n.Store.AlertRecipients(ctx)
-	if err != nil {
-		return err
-	}
-	if len(people) == 0 {
-		return permanentError{errors.New("nobody on this server has alert emails on")}
-	}
-	var to []string
-	for _, p := range people {
-		to = append(to, p.Email)
+// sendEmail sends an alert to one person, or, with only empty, to everyone
+// who has alert emails on, as a test alert does.
+func (n *Notifier) sendEmail(ctx context.Context, c channel, e Event, only string) error {
+	to := []string{only}
+	if only == "" {
+		people, err := n.Store.AlertRecipients(ctx)
+		if err != nil {
+			return err
+		}
+		if len(people) == 0 {
+			return permanentError{errors.New("nobody on this server has alert emails on")}
+		}
+		to = to[:0]
+		for _, p := range people {
+			to = append(to, p.Email)
+		}
 	}
 	text := emailText(e, n.Server)
 	if c.email.Provider == Resend {
