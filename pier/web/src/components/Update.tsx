@@ -23,7 +23,9 @@ export type Update = ReturnType<typeof usePierdUpdate>
 // usePierdUpdate is the owner's view of updating pierd: the release out,
 // asking for it, and following the update through pierd's restart until
 // the new pierd answers. Everyone else gets nothing to do.
-export function usePierdUpdate(owner: boolean) {
+// onDone runs once the new release answers, so the page around it can ask
+// again for what the restart changed (pierd's start time, for one).
+export function usePierdUpdate(owner: boolean, onDone?: () => void) {
   const info = useData<Info>(owner ? '/api/server/upgrade' : null, () => true, (d) =>
     d.pending || d.status?.state === 'started' ? 2000 : 60_000,
   )
@@ -59,6 +61,7 @@ export function usePierdUpdate(owner: boolean) {
           window.dispatchEvent(new Event('pier:refresh-session'))
           toast(`pierd is now ${target}`)
           info.reload()
+          onDone?.()
           return
         }
       } catch {

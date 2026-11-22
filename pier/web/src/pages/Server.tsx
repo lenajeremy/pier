@@ -59,7 +59,7 @@ export function Server({ version: pierd }: { version?: string }) {
   const [hover, setHover] = useState<number | null>(null)
   const { owner } = useRole()
   // The owner can update pierd from here; everyone sees its version.
-  const update = usePierdUpdate(owner)
+  const update = usePierdUpdate(owner, reload)
 
   const clean = (kind: Clean, bytes: number | null) => {
     const freed = bytes ? ` (${size(bytes)})` : ''
