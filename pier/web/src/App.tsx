@@ -22,6 +22,8 @@ import { ProjectSettings } from './pages/ProjectSettings'
 import { Variables } from './pages/Variables'
 import { Domains } from './pages/Domains'
 import { Logs } from './pages/Logs'
+import { Jobs } from './pages/Jobs'
+import { JobPage, JobRunPage } from './pages/JobPage'
 
 type Auth = { state: 'loading' } | { state: 'out'; address: string } | { state: 'in'; session: Session }
 
@@ -63,9 +65,11 @@ function Signed({ session, path, now }: { session: Session; path: string; now: n
 
   const importing = match('/new/github/:id', path)
   const deployment = match('/projects/:name/deployments/:id', path)
+  const jobRun = match('/projects/:name/jobs/:id/runs/:run', path)
+  const job = match('/projects/:name/jobs/:id', path)
   const tab = match('/projects/:name/:tab', path)
   const home = match('/projects/:name', path)
-  const name = deployment?.name ?? tab?.name ?? home?.name
+  const name = deployment?.name ?? jobRun?.name ?? job?.name ?? tab?.name ?? home?.name
 
   let page: React.ReactNode
   if (name) {
@@ -83,6 +87,12 @@ function Signed({ session, path, now }: { session: Session; path: string; now: n
               current={project.production?.deployment?.id}
               branch={project.production_branch || session.server.production_branch}
             />
+          ) : jobRun ? (
+            <JobRunPage key={jobRun.run} project={name} id={jobRun.id} run={jobRun.run} now={now} />
+          ) : job ? (
+            <JobPage key={job.id} project={name} id={job.id} now={now} />
+          ) : tab?.tab === 'jobs' ? (
+            <Jobs project={name} now={now} />
           ) : tab?.tab === 'logs' ? (
             <Logs project={name} address={project.address} />
           ) : tab?.tab === 'variables' ? (

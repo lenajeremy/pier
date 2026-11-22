@@ -159,6 +159,8 @@ func (s *Store) DeleteProject(ctx context.Context, name string) error {
 		`DELETE FROM variables WHERE project = ?`,
 		`DELETE FROM shared_links WHERE project = ?`,
 		`DELETE FROM health WHERE project = ?`,
+		`DELETE FROM job_runs WHERE project = ?`,
+		`DELETE FROM jobs WHERE project = ?`,
 		`DELETE FROM deployments WHERE project = ?`,
 		`DELETE FROM projects WHERE name = ?`,
 	} {

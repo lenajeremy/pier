@@ -7,6 +7,7 @@
 //	pier promote DEPLOYMENT         production serves an existing deployment
 //	pier board                      every address and what it serves
 //	pier deployments [PROJECT]      a project's deployments, newest first
+//	pier jobs [PROJECT]             a project's scheduled jobs (run NAME runs one now)
 //	pier logout                     forget this computer's sign-in
 //	pier version                    this pier's release, and its server's
 package main
@@ -105,6 +106,8 @@ func main() {
 		err = showBoard(os.Args[2:])
 	case "deployments", "ls":
 		err = showDeployments(os.Args[2:])
+	case "jobs":
+		err = jobsCmd(os.Args[2:])
 	case "version":
 		err = showVersion(os.Args[2:])
 	case "--version", "-v":
@@ -148,6 +151,10 @@ func commandReferenceGroups() []commandGroup {
 			{"pier logs [PROJECT] --runtime", "Follow container stdout and stderr"},
 			{"pier logs [PROJECT] --build", "Follow a build (--deployment ID to choose)"},
 			{"pier logs --once | --follow", "Choose a snapshot or continuous output"},
+		}},
+		{"Jobs", [][2]string{
+			{"pier jobs [PROJECT]", "A project's scheduled jobs and their last runs"},
+			{"pier jobs run NAME", "Run a job now and print its output"},
 		}},
 		{"Account", [][2]string{
 			{"pier login [ADDRESS]", "Sign in through your dashboard"},

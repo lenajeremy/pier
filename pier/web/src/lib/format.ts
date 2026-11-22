@@ -14,6 +14,18 @@ export function ago(iso: string, now = Date.now()): string {
   return new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
 }
 
+// until says how long until a time to come: "in 5 minutes", "in 3 hours",
+// or the day and time once it's a day or more away.
+export function until(iso: string, now = Date.now()): string {
+  const s = Math.round((new Date(iso).getTime() - now) / 1000)
+  if (s < 60) return 'within a minute'
+  const m = Math.round(s / 60)
+  if (m < 60) return m === 1 ? 'in 1 minute' : `in ${m} minutes`
+  const h = Math.round(m / 60)
+  if (h < 24) return h === 1 ? 'in 1 hour' : `in ${h} hours`
+  return new Date(iso).toLocaleString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+}
+
 export function exact(iso: string): string {
   return new Date(iso).toLocaleString('en-GB', {
     day: 'numeric',

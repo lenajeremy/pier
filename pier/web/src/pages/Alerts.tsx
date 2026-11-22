@@ -154,7 +154,7 @@ export function Alerts() {
     <main className="main global">
       <PageHeading
         title="Alerts"
-        note="Pier tells you when a deploy fails, and when production stops passing its health check, and once more when each is fixed."
+        note="Pier tells you when a deploy fails, when production stops passing its health check, and when a scheduled job fails, and once more when each is fixed."
       />
       {!data ? (
         <div className="panel">
@@ -253,6 +253,12 @@ export function Alerts() {
                   After three failed checks in a row, 30 seconds apart. Pier restarts the container, and sends another alert
                   when it passes again.
                 </span>
+              </div>
+            </div>
+            <div className="event-row">
+              <div className="channel-what">
+                <span className="t-small">A scheduled job fails</span>
+                <span className="t-note">One alert per job, with the end of its output, and another when it next succeeds.</span>
               </div>
             </div>
           </section>

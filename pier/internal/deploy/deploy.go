@@ -245,7 +245,10 @@ func (d *Deployer) variables(ctx context.Context, project, scope string) ([]stri
 		env = append(env, v.Name+"="+value)
 		names_ = append(names_, v.Name)
 	}
-	return env, names_, nil
+	// Production also gets the cron secret, so its app can tell a job's
+	// request is from Pier. The build log names only the owner's own.
+	env, err = d.withCronSecret(ctx, project, scope, env)
+	return env, names_, err
 }
 
 // SealedFor is what a variable's sealed value is bound to.

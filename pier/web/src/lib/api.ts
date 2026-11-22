@@ -178,6 +178,43 @@ export interface Settings {
   last_build_plan: Record<string, string> | null
 }
 
+// A scheduled job: a command run in a fresh container from production's
+// image, or a request to a path on production.
+export interface Job {
+  id: number
+  project: string
+  name: string
+  kind: 'command' | 'path'
+  schedule: string
+  timezone: string
+  command?: string
+  method?: 'GET' | 'POST'
+  path?: string
+  timeout_s: number
+  enabled: boolean
+  created_at: string
+  updated_at: string
+  description: string // the schedule in words
+  next_run: string | null
+  last_run: JobRun | null
+  running: boolean
+}
+
+export interface JobRun {
+  id: number
+  job: number
+  project: string
+  started_by: 'schedule' | 'manual'
+  status: 'running' | 'succeeded' | 'failed' | 'skipped'
+  deployment?: string
+  scheduled_for?: string
+  started_at: string
+  finished_at?: string
+  exit_code?: number
+  http_status?: number
+  detail?: string
+}
+
 export interface SessionRow {
   id: string
   kind: 'browser' | 'cli'

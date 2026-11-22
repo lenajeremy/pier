@@ -311,6 +311,43 @@ var migrations = []string{
 		restarted_at    INTEGER NOT NULL DEFAULT 0,
 		next_restart    INTEGER NOT NULL DEFAULT 0
 	);`,
+
+	// 19: scheduled jobs, each run of one, and the secret a job that calls
+	// a path sends, which production's app gets as CRON_SECRET.
+	`CREATE TABLE jobs (
+		id         INTEGER PRIMARY KEY,
+		project    TEXT NOT NULL REFERENCES projects(name),
+		name       TEXT NOT NULL,
+		kind       TEXT NOT NULL,
+		schedule   TEXT NOT NULL,
+		timezone   TEXT NOT NULL DEFAULT 'UTC',
+		command    TEXT NOT NULL DEFAULT '',
+		method     TEXT NOT NULL DEFAULT 'GET',
+		path       TEXT NOT NULL DEFAULT '',
+		timeout_s  INTEGER NOT NULL DEFAULT 900,
+		enabled    INTEGER NOT NULL DEFAULT 1,
+		created_at INTEGER NOT NULL,
+		updated_at INTEGER NOT NULL,
+		UNIQUE(project, name)
+	);
+	CREATE TABLE job_runs (
+		id            INTEGER PRIMARY KEY,
+		job           INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+		project       TEXT NOT NULL,
+		started_by    TEXT NOT NULL,
+		status        TEXT NOT NULL,
+		deployment    TEXT NOT NULL DEFAULT '',
+		scheduled_for INTEGER NOT NULL DEFAULT 0,
+		started_at    INTEGER NOT NULL,
+		finished_at   INTEGER NOT NULL DEFAULT 0,
+		exit_code     INTEGER,
+		http_status   INTEGER,
+		detail        TEXT NOT NULL DEFAULT ''
+	);
+	CREATE INDEX job_runs_by_job ON job_runs(job, id DESC);
+	CREATE INDEX job_runs_by_time ON job_runs(started_at);
+	ALTER TABLE projects ADD COLUMN cron_secret    TEXT NOT NULL DEFAULT '';
+	ALTER TABLE projects ADD COLUMN cron_secret_at INTEGER NOT NULL DEFAULT 0;`,
 }
 
 // Open opens (and if needed creates) the database at path.

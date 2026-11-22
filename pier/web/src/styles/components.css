@@ -2730,6 +2730,57 @@ select.input.compact,
 .event-row .check + .t-note {
   padding-left: 28px;
 }
+/* ---- Jobs: the list, a job's runs, and the job form ---------------------- */
+
+.table.jobs {
+  --cols: minmax(0, 1.3fr) minmax(0, 1.2fr) 188px 136px 32px;
+}
+.job-name {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.job-name > * {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.job-name a:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.job-last {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.run-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.table.runs {
+  --cols: 72px 124px minmax(0, 1fr) 200px 80px;
+}
+.run-why {
+  color: var(--d-red-text);
+}
+.job-details {
+  padding: 20px;
+}
+/* A request's method beside its path. */
+.method-path {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.method-path .input {
+  flex: 1;
+  min-width: 0;
+}
+.schedule-preview .t-strong {
+  color: var(--d-text);
+}
+
 /* A secret shown once, with its copy button. */
 .secret-box {
   display: flex;

@@ -39,6 +39,7 @@ import (
 	"pier/internal/dnscheck"
 	"pier/internal/gitssh"
 	"pier/internal/hook"
+	"pier/internal/jobs"
 	"pier/internal/requests"
 	"pier/internal/router"
 	"pier/internal/secrets"
@@ -308,7 +309,13 @@ func serve(args []string) int {
 	// serves any more; the addresses above are up before any is stopped.
 	dep.StopSupersededLater("")
 
-	a := &api.API{StartedAt: time.Now(), Store: st, Deployer: dep, Token: tok, Log: log, Web: web.Handler(), Requests: reqs, SiteListener: dialable(*httpAddr), Alerts: notifier}
+	// Scheduled jobs: a command runs in a fresh container from production's
+	// image, and a path is asked for through the router, as a visit would be.
+	scheduler := &jobs.Scheduler{
+		Store: st, Deployer: dep, Alerts: notifier, Log: log, Logs: filepath.Join(paths.logs, "jobs"),
+		Commands: dep.Apps, Sites: dialable(*httpAddr), HTTPS: *https,
+	}
+	a := &api.API{StartedAt: time.Now(), Store: st, Deployer: dep, Token: tok, Log: log, Web: web.Handler(), Requests: reqs, SiteListener: dialable(*httpAddr), Alerts: notifier, Jobs: scheduler}
 	if err := a.ResumeCleanup(ctx); err != nil {
 		log.Warn("resume preview cleanup", "err", err)
 	}
@@ -324,6 +331,11 @@ func serve(args []string) int {
 			log.Warn("the GitHub queue didn't stop within 30 s; closing the database anyway")
 		}
 	}()
+	// A run cut short records that on its way out, so the database stays
+	// open until the scheduler returns.
+	jobsDone := make(chan struct{})
+	go func() { defer close(jobsDone); scheduler.Run(ctx) }()
+	defer func() { stop(); <-jobsDone }()
 	go a.SampleServer(ctx)
 	domainsDone := make(chan struct{})
 	go func() { defer close(domainsDone); a.RunDomainChecks(ctx) }()

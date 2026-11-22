@@ -295,7 +295,7 @@ func (n *Notifier) Test(ctx context.Context, kind string) error {
 		}
 		e := Event{
 			Kind: TestAlert, At: time.Now(), Title: "Test alert from Pier",
-			Summary: "Alerts from " + n.Server + " reach you here. Pier sends one when a deploy fails, and when production stops passing its health check, and another when each is fixed.",
+			Summary: "Alerts from " + n.Server + " reach you here. Pier sends one when a deploy fails, when production stops passing its health check, and when a scheduled job fails, and another when each is fixed.",
 			Link:    "/alerts",
 		}
 		err := n.sendTo(ctx, c, e)
