@@ -583,12 +583,33 @@ func (m cockpit) detailPane(w, rows int) ([]string, []hit, []keyHelp) {
 	}
 	if st := m.detail.Container; st != nil {
 		state := st.State
+		h := m.detail.Health
 		if state == "oom_killed" {
 			state = "oom killed"
-		} else if state == "running" && st.Health == "unhealthy" {
+		} else if state == "running" && (st.Health == "unhealthy" || h != nil && h.State == "unhealthy") {
 			state = "unhealthy"
+		} else if h != nil && h.State == "restarting" {
+			state = "restarting"
 		}
 		var parts []string
+		// Production's health checks: why it fails, or that it passes and
+		// when it last didn't.
+		if h != nil {
+			switch {
+			case h.State != "healthy" && h.LastFailure != "":
+				why := "last check: " + h.LastFailure
+				if h.State == "unhealthy" && !h.RestartedAt.IsZero() {
+					why += ", restarted " + since(h.RestartedAt)
+				}
+				parts = append(parts, why)
+			case h.State == "healthy":
+				passing := "health check passing"
+				if !h.LastFailureAt.IsZero() {
+					passing += ", last failed " + since(h.LastFailureAt)
+				}
+				parts = append(parts, passing)
+			}
+		}
 		if st.MemoryLimitMB > 0 {
 			parts = append(parts, fmt.Sprintf("%d MB of memory", st.MemoryLimitMB))
 		}

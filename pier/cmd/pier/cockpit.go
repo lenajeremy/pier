@@ -90,6 +90,18 @@ type deploymentDetail struct {
 		Host, URL, Kind string
 	}
 	Container *apphost.ContainerStatus
+	Health    *healthView // production's server only
+}
+
+// healthView is how production's server did at its health checks, which
+// pierd runs every 30 seconds.
+type healthView struct {
+	State         string    `json:"state"` // healthy, failing, unhealthy or restarting
+	Asked         string    `json:"asked"`
+	LastFailure   string    `json:"last_failure"`
+	LastFailureAt time.Time `json:"last_failure_at"`
+	Restarts      int       `json:"restarts"`
+	RestartedAt   time.Time `json:"restarted_at"`
 }
 
 // A dialog's choice: a project, a deployment to go back to, or a button.

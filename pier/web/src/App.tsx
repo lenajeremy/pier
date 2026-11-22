@@ -1,6 +1,7 @@
 import { SharedVariables } from './pages/SharedVariables'
 import { Activity } from './pages/Activity'
 import { Server } from './pages/Server'
+import { Alerts } from './pages/Alerts'
 import { Settings } from './pages/Settings'
 import { GitHubImport } from './pages/GitHub'
 import { Integrations } from './pages/Integrations'
@@ -23,6 +24,8 @@ import { Domains } from './pages/Domains'
 import { Logs } from './pages/Logs'
 import { Invite } from './pages/Invite'
 import { RoleProvider } from './lib/role'
+import { Jobs } from './pages/Jobs'
+import { JobPage, JobRunPage } from './pages/JobPage'
 
 type Auth = { state: 'loading' } | { state: 'out'; address: string } | { state: 'in'; session: Session }
 
@@ -81,9 +84,11 @@ function Signed({ session, path, now }: { session: Session; path: string; now: n
 
   const importing = match('/new/github/:id', path)
   const deployment = match('/projects/:name/deployments/:id', path)
+  const jobRun = match('/projects/:name/jobs/:id/runs/:run', path)
+  const job = match('/projects/:name/jobs/:id', path)
   const tab = match('/projects/:name/:tab', path)
   const home = match('/projects/:name', path)
-  const name = deployment?.name ?? tab?.name ?? home?.name
+  const name = deployment?.name ?? jobRun?.name ?? job?.name ?? tab?.name ?? home?.name
 
   let page: React.ReactNode
   if (name) {
@@ -101,6 +106,12 @@ function Signed({ session, path, now }: { session: Session; path: string; now: n
               current={project.production?.deployment?.id}
               branch={project.production_branch || session.server.production_branch}
             />
+          ) : jobRun ? (
+            <JobRunPage key={jobRun.run} project={name} id={jobRun.id} run={jobRun.run} now={now} />
+          ) : job ? (
+            <JobPage key={job.id} project={name} id={job.id} now={now} />
+          ) : tab?.tab === 'jobs' ? (
+            <Jobs project={name} now={now} />
           ) : tab?.tab === 'logs' ? (
             <Logs project={name} address={project.address} />
           ) : tab?.tab === 'variables' ? (
@@ -143,6 +154,8 @@ function Signed({ session, path, now }: { session: Session; path: string; now: n
     page = <SharedVariables projects={projects}/>
   } else if (path === '/server') {
     page = <Server version={session.server.version} />
+  } else if (path === '/alerts') {
+    page = <Alerts />
   } else if (path === '/settings') {
     page = <Settings email={session.user?.email ?? ''} />
   } else {
@@ -182,7 +195,7 @@ function ProjectPage({ name, path, visit, children }: {
     (p) =>
       p.github?.queued
         ? 2000
-        : p.deployments.some((d) => d.status === 'building') || p.container?.state === 'restarting'
+        : p.deployments.some((d) => d.status === 'building') || p.container?.state === 'restarting' || p.health?.state === 'restarting'
           ? 3000
           : 15_000,
   )

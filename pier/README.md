@@ -20,7 +20,7 @@ And the start of the second slice:
 
 6. `pierd init` checks the machine, creates the owner's account, and sets
    Pier's address and base domain, checking the DNS records for them.
-   `pierd reset-password` is the way back in; Pier never sends email.
+   `pierd reset-password` is the way back in; Pier sends no password-reset email.
 7. pierd serves the dashboard: sign in, every project and what it serves,
    each project's deployments, and each deployment's build log, followed
    live while it builds.
@@ -96,7 +96,7 @@ Once DNS matches, the hostname follows the project’s production deployment, in
 - **Activity** shows server events and build history. Filter by project to find a deployment, promotion or rollback.
 - **Server** samples CPU, memory and disk every minute, retains seven days of measurements, and shows service status and disk usage. Cleanup can clear the Pier package cache or remove inactive previews older than 30 days, including their build logs and saved uploads. Branch heads, production history and deployments from before cleanup tracking are protected.
 - **Settings** saves the dashboard hostname and project base domain, checks DNS, and changes your password. Restart pierd to apply saved addresses. Explicit `-address` and `-domain` flags take precedence. Changing the password signs you out on every browser and linked computer.
-- **Members** lists everyone who can sign in. The owner invites people with a link that works once, for 7 days, as a member (deploys and changes every project) or a viewer (looks, and sees variables by name only), and can change a role or remove someone at any time; it applies at once, in every browser and on every computer. `pierd reset-password -email ada@example.com` resets someone else's password on the server and signs them out.
+- **Members** lists everyone who can sign in. The owner invites people with a link that works once, for 7 days (emailed, when email is set up in Alerts), as a member (deploys and changes every project) or a viewer (looks, and sees variables by name only), and can change a role or remove someone at any time; it applies at once, in every browser and on every computer. `pierd reset-password -email ada@example.com` resets someone else's password on the server and signs them out.
 
 In a terminal, `pier logs` opens a live tail for the linked project. Request logs start with recent traffic from the last 24 hours. Runtime logs show the production container (or the latest ready server). Build logs open the latest deployment and end after its last line. Choose **Deployment history** in the menu to inspect an earlier deployment.
 

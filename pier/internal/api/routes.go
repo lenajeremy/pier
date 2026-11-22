@@ -68,6 +68,10 @@ func (a *API) routes() []route {
 		{"DELETE /api/sessions/others", viewer, "", a.signOutOthers},
 		{"DELETE /api/sessions/{id}", viewer, "", a.signOutSession},
 		{"POST /api/settings/password", viewer, "", a.password},
+		// Whether you get alert emails. A viewer never does, since an alert
+		// quotes a build's or a job's output as it was; the handler says so.
+		{"GET /api/account/alerts", viewer, "", a.accountAlerts},
+		{"PUT /api/account/alerts", viewer, "", a.accountAlerts},
 		{"GET /api/cli/login/{code}", viewer, "", a.cliRequest},
 		{"POST /api/cli/login/{code}/{answer}", viewer, "", a.cliAnswer},
 
@@ -88,6 +92,13 @@ func (a *API) routes() []route {
 		{"GET /api/projects/{project}/requests", viewer, "", a.requestLines},
 		{"GET /api/projects/{project}/requests/chart", viewer, "", a.requestChart},
 		{"GET /api/projects/{project}/domains", viewer, "", a.domains},
+		{"GET /api/projects/{project}/jobs", viewer, "", a.listJobs},
+		{"GET /api/projects/{project}/jobs/{id}", viewer, "", a.getJob},
+		{"GET /api/projects/{project}/jobs/{id}/runs", viewer, "", a.jobRuns},
+		// A run's output, like a runtime log: values hidden from viewers.
+		{"GET /api/projects/{project}/jobs/{id}/runs/{run}", viewer, "", a.jobRun},
+		// Only says when a schedule runs, in words.
+		{"POST /api/jobs/schedule", viewer, "", a.describeSchedule},
 		{"GET /api/shared-variables", viewer, "", a.shared},
 		{"GET /api/activity", viewer, "", a.activity},
 		{"GET /api/members", viewer, "", a.members},
@@ -119,6 +130,10 @@ func (a *API) routes() []route {
 		{"POST /api/projects/{project}/domains", member, "add domains", a.addDomain},
 		{"POST /api/projects/{project}/domains/{host}/check", member, "check domains", a.checkDomain},
 		{"DELETE /api/projects/{project}/domains/{host}", member, "remove domains", a.removeDomain},
+		{"POST /api/projects/{project}/jobs", member, "add jobs", a.saveJob},
+		{"PUT /api/projects/{project}/jobs/{id}", member, "change jobs", a.saveJob},
+		{"DELETE /api/projects/{project}/jobs/{id}", member, "delete jobs", a.deleteJob},
+		{"POST /api/projects/{project}/jobs/{id}/run", member, "run jobs", a.runJob},
 		// Shared variables are project variables kept in one place: whoever
 		// can set a project's variables can set them.
 		{"POST /api/shared-variables", member, "add shared variables", a.shared},
@@ -135,6 +150,12 @@ func (a *API) routes() []route {
 		{"POST /api/github/manifest", owner, "connect a GitHub App", a.ghManifest},
 		{"GET /github/callback", owner, "connect a GitHub App", a.ghCallback},
 		{"DELETE /api/github", owner, "disconnect the GitHub App", a.ghDisconnect},
+		{"GET /api/alerts", owner, "see alert settings", a.alertSettings},
+		{"PUT /api/alerts", owner, "change alert settings", a.setAlertEvents},
+		{"PUT /api/alerts/{kind}", owner, "set up alerts", a.setAlertChannel},
+		{"DELETE /api/alerts/{kind}", owner, "stop alerts", a.deleteAlertChannel},
+		{"POST /api/alerts/{kind}/test", owner, "send test alerts", a.testAlertChannel},
+		{"POST /api/alerts/webhook/secret", owner, "replace the webhook's signing secret", a.newWebhookSecret},
 		{"PUT /api/members/{id}", owner, "change someone's role", a.setRole},
 		{"DELETE /api/members/{id}", owner, "remove people", a.removeMember},
 		{"GET /api/invites", owner, "see invites", a.invites},

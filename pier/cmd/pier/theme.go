@@ -126,7 +126,7 @@ func statusTone(status string) string {
 		return pink
 	case "preview", "building", "branch":
 		return lavender
-	case "ready", "healthy", "done", "running":
+	case "ready", "healthy", "done", "running", "succeeded":
 		return mint
 	case "failed", "error", "oom_killed", "unhealthy":
 		return coralTxt

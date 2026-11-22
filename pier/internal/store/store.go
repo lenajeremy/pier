@@ -296,6 +296,85 @@ var migrations = []string{
 	DROP TRIGGER activity_deploy;
 	CREATE TRIGGER activity_deploy AFTER UPDATE OF status ON deployments WHEN NEW.status IN ('ready','failed') AND OLD.status!=NEW.status BEGIN
 		INSERT INTO activity(at,project,title,detail,deployment,actor) VALUES(CAST(unixepoch('subsec')*1000 AS INTEGER),NEW.project,CASE NEW.status WHEN 'failed' THEN 'Build failed' ELSE 'Build ready' END,NEW.message,NEW.id,NEW.sent_by); END;`,
+
+	// 17: where alerts go, with their secrets sealed; the problems an alert
+	// has gone out for and nobody has seen fixed yet, so each is sent once;
+	// and who has turned alert emails off (everyone gets them until then).
+	`CREATE TABLE alert_channels (
+		kind          TEXT PRIMARY KEY,
+		config        TEXT NOT NULL DEFAULT '{}',
+		secret        TEXT NOT NULL DEFAULT '',
+		updated_at    INTEGER NOT NULL,
+		last_sent     INTEGER NOT NULL DEFAULT 0,
+		last_error    TEXT NOT NULL DEFAULT '',
+		last_error_at INTEGER NOT NULL DEFAULT 0
+	);
+	CREATE TABLE alert_incidents (
+		key       TEXT PRIMARY KEY,
+		project   TEXT NOT NULL DEFAULT '',
+		opened_at INTEGER NOT NULL,
+		last_at   INTEGER NOT NULL,
+		count     INTEGER NOT NULL DEFAULT 1
+	);
+	CREATE TABLE alert_email_off (
+		user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE
+	);`,
+
+	// 18: a project can turn its health check's request off, so only its
+	// process is watched; and how production's server did at its last
+	// health check, kept so a restart of pierd doesn't forget a failure.
+	`ALTER TABLE projects ADD COLUMN health_off INTEGER NOT NULL DEFAULT 0;
+	CREATE TABLE health (
+		deployment      TEXT PRIMARY KEY,
+		project         TEXT NOT NULL,
+		state           TEXT NOT NULL,
+		asked           TEXT NOT NULL DEFAULT '',
+		failures        INTEGER NOT NULL DEFAULT 0,
+		checked_at      INTEGER NOT NULL DEFAULT 0,
+		since           INTEGER NOT NULL DEFAULT 0,
+		last_failure    TEXT NOT NULL DEFAULT '',
+		last_failure_at INTEGER NOT NULL DEFAULT 0,
+		restarts        INTEGER NOT NULL DEFAULT 0,
+		restarted_at    INTEGER NOT NULL DEFAULT 0,
+		next_restart    INTEGER NOT NULL DEFAULT 0
+	);`,
+
+	// 19: scheduled jobs, each run of one, and the secret a job that calls
+	// a path sends, which production's app gets as CRON_SECRET.
+	`CREATE TABLE jobs (
+		id         INTEGER PRIMARY KEY,
+		project    TEXT NOT NULL REFERENCES projects(name),
+		name       TEXT NOT NULL,
+		kind       TEXT NOT NULL,
+		schedule   TEXT NOT NULL,
+		timezone   TEXT NOT NULL DEFAULT 'UTC',
+		command    TEXT NOT NULL DEFAULT '',
+		method     TEXT NOT NULL DEFAULT 'GET',
+		path       TEXT NOT NULL DEFAULT '',
+		timeout_s  INTEGER NOT NULL DEFAULT 900,
+		enabled    INTEGER NOT NULL DEFAULT 1,
+		created_at INTEGER NOT NULL,
+		updated_at INTEGER NOT NULL,
+		UNIQUE(project, name)
+	);
+	CREATE TABLE job_runs (
+		id            INTEGER PRIMARY KEY,
+		job           INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+		project       TEXT NOT NULL,
+		started_by    TEXT NOT NULL,
+		status        TEXT NOT NULL,
+		deployment    TEXT NOT NULL DEFAULT '',
+		scheduled_for INTEGER NOT NULL DEFAULT 0,
+		started_at    INTEGER NOT NULL,
+		finished_at   INTEGER NOT NULL DEFAULT 0,
+		exit_code     INTEGER,
+		http_status   INTEGER,
+		detail        TEXT NOT NULL DEFAULT ''
+	);
+	CREATE INDEX job_runs_by_job ON job_runs(job, id DESC);
+	CREATE INDEX job_runs_by_time ON job_runs(started_at);
+	ALTER TABLE projects ADD COLUMN cron_secret    TEXT NOT NULL DEFAULT '';
+	ALTER TABLE projects ADD COLUMN cron_secret_at INTEGER NOT NULL DEFAULT 0;`,
 }
 
 // Open opens (and if needed creates) the database at path.

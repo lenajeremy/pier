@@ -1,5 +1,5 @@
 import { useMemo, useState, type FormEvent } from 'react'
-import { api, type Invite, type Member, type SessionRow } from '../lib/api'
+import { api, ApiError, type Invite, type Member, type SessionRow } from '../lib/api'
 import { useData } from '../lib/data'
 import { ago } from '../lib/format'
 import { Gate, onlyOwner, roleName, useRole } from '../lib/role'
@@ -30,7 +30,8 @@ const who = (m: Member) => m.name || m.email
 export function Members({ now }: { now: number }) {
   const { owner } = useRole()
   const people = useData<{ members: Member[] }>('/api/members')
-  const invites = useData<{ invites: Invite[] }>(owner ? '/api/invites' : null)
+  // The invites still waiting, and whether Pier can email one, and from where.
+  const invites = useData<{ invites: Invite[]; email: boolean; email_from: string }>(owner ? '/api/invites' : null)
   const [inviting, setInviting] = useState(false)
   const [query, setQuery] = useState('')
 
@@ -201,6 +202,7 @@ export function Members({ now }: { now: number }) {
       <YourSessions now={now} />
       {inviting && (
         <InviteDialog
+          from={invites.data?.email ? invites.data.email_from : ''}
           onClose={() => {
             setInviting(false)
             invites.reload()
@@ -212,24 +214,35 @@ export function Members({ now }: { now: number }) {
   )
 }
 
-// InviteDialog asks what the person will be able to do, then gives the
-// link to send them. Pier doesn't send email, so the owner sends it.
-function InviteDialog({ onClose, onMade }: { onClose: () => void; onMade: () => void }) {
+type Made = { link: string; invite: Invite; emailed?: string; email_error?: string }
+
+// InviteDialog asks what the person will be able to do, and, when email is
+// set up in Alerts, where to email the link; then it gives the link, to
+// copy and send yourself either way.
+function InviteDialog({ from, onClose, onMade }: {
+  from: string // who Pier sends email as; empty when it can't send email
+  onClose: () => void
+  onMade: () => void
+}) {
   const [role, setRole] = useState<'member' | 'viewer'>('member')
-  const [made, setMade] = useState<{ link: string; invite: Invite } | null>(null)
+  const [to, setTo] = useState('')
+  const [made, setMade] = useState<Made | null>(null)
   const [busy, setBusy] = useState(false)
-  const [problem, setProblem] = useState('')
+  const [problem, setProblem] = useState<{ field: string; message: string } | null>(null)
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
     if (made) return copy(made.link, 'the invite link')
     setBusy(true)
-    setProblem('')
+    setProblem(null)
     try {
-      setMade(await api<{ link: string; invite: Invite }>('/api/invites', { method: 'POST', body: JSON.stringify({ role }) }))
+      setMade(await api<Made>('/api/invites', { method: 'POST', body: JSON.stringify({ role, email: to.trim() }) }))
       onMade()
     } catch (err) {
-      setProblem(err instanceof Error ? err.message : "Can't reach pierd.")
+      setProblem({
+        field: err instanceof ApiError && typeof err.body.field === 'string' ? err.body.field : '',
+        message: err instanceof Error ? err.message : "Can't reach pierd.",
+      })
     } finally {
       setBusy(false)
     }
@@ -255,10 +268,22 @@ function InviteDialog({ onClose, onMade }: { onClose: () => void; onMade: () => 
           </>
         }
       >
-        <p>
-          Send this link to the person you're inviting. It works once, until {until}, and whoever opens it first joins as {as}.
-          This is the only time it's shown.
-        </p>
+        {made.emailed ? (
+          <p>
+            Pier emailed the link to {made.emailed}. It works once, until {until}, and whoever opens it first joins as {as}.
+            It's here too if you'd rather send it another way; this is the only time it's shown.
+          </p>
+        ) : (
+          <p>
+            Send this link to the person you're inviting. It works once, until {until}, and whoever opens it first joins as {as}.
+            This is the only time it's shown.
+          </p>
+        )}
+        {made.email_error && (
+          <p className="field-message" role="alert">
+            {made.email_error} Copy the link and send it yourself.
+          </p>
+        )}
         <label className="field">
           <span className="field-label">Invite link</span>
           <input className="input mono" readOnly value={made.link} onClick={(e) => e.currentTarget.select()} />
@@ -276,9 +301,9 @@ function InviteDialog({ onClose, onMade }: { onClose: () => void; onMade: () => 
       onSubmit={submit}
       footer={
         <>
-          {problem && (
+          {problem && !problem.field && (
             <span className="grow field-message" role="alert">
-              {problem}
+              {problem.message}
             </span>
           )}
           <button className="btn quiet medium" type="button" disabled={busy} onClick={onClose}>
@@ -286,7 +311,7 @@ function InviteDialog({ onClose, onMade }: { onClose: () => void; onMade: () => 
           </button>
           <button className="btn primary medium" type="submit" disabled={busy}>
             {busy && <Spinner />}
-            {busy ? 'Making the link…' : 'Make an invite link'}
+            {busy ? (to.trim() ? 'Sending…' : 'Making the link…') : to.trim() ? 'Email the invite' : 'Make an invite link'}
           </button>
         </>
       }
@@ -302,10 +327,33 @@ function InviteDialog({ onClose, onMade }: { onClose: () => void; onMade: () => 
             </label>
           ))}
         </div>
-        <span className="t-note">
-          The link works once, for 7 days. Pier doesn't send email, so you send it yourself.
-        </span>
+        {!from && <span className="t-note">The link works once, for 7 days. Copy it and send it yourself.</span>}
       </div>
+      {from && (
+        <label className={'field' + (problem?.field === 'email' ? ' error' : '')}>
+          <span className="field-label">Email the link to</span>
+          <input
+            className="input"
+            type="email"
+            placeholder="ada@example.com"
+            autoComplete="off"
+            value={to}
+            onChange={(e) => {
+              setTo(e.target.value)
+              setProblem(null)
+            }}
+          />
+          {problem?.field === 'email' ? (
+            <span className="field-message" role="alert">
+              {problem.message}
+            </span>
+          ) : (
+            <span className="t-note">
+              Optional. Pier sends it from {from}. The link works once, for 7 days, and you can copy it either way.
+            </span>
+          )}
+        </label>
+      )}
     </Dialog>
   )
 }

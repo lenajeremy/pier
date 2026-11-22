@@ -48,6 +48,7 @@ type Build struct {
 type Runtime struct {
 	StartCommand string  `json:"start_command"`
 	HealthPath   string  `json:"health_path"`
+	HealthOff    bool    `json:"health_off"` // check only that the process runs, without a request
 	MemoryMB     int     `json:"memory_mb"`
 	CPUs         float64 `json:"cpus"`
 }
@@ -58,14 +59,14 @@ var ErrExists = errors.New("already exists")
 // ErrBuilding means a project cannot be deleted while a build is running.
 var ErrBuilding = errors.New("build in progress")
 
-const projectCols = `name, created_at, production_branch, repo, root_dir, preset, install_cmd, build_cmd, output_dir, start_cmd, health_path, memory_mb, cpus, rolled_back_from, always_build, subdomain`
+const projectCols = `name, created_at, production_branch, repo, root_dir, preset, install_cmd, build_cmd, output_dir, start_cmd, health_path, memory_mb, cpus, rolled_back_from, always_build, subdomain, health_off`
 
 func scanProject(sc interface{ Scan(...any) error }) (Project, error) {
 	var p Project
 	var created int64
 	err := sc.Scan(&p.Name, &created, &p.ProductionBranch, &p.Repo,
 		&p.Build.Root, &p.Build.Preset, &p.Build.Install, &p.Build.Command, &p.Build.Output,
-		&p.Runtime.StartCommand, &p.Runtime.HealthPath, &p.Runtime.MemoryMB, &p.Runtime.CPUs, &p.RolledBackFrom, &p.Build.AlwaysBuild, &p.Subdomain)
+		&p.Runtime.StartCommand, &p.Runtime.HealthPath, &p.Runtime.MemoryMB, &p.Runtime.CPUs, &p.RolledBackFrom, &p.Build.AlwaysBuild, &p.Subdomain, &p.Runtime.HealthOff)
 	if errors.Is(err, sql.ErrNoRows) {
 		return p, ErrNotFound
 	}
@@ -76,11 +77,11 @@ func scanProject(sc interface{ Scan(...any) error }) (Project, error) {
 // CreateProject adds a project. It fails with ErrExists if the name is taken.
 func (s *Store) CreateProject(ctx context.Context, p Project) error {
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO projects(name, created_at, production_branch, repo, root_dir, preset, install_cmd, build_cmd, output_dir, start_cmd, health_path, memory_mb, cpus, always_build)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		INSERT INTO projects(name, created_at, production_branch, repo, root_dir, preset, install_cmd, build_cmd, output_dir, start_cmd, health_path, memory_mb, cpus, always_build, health_off)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.Name, time.Now().UnixMilli(), p.ProductionBranch, p.Repo,
 		p.Build.Root, p.Build.Preset, p.Build.Install, p.Build.Command, p.Build.Output,
-		p.Runtime.StartCommand, p.Runtime.HealthPath, p.Runtime.MemoryMB, p.Runtime.CPUs, p.Build.AlwaysBuild)
+		p.Runtime.StartCommand, p.Runtime.HealthPath, p.Runtime.MemoryMB, p.Runtime.CPUs, p.Build.AlwaysBuild, p.Runtime.HealthOff)
 	if err != nil && strings.Contains(err.Error(), "UNIQUE") {
 		return ErrExists
 	}
@@ -104,9 +105,9 @@ func (s *Store) SetProjectBuild(ctx context.Context, name, productionBranch stri
 // SetProjectSettings changes a project's production branch, build overrides, and runtime settings.
 func (s *Store) SetProjectSettings(ctx context.Context, name, productionBranch string, b Build, rt Runtime) error {
 	res, err := s.db.ExecContext(ctx, `
-		UPDATE projects SET production_branch = ?, root_dir = ?, preset = ?, install_cmd = ?, build_cmd = ?, output_dir = ?, start_cmd = ?, health_path = ?, memory_mb = ?, cpus = ?, always_build = ?
+		UPDATE projects SET production_branch = ?, root_dir = ?, preset = ?, install_cmd = ?, build_cmd = ?, output_dir = ?, start_cmd = ?, health_path = ?, memory_mb = ?, cpus = ?, always_build = ?, health_off = ?
 		WHERE name = ?`,
-		productionBranch, b.Root, b.Preset, b.Install, b.Command, b.Output, rt.StartCommand, rt.HealthPath, rt.MemoryMB, rt.CPUs, b.AlwaysBuild, name)
+		productionBranch, b.Root, b.Preset, b.Install, b.Command, b.Output, rt.StartCommand, rt.HealthPath, rt.MemoryMB, rt.CPUs, b.AlwaysBuild, rt.HealthOff, name)
 	if err != nil {
 		return err
 	}
@@ -157,6 +158,9 @@ func (s *Store) DeleteProject(ctx context.Context, name string) error {
 		`DELETE FROM custom_domains WHERE project = ?`,
 		`DELETE FROM variables WHERE project = ?`,
 		`DELETE FROM shared_links WHERE project = ?`,
+		`DELETE FROM health WHERE project = ?`,
+		`DELETE FROM job_runs WHERE project = ?`,
+		`DELETE FROM jobs WHERE project = ?`,
 		`DELETE FROM deployments WHERE project = ?`,
 		`DELETE FROM projects WHERE name = ?`,
 	} {

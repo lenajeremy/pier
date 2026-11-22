@@ -12,6 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"pier/internal/alerts"
 	"pier/internal/auth"
 	"pier/internal/store"
 )
@@ -124,13 +125,36 @@ func (a *API) removeMember(w http.ResponseWriter, r *http.Request) {
 }
 
 // invites lists the invite links that haven't been used yet.
+// It also says whether email is set up in Alerts, so the invite dialog
+// can offer to send the link.
 func (a *API) invites(w http.ResponseWriter, r *http.Request) {
 	list, err := a.Store.Invites(r.Context())
 	if err != nil {
 		a.fail(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"invites": list})
+	from, err := a.emailFrom(r.Context())
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"invites": list, "email": from != "", "email_from": from})
+}
+
+// emailFrom is the address Pier sends email from, or "" when email isn't
+// set up in Alerts.
+func (a *API) emailFrom(ctx context.Context) (string, error) {
+	if a.Alerts == nil {
+		return "", nil
+	}
+	chans, err := a.Alerts.Channels(ctx)
+	if err != nil {
+		return "", err
+	}
+	if c, ok := chans[alerts.Email]; ok && c.Email != nil {
+		return c.Email.From, nil
+	}
+	return "", nil
 }
 
 // Invite tokens start with this, so one pasted somewhere it shouldn't be is
@@ -138,15 +162,33 @@ func (a *API) invites(w http.ResponseWriter, r *http.Request) {
 const invitePrefix = "pinv_"
 
 // createInvite makes an invite link for one person to join with a role. The
-// link is in the answer only: just its hash is kept.
+// link is in the answer only: just its hash is kept. Given an address, and
+// with email set up in Alerts, Pier also emails the link there; the answer
+// says whether that worked, and has the link to copy either way.
 func (a *API) createInvite(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Role string `json:"role"`
+		Role  string `json:"role"`
+		Email string `json:"email"`
 	}
 	json.NewDecoder(io.LimitReader(r.Body, 1024)).Decode(&req)
 	if req.Role != store.RoleMember && req.Role != store.RoleViewer {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "Invite them as a member or a viewer.", "field": "role"})
 		return
+	}
+	req.Email = strings.TrimSpace(req.Email)
+	if req.Email != "" {
+		if !auth.ValidEmail(req.Email) {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "That doesn't look like an email address.", "field": "email"})
+			return
+		}
+		if from, err := a.emailFrom(r.Context()); err != nil || from == "" {
+			if err != nil {
+				a.fail(w, err)
+				return
+			}
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "Set up email in Alerts first, or copy the link and send it yourself.", "field": "email"})
+			return
+		}
 	}
 	token, _, err := auth.NewToken()
 	if err != nil {
@@ -170,11 +212,44 @@ func (a *API) createInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	link := a.dashboardOrigin(r) + "/invite#" + token
-	// Pier doesn't send email. When it does, this is where the link goes out,
-	// to an address the owner gives with the invite; until then, the owner
-	// copies the link and sends it themselves.
-	a.event(r.Context(), "", "Invited someone", "As "+roleWord(in.Role), "")
-	writeJSON(w, http.StatusCreated, map[string]any{"invite": in, "link": link})
+	out := map[string]any{"invite": in, "link": link}
+	detail := "As " + roleWord(in.Role)
+	if req.Email != "" {
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		err := a.Alerts.SendEmail(ctx, req.Email, inviteSubject(in, a.dashboardHost(r)), inviteText(in, a.dashboardHost(r), link))
+		cancel()
+		if err != nil {
+			a.Log.Warn("email an invite", "err", err)
+			out["email_error"] = "Couldn't email it: " + err.Error() + "."
+		} else {
+			out["emailed"] = req.Email
+			detail += ", emailed to " + req.Email
+		}
+	}
+	a.event(r.Context(), "", "Invited someone", detail, "")
+	writeJSON(w, http.StatusCreated, out)
+}
+
+// dashboardHost is the dashboard's address as an invite names it.
+func (a *API) dashboardHost(r *http.Request) string {
+	o, _ := url.Parse(a.dashboardOrigin(r))
+	return o.Host
+}
+
+func inviteSubject(in store.Invite, host string) string {
+	return in.CreatedBy + " invited you to Pier on " + host
+}
+
+// inviteText is the invite email: who, as what, the link, and until when.
+func inviteText(in store.Invite, host, link string) string {
+	does := "you can deploy, promote, roll back and change every project"
+	if in.Role == store.RoleViewer {
+		does = "you can look at every project, its deployments and its logs, but not change anything"
+	}
+	until := in.ExpiresAt.Format("Monday 2 January")
+	return in.CreatedBy + " invited you to join Pier on " + host + " as " + roleWord(in.Role) + ": " + does + ".\n\n" +
+		"Open this link to make your account. It works once, until " + until + ":\n\n" + link + "\n\n" +
+		"If you weren't expecting this, you can ignore it.\n"
 }
 
 // dashboardOrigin is where the owner is using the dashboard, so an invite

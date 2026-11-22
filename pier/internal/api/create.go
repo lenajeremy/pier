@@ -108,6 +108,9 @@ func (a *API) deleteProject(w http.ResponseWriter, r *http.Request) {
 			a.Log.Warn("remove repository after project deletion", "project", name, "err", err)
 		}
 	}
+	if a.Jobs != nil {
+		a.Jobs.ForgetProject(name)
+	}
 	a.event(r.Context(), name, "Deleted project", "", "")
 	a.Log.Info("project deleted", "project", name)
 	w.WriteHeader(http.StatusNoContent)

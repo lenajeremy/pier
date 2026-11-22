@@ -249,6 +249,9 @@
 .tooltip {
   position: fixed;
   z-index: 80;
+  /* Its own width, not what's left of the window beside what it's for, so
+     a longer one near the right edge doesn't wrap word by word. */
+  width: max-content;
   max-width: 320px;
   padding: 6px 10px;
   border-radius: 8px;

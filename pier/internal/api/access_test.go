@@ -11,11 +11,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"pier/internal/alerts"
 	"pier/internal/auth"
 	"pier/internal/deploy"
+	"pier/internal/jobs"
 	"pier/internal/secrets"
 	"pier/internal/store"
 )
@@ -38,6 +41,8 @@ var decisions = map[string]string{
 	"DELETE /api/sessions/others":         "viewer",
 	"DELETE /api/sessions/{id}":           "viewer",
 	"POST /api/settings/password":         "viewer",
+	"GET /api/account/alerts":             "viewer",
+	"PUT /api/account/alerts":             "viewer",
 	"GET /api/cli/login/{code}":           "viewer",
 	"POST /api/cli/login/{code}/{answer}": "viewer",
 
@@ -67,6 +72,11 @@ var decisions = map[string]string{
 	"GET /api/github/activity":                                 "viewer",
 	"GET /api/github/repositories":                             "viewer",
 	"GET /api/github/repositories/{id}/folders":                "viewer",
+	"GET /api/projects/{project}/jobs":                         "viewer",
+	"GET /api/projects/{project}/jobs/{id}":                    "viewer",
+	"GET /api/projects/{project}/jobs/{id}/runs":               "viewer",
+	"GET /api/projects/{project}/jobs/{id}/runs/{run}":         "viewer",
+	"POST /api/jobs/schedule":                                  "viewer",
 
 	"POST /api/projects":                                    "member",
 	"DELETE /api/projects/{project}":                        "member",
@@ -91,12 +101,22 @@ var decisions = map[string]string{
 	"POST /api/github/import":                               "member",
 	"POST /api/github/jobs/{id}/resume":                     "member",
 	"POST /api/github/jobs/{id}/dismiss":                    "member",
+	"POST /api/projects/{project}/jobs":                     "member",
+	"PUT /api/projects/{project}/jobs/{id}":                 "member",
+	"DELETE /api/projects/{project}/jobs/{id}":              "member",
+	"POST /api/projects/{project}/jobs/{id}/run":            "member",
 
 	"PUT /api/settings":               "owner",
 	"POST /api/server/cleanup/{kind}": "owner",
 	"POST /api/github/manifest":       "owner",
 	"GET /github/callback":            "owner",
 	"DELETE /api/github":              "owner",
+	"GET /api/alerts":                 "owner",
+	"PUT /api/alerts":                 "owner",
+	"PUT /api/alerts/{kind}":          "owner",
+	"DELETE /api/alerts/{kind}":       "owner",
+	"POST /api/alerts/{kind}/test":    "owner",
+	"POST /api/alerts/webhook/secret": "owner",
 	"PUT /api/members/{id}":           "owner",
 	"DELETE /api/members/{id}":        "owner",
 	"GET /api/invites":                "owner",
@@ -200,7 +220,7 @@ func (tm *team) send(t *testing.T, token, method, path, body string) (*http.Resp
 
 var examplePath = strings.NewReplacer(
 	"{project}", "demo", "{id}", "1", "{host}", "demo.example.com", "{name}", "API_KEY",
-	"{code}", "ABCD-EFGH", "{answer}", "deny", "{kind}", "cache",
+	"{code}", "ABCD-EFGH", "{answer}", "deny", "{kind}", "cache", "{run}", "1",
 )
 
 // TestEveryRouteHasARoleDecision walks every route pierd serves and checks
@@ -510,5 +530,131 @@ func TestComputerActsAsWhoApprovedIt(t *testing.T) {
 	_, body := tm.send(t, token, "POST", "/api/projects/blog/deployments?target=production", "")
 	if body["error"] != "Viewers can't deploy. Ask the owner to make you a member." {
 		t.Fatalf("the computer deploying got %v", body)
+	}
+}
+
+// A viewer reads a project's jobs and their runs, but never a variable's
+// value or the CRON_SECRET a path job sends, not in a run's output and not
+// in why it failed; and can't add or run a job.
+func TestViewersReadJobsWithoutSecrets(t *testing.T) {
+	tm := newTeam(t, false)
+	ctx := context.Background()
+	st, d := tm.st, tm.api.Deployer
+	tm.api.Jobs = &jobs.Scheduler{Store: st, Deployer: d, Log: tm.api.Log, Logs: t.TempDir()}
+	st.CreateProject(ctx, store.Project{Name: "blog"})
+	dep := store.Deployment{ID: "c19e77", Project: "blog", Branch: "main", Target: store.TargetProduction, Status: store.Ready}
+	st.CreateDeployment(ctx, dep)
+	st.SetAlias(ctx, store.Alias{Host: "blog.pier.localhost", Project: "blog", Kind: store.KindProduction, Branch: "main", DeploymentID: dep.ID})
+	cron, _, err := d.CronSecret(ctx, "blog")
+	if err != nil || len(cron) < 6 {
+		t.Fatalf("cron secret %q, %v", cron, err)
+	}
+	const value = "sk_live_9f8e7d6c5b"
+	tm.send(t, tm.member, "PUT", "/api/projects/blog/variables", `{"name":"API_KEY","value":"`+value+`"}`)
+	if resp, body := tm.send(t, tm.member, "POST", "/api/projects/blog/jobs", `{"name":"nightly","kind":"path","schedule":"0 3 * * *","path":"/api/cron"}`); resp.StatusCode != http.StatusOK {
+		t.Fatalf("a member adding a job got %d %v", resp.StatusCode, body)
+	}
+	run, err := st.StartRun(ctx, store.JobRun{Job: 1, Project: "blog", StartedBy: "manual", Status: store.RunFailed, StartedAt: time.Now(),
+		Detail: "It answered 401 to Bearer " + cron})
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.MkdirAll(filepath.Join(tm.api.Jobs.Logs, "blog"), 0o755)
+	output := fmt.Sprintf("5\tstdout\tauthorization: Bearer %s\n9\tstdout\tkey=%s\n", cron, value)
+	os.WriteFile(filepath.Join(tm.api.Jobs.Logs, "blog", fmt.Sprint(run)+".log"), []byte(output), 0o644)
+
+	for _, path := range []string{"/api/projects/blog/jobs", "/api/projects/blog/jobs/1", "/api/projects/blog/jobs/1/runs", fmt.Sprintf("/api/projects/blog/jobs/1/runs/%d", run)} {
+		resp, body := tm.send(t, tm.viewer, "GET", path, "")
+		raw, _ := json.Marshal(body)
+		if resp.StatusCode != http.StatusOK || strings.Contains(string(raw), cron) || strings.Contains(string(raw), value) {
+			t.Errorf("a viewer reading %s got %d %s", path, resp.StatusCode, raw)
+		}
+	}
+	_, body := tm.send(t, tm.viewer, "GET", fmt.Sprintf("/api/projects/blog/jobs/1/runs/%d", run), "")
+	if raw, _ := json.Marshal(body); strings.Count(string(raw), hiddenValue) != 3 {
+		t.Errorf("a viewer's run should show three hidden values: %s", raw)
+	}
+	_, body = tm.send(t, tm.member, "GET", fmt.Sprintf("/api/projects/blog/jobs/1/runs/%d", run), "")
+	if raw, _ := json.Marshal(body); !strings.Contains(string(raw), cron) {
+		t.Errorf("a member reads the run as %s", raw)
+	}
+	if _, body := tm.send(t, tm.viewer, "POST", "/api/projects/blog/jobs/1/run", ""); body["error"] != "Viewers can't run jobs. Ask the owner to make you a member." {
+		t.Errorf("a viewer running a job got %v", body)
+	}
+	if _, body := tm.send(t, tm.viewer, "POST", "/api/projects/blog/jobs", `{}`); body["error"] != "Viewers can't add jobs. Ask the owner to make you a member." {
+		t.Errorf("a viewer adding a job got %v", body)
+	}
+}
+
+// With email set up in Alerts, an invite can be emailed, from the
+// configured sender; the link comes back to copy either way, and a failed
+// send says why.
+func TestInviteByEmail(t *testing.T) {
+	tm := newTeam(t, false)
+	var mu sync.Mutex
+	var sent []map[string]any
+	fail := false
+	resend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		json.NewDecoder(r.Body).Decode(&body)
+		mu.Lock()
+		defer mu.Unlock()
+		if fail {
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			io.WriteString(w, `{"message":"The from address isn't verified."}`)
+			return
+		}
+		sent = append(sent, body)
+	}))
+	t.Cleanup(resend.Close)
+	tm.api.Alerts = &alerts.Notifier{Store: tm.st, Box: tm.api.Deployer.Secrets, Log: tm.api.Log, Server: "pier.localhost", ResendURL: resend.URL, Retries: []time.Duration{}}
+
+	if _, body := tm.send(t, tm.owner, "GET", "/api/invites", ""); body["email"] != false {
+		t.Fatalf("before email is set up: %v", body)
+	}
+	if resp, body := tm.send(t, tm.owner, "POST", "/api/invites", `{"role":"member","email":"ada@example.com"}`); resp.StatusCode != http.StatusBadRequest || body["field"] != "email" {
+		t.Fatalf("emailing without email set up: %d %v", resp.StatusCode, body)
+	}
+	if resp, body := tm.send(t, tm.owner, "PUT", "/api/alerts/email", `{"provider":"resend","api_key":"re_test","from":"Pier <pier@example.com>"}`); resp.StatusCode != http.StatusOK {
+		t.Fatalf("setting email up: %d %v", resp.StatusCode, body)
+	}
+	if _, body := tm.send(t, tm.owner, "GET", "/api/invites", ""); body["email"] != true {
+		t.Fatalf("after email is set up: %v", body)
+	}
+	resp, body := tm.send(t, tm.owner, "POST", "/api/invites", `{"role":"member","email":"ada@example.com"}`)
+	link, _ := body["link"].(string)
+	if resp.StatusCode != http.StatusCreated || body["emailed"] != "ada@example.com" || !strings.Contains(link, "/invite#pinv_") {
+		t.Fatalf("an emailed invite: %d %v", resp.StatusCode, body)
+	}
+	mu.Lock()
+	if len(sent) != 1 || sent[0]["from"] != "Pier <pier@example.com>" || fmt.Sprint(sent[0]["to"]) != "[ada@example.com]" ||
+		!strings.Contains(fmt.Sprint(sent[0]["subject"]), "Owner invited you to Pier") || !strings.Contains(fmt.Sprint(sent[0]["text"]), link) ||
+		!strings.Contains(fmt.Sprint(sent[0]["text"]), "as a member") {
+		t.Errorf("the invite email: %+v", sent)
+	}
+	fail = true
+	mu.Unlock()
+	resp, body = tm.send(t, tm.owner, "POST", "/api/invites", `{"role":"viewer","email":"grace@example.com"}`)
+	if resp.StatusCode != http.StatusCreated || body["link"] == nil || !strings.Contains(fmt.Sprint(body["email_error"]), "verified") {
+		t.Errorf("a failed send: %d %v", resp.StatusCode, body)
+	}
+}
+
+// Alert emails go to the owner and members who have them on. A viewer has
+// no switch: an alert can quote a value.
+func TestViewersGetNoAlertEmails(t *testing.T) {
+	tm := newTeam(t, false)
+	if _, body := tm.send(t, tm.member, "GET", "/api/account/alerts", ""); body["email"] != true {
+		t.Errorf("a member's alert emails: %v", body)
+	}
+	if _, body := tm.send(t, tm.viewer, "GET", "/api/account/alerts", ""); body["email"] != false {
+		t.Errorf("a viewer's alert emails: %v", body)
+	}
+	if resp, _ := tm.send(t, tm.viewer, "PUT", "/api/account/alerts", `{"email":true}`); resp.StatusCode != http.StatusForbidden {
+		t.Errorf("a viewer turning alert emails on got %d", resp.StatusCode)
+	}
+	people, err := tm.st.AlertRecipients(context.Background())
+	if err != nil || len(people) != 2 || people[0].Email != "owner@example.com" || people[1].Email != "member@example.com" {
+		t.Errorf("alert emails go to %+v (%v)", people, err)
 	}
 }

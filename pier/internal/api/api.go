@@ -16,9 +16,11 @@ import (
 	"sync"
 	"time"
 
+	"pier/internal/alerts"
 	"pier/internal/board"
 	"pier/internal/deploy"
 	"pier/internal/hook"
+	"pier/internal/jobs"
 	"pier/internal/requests"
 	"pier/internal/store"
 )
@@ -41,6 +43,8 @@ type API struct {
 	Log            *slog.Logger
 	Web            http.Handler  // the dashboard's files; nil serves the API only
 	Requests       *requests.Log // every request the sites answered; nil keeps none
+	Alerts         *alerts.Notifier
+	Jobs           *jobs.Scheduler
 }
 
 // BoardRow is a board row with the address's full URL.

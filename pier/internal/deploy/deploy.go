@@ -63,6 +63,9 @@ type Deployer struct {
 	// Visited reports the last request a deployment answered, from the
 	// request log. Nil counts none.
 	Visited func(deployment string) time.Time
+	// Alerts hears about every build that fails, and the next one of the
+	// same address that works, and decides what to send. Nil sends nothing.
+	Alerts Alerter
 
 	mu         sync.Mutex
 	locks      map[string]*sync.Mutex
@@ -81,6 +84,11 @@ type Deployer struct {
 	woken     map[string]time.Time // deployment -> when it was last woken or restarted
 	wakeFails map[string]time.Time // application -> when it last failed to start for a visit
 	boot      time.Time            // when the first sweep ran, which stands for pierd's start
+
+	healthMu   sync.Mutex
+	health     map[string]*healthState // deployment -> how its checks are going, while production serves it
+	healthOpen map[string]bool         // project -> whether an alert about its health may still be open
+	clock      func() time.Time        // what time it is; tests move it on. Nil is time.Now.
 }
 
 // RepoPath is where a project's bare repository lives.
@@ -238,7 +246,10 @@ func (d *Deployer) variables(ctx context.Context, project, scope string) ([]stri
 		env = append(env, v.Name+"="+value)
 		names_ = append(names_, v.Name)
 	}
-	return env, names_, nil
+	// Production also gets the cron secret, so its app can tell a job's
+	// request is from Pier. The build log names only the owner's own.
+	env, err = d.withCronSecret(ctx, project, scope, env)
+	return env, names_, err
 }
 
 // SealedFor is what a variable's sealed value is bound to.
@@ -260,12 +271,16 @@ func (d *Deployer) run(ctx context.Context, project string, src Source, out io.W
 	unlock := d.lock(project)
 	defer unlock()
 	start := time.Now()
+	var dep store.Deployment
+	// The alert is told last, once the build log is complete, so a failure's
+	// alert can quote its last lines.
+	defer func() { d.reportBuild(context.WithoutCancel(ctx), dep, src) }()
 
 	p, err := d.Store.Project(ctx, project)
 	if err != nil {
 		return err
 	}
-	dep := store.Deployment{
+	dep = store.Deployment{
 		ID: names.NewID(), Project: project, Branch: src.Branch, Commit: src.Commit,
 		Message: src.Message, Status: store.Building, CreatedAt: start, Target: src.Target, Source: src.Kind,
 		SentBy: src.SentBy,
@@ -479,6 +494,7 @@ func (d *Deployer) build(ctx context.Context, dep store.Deployment, src Source, 
 		}
 		opts := apphost.StartOptions{
 			HealthPath: runtime.HealthPath,
+			HealthOff:  runtime.HealthOff,
 			MemoryMB:   runtime.MemoryMB,
 			CPUs:       runtime.CPUs,
 		}

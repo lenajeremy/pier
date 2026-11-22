@@ -32,6 +32,18 @@
   .table.repos {
     --cols: minmax(0, 1fr) 116px 124px;
   }
+  .table.jobs {
+    --cols: minmax(0, 1.3fr) minmax(0, 1fr) 168px 32px;
+  }
+  .table.jobs :is(.t-head, .t-row) > :nth-child(4) {
+    display: none;
+  }
+  .table.runs {
+    --cols: 64px 116px minmax(0, 1fr) 80px;
+  }
+  .table.runs :is(.t-head, .t-row) > :nth-child(4) {
+    display: none;
+  }
   .table.repos :is(.t-head, .t-row) > :nth-child(2) {
     display: none;
   }

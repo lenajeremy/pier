@@ -2722,3 +2722,119 @@ select.input.compact,
   padding-right: 18px;
   color: var(--d-note);
 }
+
+/* ---- Alerts: where they go and what sends one --------------------------- */
+
+/* A channel is laid out like the Integrations header: its mark, what it
+   does, its state, then its actions. */
+.channel-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 76px;
+  padding: 14px 14px 14px 20px;
+  border-bottom: 1px solid var(--d-line-faint);
+}
+.channel-row:last-child {
+  border-bottom: none;
+}
+.channel-what {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.channel-what .bad {
+  color: var(--d-red-text);
+}
+.channel-row .integration-state {
+  width: 52px;
+}
+/* An event that sends an alert: on its own, or with its switch. */
+.event-row {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  min-height: 60px;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--d-line-faint);
+}
+.event-row:last-child {
+  border-bottom: none;
+}
+.event-row .check {
+  min-height: 24px;
+  font-size: 15px;
+  line-height: 24px;
+}
+.event-row .check + .t-note {
+  padding-left: 28px;
+}
+/* ---- Jobs: the list, a job's runs, and the job form ---------------------- */
+
+.table.jobs {
+  --cols: minmax(0, 1.3fr) minmax(0, 1.2fr) 188px 136px 32px;
+}
+.job-name {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.job-name > * {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.job-name a:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.job-last {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.run-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.table.runs {
+  --cols: 72px 124px minmax(0, 1fr) 200px 80px;
+}
+.run-why {
+  color: var(--d-red-text);
+}
+.job-details {
+  padding: 20px;
+}
+/* A request's method beside its path. */
+.method-path {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.method-path .input {
+  flex: 1;
+  min-width: 0;
+}
+.schedule-preview .t-strong {
+  color: var(--d-text);
+}
+
+/* A secret shown once, with its copy button. */
+.secret-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 8px 8px 14px;
+  border-radius: 10px;
+  background: var(--d-well);
+  border: 1px solid var(--d-line-soft);
+}
+.secret-box .mono {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}

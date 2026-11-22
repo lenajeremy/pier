@@ -66,6 +66,22 @@ export interface ContainerStatus {
   cpu_limit?: number
 }
 
+// Health is how production's server did at its health checks, which pierd
+// runs every 30 seconds while production serves it.
+export interface Health {
+  deployment: string
+  state: 'healthy' | 'failing' | 'unhealthy' | 'restarting'
+  asked: string // "GET /health", or "the process"
+  failures: number // in a row
+  checked_at?: string
+  since?: string // when the state began
+  last_failure?: string
+  last_failure_at?: string
+  restarts: number
+  restarted_at?: string
+  next_restart?: string
+}
+
 export interface Project {
   name: string
   address: string
@@ -76,6 +92,7 @@ export interface Project {
   status: Status
   production: Address | null
   container?: ContainerStatus | null
+  health?: Health | null
   preview: Address | null
   branches: Address[]
   deployments: Deployment[]
@@ -175,6 +192,7 @@ export function changePreset(build: Build, preset: Build['preset']): Build {
 export interface RuntimeSettings {
   start_command: string
   health_path: string
+  health_off: boolean // check only that the process runs
   memory_mb: number
   cpus: number
 }
@@ -184,6 +202,43 @@ export interface Settings {
   default_branch: string
   default_memory_mb?: number
   last_build_plan: Record<string, string> | null
+}
+
+// A scheduled job: a command run in a fresh container from production's
+// image, or a request to a path on production.
+export interface Job {
+  id: number
+  project: string
+  name: string
+  kind: 'command' | 'path'
+  schedule: string
+  timezone: string
+  command?: string
+  method?: 'GET' | 'POST'
+  path?: string
+  timeout_s: number
+  enabled: boolean
+  created_at: string
+  updated_at: string
+  description: string // the schedule in words
+  next_run: string | null
+  last_run: JobRun | null
+  running: boolean
+}
+
+export interface JobRun {
+  id: number
+  job: number
+  project: string
+  started_by: 'schedule' | 'manual'
+  status: 'running' | 'succeeded' | 'failed' | 'skipped'
+  deployment?: string
+  scheduled_for?: string
+  started_at: string
+  finished_at?: string
+  exit_code?: number
+  http_status?: number
+  detail?: string
 }
 
 export interface SessionRow {

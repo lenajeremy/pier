@@ -5,7 +5,6 @@ import (
 	"sort"
 	"strings"
 
-	"pier/internal/deploy"
 	"pier/internal/store"
 )
 
@@ -18,38 +17,29 @@ var plainWords = map[string]bool{
 	"production": true, "preview": true, "development": true, "staging": true,
 }
 
-// valueHider hides a project's variable values in the logs a viewer reads.
-// Pier never writes a value to a log, but a build or an app can print one.
-// For members and the owner it changes nothing. Values shorter than six
+// valueHider hides a project's variable values, and the CRON_SECRET Pier
+// makes for its jobs, in the logs and job output a viewer reads. Pier never
+// writes a value to a log, but a build, an app or a job can print one. For
+// members and the owner it changes nothing. Values shorter than six
 // characters are left alone, so "true" and "1" don't blank out a log.
 func (a *API) valueHider(r *http.Request, project string) (func(string) string, error) {
 	keep := func(s string) string { return s }
-	if userFrom(r.Context()).Role != store.RoleViewer || a.Deployer.Secrets == nil {
+	if userFrom(r.Context()).Role != store.RoleViewer {
 		return keep, nil
+	}
+	all, err := a.Deployer.SecretValues(r.Context(), project)
+	if err != nil {
+		return nil, err
 	}
 	seen := map[string]bool{}
 	var values []string
-	for _, scope := range []string{store.TargetProduction, store.TargetPreview} {
-		vars, err := a.Store.BuildVariables(r.Context(), project, scope)
-		if err != nil {
-			return nil, err
-		}
-		for _, v := range vars {
-			binding := deploy.SealedFor(project, scope, v.Name)
-			if v.Project == "" {
-				binding = deploy.SharedBinding(v.Name)
-			}
-			value, err := a.Deployer.Secrets.Open(v.Value, binding)
-			if err != nil {
-				continue // a value that can't be opened can't be printed either
-			}
-			// A log line holds at most one line of a value.
-			for _, line := range strings.Split(value, "\n") {
-				line = strings.TrimSpace(line)
-				if len(line) >= 6 && !plainWords[strings.ToLower(line)] && !seen[line] {
-					seen[line] = true
-					values = append(values, line)
-				}
+	for _, value := range all {
+		// A log line holds at most one line of a value.
+		for _, line := range strings.Split(value, "\n") {
+			line = strings.TrimSpace(line)
+			if len(line) >= 6 && !plainWords[strings.ToLower(line)] && !seen[line] {
+				seen[line] = true
+				values = append(values, line)
 			}
 		}
 	}
