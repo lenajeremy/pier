@@ -7,6 +7,9 @@ import (
 	"time"
 
 	"github.com/charmbracelet/x/ansi"
+
+	"pier/internal/release"
+	"pier/internal/version"
 )
 
 func (m cockpit) View() string {
@@ -75,8 +78,11 @@ func (m cockpit) render() (string, []hit) {
 	}
 	hits = append(hits, atRow(barHits, h-1)...)
 	right, rightInk := "", ""
-	if m.offline != nil {
+	switch {
+	case m.offline != nil:
 		right, rightInk = "can't reach "+m.server, coralTxt
+	case m.updateAvailable():
+		right, rightInk = version.String()+", update available", fgSecondary
 	}
 	return screen(header(w, project, m.server, right, rightInk, m.color), body, bar, w, h), hits
 }
@@ -823,4 +829,10 @@ func (m cockpit) choiceRow(it dialogItem, inner int, focused bool) string {
 		return lit(row, inner, c)
 	}
 	return row
+}
+
+// updateAvailable says whether a newer release is out than this pier, or,
+// for the owner, than pierd: pier upgrade, or pier upgrade --server.
+func (m cockpit) updateAvailable() bool {
+	return release.Newer(m.latest, version.String()) || m.role == "owner" && release.Newer(m.latest, m.serverVer)
 }

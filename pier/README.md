@@ -38,7 +38,13 @@ Run `pier` in a terminal to open the cockpit: every project on the left, and the
 
 ## Versions
 
-`pier version` shows the CLI's release and, when you're signed in, the release of the `pierd` it talks to. When one is behind, it prints the command that updates it. `pier --version` prints only the CLI's, without asking the server. On the server, `pierd version` prints its release, and the dashboard shows it in the account menu and on the Server page. A build from source reports the commit it came from, like `dev-3f9a2c1`.
+`pier version` shows the CLI's release and, when you're signed in, the release of the `pierd` it talks to, and says when a newer release is out. When one is behind, it prints the command that updates it. `pier --version` prints only the CLI's, without asking the server. On the server, `pierd version` prints its release, and the dashboard shows it in the account menu and on the Server page. A build from source reports the commit it came from, like `dev-3f9a2c1`.
+
+### Upgrading
+
+- `pier upgrade` replaces the CLI with the latest release: it downloads the bundle for your computer from GitHub, checks it against the SHA256SUMS inside, makes sure it runs, and puts it in place of the running `pier`. If pier is in a folder you can't write to, it says so and prints the `sudo` command.
+- `pier upgrade --server` asks `pierd` to update itself to the latest release, and follows it until the new `pierd` answers. Only the owner can. The owner can also press "Update to v…" on the dashboard's Server page, which shows when a new release is out (`pierd` asks GitHub every few hours).
+- `pierd` runs as the `pier` user and can't replace its own binary, so the update itself is done by a small root helper the installer sets up (`pierd-upgrade.path` and `pierd-upgrade.service`). On a server installed before this release, run the installer once more to turn it on; until then, the Server page and `pier upgrade --server` say so, with the command.
 
 ## Preview builds
 

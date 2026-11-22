@@ -110,6 +110,8 @@ func main() {
 		err = jobsCmd(os.Args[2:])
 	case "version":
 		err = showVersion(os.Args[2:])
+	case "upgrade":
+		err = upgradeCmd(os.Args[2:])
 	case "--version", "-v":
 		fmt.Println("pier " + version.String())
 		return
@@ -160,6 +162,8 @@ func commandReferenceGroups() []commandGroup {
 			{"pier login [ADDRESS]", "Sign in through your dashboard"},
 			{"pier logout", "Sign this computer out"},
 			{"pier version", "Show pier's and pierd's versions"},
+			{"pier upgrade", "Replace pier with the latest release"},
+			{"pier upgrade --server", "Update pierd on the server (the owner only)"},
 		}},
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"pier/internal/board"
+	"pier/internal/version"
 )
 
 // fixture is a cockpit as it opens on the mock's server, without asking
@@ -350,5 +351,30 @@ func TestLongAgeKeepsItsGap(t *testing.T) {
 	}
 	if w := ansi.StringWidth(row); w > 67 {
 		t.Fatalf("row is %d wide", w)
+	}
+}
+
+// The header says when there's an update: for this pier, or, for the
+// owner, for pierd too.
+func TestHeaderSaysWhenAnUpdateIsOut(t *testing.T) {
+	saved := version.Version
+	version.Version = "v0.7.0"
+	t.Cleanup(func() { version.Version = saved })
+	m := fixture(96, 30, true)
+	m.latest, m.serverVer, m.role = "v0.7.0", "v0.7.0", "owner"
+	if strings.Contains(ansi.Strip(m.View()), "update available") {
+		t.Fatal("an update is shown when everything is current")
+	}
+	m.serverVer, m.role = "v0.6.0", "member"
+	if strings.Contains(ansi.Strip(m.View()), "update available") {
+		t.Fatal("a member is told pierd can be updated")
+	}
+	m.role = "owner"
+	if !strings.Contains(ansi.Strip(m.View()), "v0.7.0, update available") {
+		t.Fatal("the owner isn't told pierd can be updated")
+	}
+	m.latest, m.role = "v0.7.1", "viewer"
+	if !strings.Contains(ansi.Strip(m.View()), "v0.7.0, update available") {
+		t.Fatal("a newer pier isn't shown")
 	}
 }

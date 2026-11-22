@@ -172,6 +172,9 @@ type cockpit struct {
 	ranDeploy bool
 
 	role string // this computer's account's role: owner, member or viewer
+	// The newest release pierd has heard of, and pierd's own, for the
+	// header's "update available".
+	latest, serverVer string
 
 	// The jobs and job screens: each project's jobs as last loaded, the
 	// open job's runs as far as they've been scrolled, and which of the
@@ -191,6 +194,8 @@ type cockpitData struct {
 	projects  []cockpitProject
 	rows      []boardRow
 	role      string
+	latest    string // the newest release pierd has heard of
+	serverVer string // pierd's own release
 	name      string
 	detail    *projectDetail
 	depKey    string
@@ -328,6 +333,9 @@ func fetchCockpit(c config, w want, spinner bool) cockpitData {
 	if who, err := whoAmI(ctx, c); err == nil {
 		out.role = who.Role
 	}
+	if v, err := serverInfo(c); err == nil {
+		out.latest, out.serverVer = v.Latest, v.Version
+	}
 	var b struct{ Rows []boardRow }
 	if out.err = get("Loading the board", "/api/board", &b); out.err != nil {
 		return out
@@ -452,6 +460,9 @@ func (m *cockpit) apply(d cockpitData) {
 	m.offline = nil
 	if d.role != "" {
 		m.role = d.role
+	}
+	if d.serverVer != "" {
+		m.latest, m.serverVer = d.latest, d.serverVer
 	}
 	keepProject := ""
 	if vis := m.visibleProjects(); m.pCursor < len(vis) {
