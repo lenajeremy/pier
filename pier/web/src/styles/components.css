@@ -2655,6 +2655,34 @@ select.input.compact,
 .service-row .bad {
   color: var(--d-red-text);
 }
+/* pierd's version, and beside it the release that's out and the button
+   that updates to it. */
+.service-end {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.release-out {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--d-text);
+  white-space: nowrap;
+}
+.release-out:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.update-command .mono {
+  overflow-wrap: anywhere;
+}
+.update-command .copy {
+  display: inline-flex;
+  vertical-align: middle;
+  margin-left: 4px;
+}
 
 /* ---- Monorepo: one repo, several projects ------------------------------- */
 

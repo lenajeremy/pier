@@ -50,9 +50,12 @@ export function App() {
     const changed = () => check()
     window.addEventListener('pier:signed-out', out)
     window.addEventListener('pier:role-changed', changed)
+    // pierd came back as another release: the session says which.
+    window.addEventListener('pier:refresh-session', changed)
     return () => {
       window.removeEventListener('pier:signed-out', out)
       window.removeEventListener('pier:role-changed', changed)
+      window.removeEventListener('pier:refresh-session', changed)
     }
   }, [check])
 

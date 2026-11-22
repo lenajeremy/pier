@@ -14,15 +14,15 @@ mkdir "$stage"
 # and pierd version say it. VERSION overrides it.
 ver=${VERSION:-$(git describe --tags --always --dirty)}
 CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags "-X pier/internal/version.Version=$ver" -o "$stage/" ./cmd/...
-cp install/install.sh install/pierd.service "$stage/"
+cp install/install.sh install/pierd.service install/pierd-upgrade.path install/pierd-upgrade.service "$stage/"
 printf '%s\n' "$arch" >"$stage/ARCH"
 printf '%s\n' "$ver" >"$stage/VERSION"
 (
  cd "$stage"
  if command -v sha256sum >/dev/null; then
-  sha256sum pier pierd pierd.service ARCH VERSION
+  sha256sum pier pierd install.sh pierd.service pierd-upgrade.path pierd-upgrade.service ARCH VERSION
  else
-  shasum -a 256 pier pierd pierd.service ARCH VERSION
+  shasum -a 256 pier pierd install.sh pierd.service pierd-upgrade.path pierd-upgrade.service ARCH VERSION
  fi >SHA256SUMS
 )
 COPYFILE_DISABLE=1 tar -czf "$work/$name.tar.gz" -C "$work" "$name"

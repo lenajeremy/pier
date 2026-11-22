@@ -7,6 +7,7 @@ import { UsageChart, type History } from '../components/ServerCharts'
 import { toast } from '../components/Toast'
 import { PageHeading, Problem, Skeleton } from '../components/ui'
 import { Gate, onlyOwner, useRole } from '../lib/role'
+import { UpdateEnd, UpdateNote, usePierdUpdate } from '../components/Update'
 
 type Health = {
   os: string
@@ -57,6 +58,8 @@ export function Server({ version: pierd }: { version?: string }) {
   const history = useData<History>('/api/server/history?range=' + range, () => true, 60000)
   const [hover, setHover] = useState<number | null>(null)
   const { owner } = useRole()
+  // The owner can update pierd from here; everyone sees its version.
+  const update = usePierdUpdate(owner)
 
   const clean = (kind: Clean, bytes: number | null) => {
     const freed = bytes ? ` (${size(bytes)})` : ''
@@ -126,7 +129,8 @@ export function Server({ version: pierd }: { version?: string }) {
           ))}
         </div>
       </PageHeading>
-      {error && <Problem>{error.message}</Problem>}
+      {/* While pierd restarts for an update, not answering is expected. */}
+      {error && update.phase !== 'updating' && <Problem>{error.message}</Problem>}
       {!data && !error && (
         <div className="panel">
           <Skeleton rows={4} tall />
@@ -277,9 +281,13 @@ export function Server({ version: pierd }: { version?: string }) {
                         </>
                       )}
                     </span>
+                    {name === 'pierd' && <UpdateNote u={update} />}
                   </div>
-                  <span className={'t-caption' + (down ? ' bad' : ' t-muted')}>
-                    {own || (version ? `Running, version ${state}` : down ? 'Not running' : state)}
+                  <span className="service-end">
+                    <span className={'t-caption' + (down ? ' bad' : ' t-muted')}>
+                      {own || (version ? `Running, version ${state}` : down ? 'Not running' : state)}
+                    </span>
+                    {name === 'pierd' && <UpdateEnd u={update} />}
                   </span>
                 </div>
               )

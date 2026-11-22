@@ -51,8 +51,14 @@ for binary in pier pierd; do
  mv -f "$tmp" "/usr/local/bin/$binary"
 done
 install -m 0644 pierd.service /etc/systemd/system/pierd.service
+# The update helper: pierd asks for an update by writing a release into
+# /var/lib/pier/upgrade/request, and pierd-upgrade.path starts the root
+# service that applies it.
+install -m 0644 pierd-upgrade.path pierd-upgrade.service /etc/systemd/system/
+install -d -m 0700 -o pier -g pier /var/lib/pier/upgrade
 systemctl daemon-reload
 systemctl enable pierd
+systemctl enable --now pierd-upgrade.path
 if systemctl is-active --quiet pierd; then
  systemctl restart pierd
  echo "Pier has been upgraded to $(/usr/local/bin/pierd version 2>/dev/null || echo 'the new release')."

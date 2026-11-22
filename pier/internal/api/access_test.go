@@ -108,6 +108,8 @@ var decisions = map[string]string{
 
 	"PUT /api/settings":               "owner",
 	"POST /api/server/cleanup/{kind}": "owner",
+	"GET /api/server/upgrade":         "owner",
+	"POST /api/server/upgrade":        "owner",
 	"POST /api/github/manifest":       "owner",
 	"GET /github/callback":            "owner",
 	"DELETE /api/github":              "owner",

@@ -147,6 +147,8 @@ func (a *API) routes() []route {
 		// The server itself, for the owner alone.
 		{"PUT /api/settings", owner, "change the server's addresses", a.serverSettings},
 		{"POST /api/server/cleanup/{kind}", owner, "clean up the server", a.cleanup},
+		{"GET /api/server/upgrade", owner, "see server updates", a.upgradeInfo},
+		{"POST /api/server/upgrade", owner, "update the server", a.requestUpgrade},
 		{"POST /api/github/manifest", owner, "connect a GitHub App", a.ghManifest},
 		{"GET /github/callback", owner, "connect a GitHub App", a.ghCallback},
 		{"DELETE /api/github", owner, "disconnect the GitHub App", a.ghDisconnect},

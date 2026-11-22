@@ -177,9 +177,11 @@ func (a *API) session(w http.ResponseWriter, r *http.Request) {
 }
 
 // versionInfo tells a signed-in client, such as pier version, which release
-// of pierd it's talking to.
+// of pierd it's talking to, and the newest release there is, when pierd
+// has heard. upgrade says this pierd can update itself, so pier suggests
+// pier upgrade --server rather than the installer.
 func (a *API) versionInfo(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"version": version.String()})
+	writeJSON(w, http.StatusOK, map[string]any{"version": version.String(), "latest": a.Releases.Latest(), "upgrade": true})
 }
 
 // browserName turns a User-Agent into "Chrome on macOS", for the list of

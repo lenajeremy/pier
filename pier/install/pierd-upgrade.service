@@ -1,0 +1,18 @@
+[Unit]
+Description=Update Pier to the release pierd asked for
+After=network-online.target
+Wants=network-online.target
+
+# Runs as root, because it replaces /usr/local/bin/pierd and restarts pierd.
+# It reads nothing from pierd's request but a version like v0.7.1, refuses
+# any that isn't newer than what's installed, downloads that release's
+# bundle from GitHub over HTTPS and checks it against the SHA256SUMS inside
+# before anything changes. It writes how it went to
+# /var/lib/pier/upgrade/status, which pierd shows.
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/pierd upgrade-apply -data /var/lib/pier
+TimeoutStartSec=15min
+PrivateTmp=true
+ProtectHome=true
+NoNewPrivileges=true

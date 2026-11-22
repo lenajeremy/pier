@@ -21,6 +21,7 @@ import (
 	"pier/internal/deploy"
 	"pier/internal/hook"
 	"pier/internal/jobs"
+	"pier/internal/release"
 	"pier/internal/requests"
 	"pier/internal/store"
 )
@@ -45,6 +46,9 @@ type API struct {
 	Requests       *requests.Log // every request the sites answered; nil keeps none
 	Alerts         *alerts.Notifier
 	Jobs           *jobs.Scheduler
+	Releases       *release.Checker // which release is the newest; nil never says
+	Data           string           // pierd's data folder, where an update is asked for
+	UpgradeUnit    string           // the update helper's unit file, if it's installed
 }
 
 // BoardRow is a board row with the address's full URL.

@@ -1,0 +1,12 @@
+[Unit]
+Description=Watch for pierd asking to be updated
+
+# pierd runs as pier, so it can't replace its own binary or restart itself.
+# To update, it writes the release it wants into this file, and this unit
+# starts pierd-upgrade.service, which does it as root.
+[Path]
+PathExists=/var/lib/pier/upgrade/request
+Unit=pierd-upgrade.service
+
+[Install]
+WantedBy=multi-user.target

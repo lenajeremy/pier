@@ -40,10 +40,12 @@ import (
 	"pier/internal/gitssh"
 	"pier/internal/hook"
 	"pier/internal/jobs"
+	"pier/internal/release"
 	"pier/internal/requests"
 	"pier/internal/router"
 	"pier/internal/secrets"
 	"pier/internal/store"
+	"pier/internal/upgrade"
 	"pier/internal/version"
 	"pier/internal/web"
 )
@@ -70,8 +72,10 @@ func main() {
 		os.Exit(keys(args))
 	case "token":
 		os.Exit(token(args))
+	case "upgrade-apply":
+		os.Exit(upgradeApply(args))
 	default:
-		fmt.Fprintf(os.Stderr, "pierd: unknown command %q (serve, init, reset-password, keys, token, version)\n", cmd)
+		fmt.Fprintf(os.Stderr, "pierd: unknown command %q (serve, init, reset-password, keys, token, version, upgrade-apply)\n", cmd)
 		os.Exit(2)
 	}
 }
@@ -111,6 +115,11 @@ func serve(args []string) int {
 		sleepDefault = v
 	}
 	sleepAfter := fs.Duration("sleep-after", sleepDefault, "how long a preview's server runs without a visit before it sleeps until the next one (0 keeps previews awake)")
+	// For trying updates without GitHub or systemd: where to ask which
+	// release is the newest, and the unit file that says the update helper
+	// is installed. Neither changes where a release is downloaded from.
+	releaseAPI := fs.String("release-api", release.LatestAPI, "where to ask for the latest release; for testing only")
+	upgradeUnit := fs.String("upgrade-unit", upgrade.HelperUnit, "the unit file that shows the update helper is installed; for testing only")
 	fs.Parse(args)
 
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
@@ -252,6 +261,9 @@ func serve(args []string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go notifier.Run(ctx)
+	// Which release is the newest, asked of GitHub every few hours.
+	releases := &release.Checker{API: *releaseAPI, Log: log}
+	go releases.Run(ctx)
 
 	if challengeNS != "" {
 		go func() {
@@ -315,7 +327,8 @@ func serve(args []string) int {
 		Store: st, Deployer: dep, Alerts: notifier, Log: log, Logs: filepath.Join(paths.logs, "jobs"),
 		Commands: dep.Apps, Sites: dialable(*httpAddr), HTTPS: *https,
 	}
-	a := &api.API{StartedAt: time.Now(), Store: st, Deployer: dep, Token: tok, Log: log, Web: web.Handler(), Requests: reqs, SiteListener: dialable(*httpAddr), Alerts: notifier, Jobs: scheduler}
+	a := &api.API{StartedAt: time.Now(), Store: st, Deployer: dep, Token: tok, Log: log, Web: web.Handler(), Requests: reqs, SiteListener: dialable(*httpAddr), Alerts: notifier, Jobs: scheduler,
+		Releases: releases, Data: abs, UpgradeUnit: *upgradeUnit}
 	if err := a.ResumeCleanup(ctx); err != nil {
 		log.Warn("resume preview cleanup", "err", err)
 	}
