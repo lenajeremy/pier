@@ -143,7 +143,7 @@ func (s *Scheduler) Tick(ctx context.Context, t time.Time) {
 		if err != nil || !sched.Matches(t.In(s.zone(j.Timezone))) {
 			continue
 		}
-		if _, err := s.start(ctx, j, store.BySchedule, t); err != nil && !errors.Is(err, ErrRunning) {
+		if _, err := s.start(ctx, j, store.BySchedule, t, ""); err != nil && !errors.Is(err, ErrRunning) {
 			s.Log.Warn("jobs: start a run", "project", j.Project, "job", j.Name, "err", err)
 		}
 	}
@@ -151,7 +151,12 @@ func (s *Scheduler) Tick(ctx context.Context, t time.Time) {
 
 // RunNow starts a run of a job at once, unless one is still going.
 func (s *Scheduler) RunNow(ctx context.Context, j store.Job) (int64, error) {
-	return s.start(ctx, j, store.ByHand, time.Time{})
+	return s.RunNowBy(ctx, j, "")
+}
+
+// RunNowBy is RunNow for someone, whose name the run keeps.
+func (s *Scheduler) RunNowBy(ctx context.Context, j store.Job, who string) (int64, error) {
+	return s.start(ctx, j, store.ByHand, time.Time{}, who)
 }
 
 // Running reports whether a job has a run under way.
@@ -163,7 +168,7 @@ func (s *Scheduler) Running(id int64) bool {
 
 // start begins a run in the background and returns its ID. A run that's
 // due while the last one still goes is recorded as skipped instead.
-func (s *Scheduler) start(ctx context.Context, j store.Job, by string, due time.Time) (int64, error) {
+func (s *Scheduler) start(ctx context.Context, j store.Job, by string, due time.Time, who string) (int64, error) {
 	now := time.Now()
 	s.mu.Lock()
 	if s.running[j.ID] != nil {
@@ -186,7 +191,7 @@ func (s *Scheduler) start(ctx context.Context, j store.Job, by string, due time.
 	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	s.running[j.ID] = cancel
 	s.mu.Unlock()
-	run := store.JobRun{Job: j.ID, Project: j.Project, StartedBy: by, Status: store.RunRunning, ScheduledFor: due, StartedAt: now}
+	run := store.JobRun{Job: j.ID, Project: j.Project, StartedBy: by, RunBy: who, Status: store.RunRunning, ScheduledFor: due, StartedAt: now}
 	id, err := s.Store.StartRun(ctx, run)
 	if err != nil {
 		s.done(j.ID)

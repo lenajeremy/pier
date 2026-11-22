@@ -198,7 +198,7 @@ export function JobPage({ project, id, now }: { project: string; id: string; now
                   </span>
                   <span className="t-muted">
                     <When at={r.started_at} now={now} />
-                    {r.started_by === 'manual' ? ', by hand' : ''}
+                    {r.started_by === 'manual' ? (r.run_by ? `, run by ${r.run_by}` : ', by hand') : ''}
                   </span>
                   <span className="mono t-muted">{took(r, now)}</span>
                 </div>
@@ -305,7 +305,7 @@ export function JobRunPage({ project, id, run: runID, now }: { project: string; 
             <Field label="Started">
               <span>
                 <When at={r.started_at} now={now} />
-                {r.started_by === 'manual' ? ', by hand' : r.scheduled_for ? ', on its schedule' : ''}
+                {r.started_by === 'manual' ? (r.run_by ? `, run by ${r.run_by}` : ', by hand') : r.scheduled_for ? ', on its schedule' : ''}
               </span>
             </Field>
             <Field label="Took">{r.status === 'skipped' ? 'It didn’t run' : took(r, now) + (r.status === 'running' ? ' so far' : '')}</Field>

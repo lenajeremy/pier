@@ -520,6 +520,7 @@ var cockpitKeys = [][2]string{
 	{"r", "roll production back"},
 	{"l", "logs: the project's requests, or a deployment's build"},
 	{"b", "every address on the server"},
+	{"J", "the project's scheduled jobs, their runs, and Run now"},
 	{"o", "open the address"},
 	{"c", "copy the address, where this computer has a clipboard"},
 	{"/", "find a project, or a deployment"},

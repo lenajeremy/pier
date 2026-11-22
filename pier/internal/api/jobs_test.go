@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"pier/internal/auth"
 	"pier/internal/deploy"
@@ -98,5 +99,34 @@ func TestSchedulePreview(t *testing.T) {
 	}
 	if code, out := raw(t, c, "POST", srv.URL+"/api/jobs/schedule", `{"schedule":"every day"}`); code != 400 || !strings.Contains(out, "five parts") {
 		t.Fatalf("not a schedule: %d %s", code, out)
+	}
+}
+
+// A run started with Run now keeps who started it, by name.
+func TestRunNowKeepsWhoRanIt(t *testing.T) {
+	srv, c := jobServer(t)
+	jobsURL := srv.URL + "/api/projects/blog/jobs"
+	if code, out := raw(t, c, "POST", jobsURL, `{"name":"ping","kind":"path","schedule":"0 3 * * *","path":"/api/cron"}`); code != 200 {
+		t.Fatalf("add: %d %s", code, out)
+	}
+	code, out := raw(t, c, "POST", jobsURL+"/1/run", "")
+	if code != 200 || !strings.Contains(out, `"run":1`) {
+		t.Fatalf("run: %d %s", code, out)
+	}
+	// Wait for the run to end, so nothing is still writing when the test
+	// closes the store.
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		code, out = raw(t, c, "GET", jobsURL+"/1/runs/1", "")
+		if code != 200 || strings.Contains(out, `"done":true`) || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if code != 200 || !strings.Contains(out, `"started_by":"manual","run_by":"Owner"`) {
+		t.Fatalf("the run: %d %s", code, out)
+	}
+	if _, out := raw(t, c, "GET", jobsURL+"/1/runs", ""); !strings.Contains(out, `"run_by":"Owner"`) {
+		t.Fatalf("the runs: %s", out)
 	}
 }

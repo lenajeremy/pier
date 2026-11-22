@@ -30,6 +30,9 @@ func (m cockpit) homeActions() []action {
 	}
 	d := m.details[m.shown]
 	if d == nil || !hasProduction(d) {
+		if m.mayHaveJobs() {
+			out = append(out, action{m.jobsLabel(), "J"})
+		}
 		return out
 	}
 	if len(rollbackChoices(d)) > 0 && !m.viewer() {
@@ -37,6 +40,9 @@ func (m cockpit) homeActions() []action {
 	}
 	if d.URL != "" {
 		out = append(out, action{"Open " + d.Address, "o"})
+	}
+	if m.mayHaveJobs() {
+		out = append(out, action{m.jobsLabel(), "J"})
 	}
 	return out
 }
@@ -108,6 +114,10 @@ func (m cockpit) actions() []action {
 		if m.run != nil {
 			return m.deployActions()
 		}
+	case jobsView:
+		return m.jobsActions()
+	case jobView:
+		return m.jobActions()
 	}
 	return nil
 }
@@ -290,6 +300,10 @@ func (m cockpit) mouse(e tea.MouseMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		focused := m.view != homeView || m.focused() == actionsPane
+		if m.view == jobsView || m.view == jobView {
+			focused = m.jobsFocused() == actionsPane
+			m.jobFocus = actionsPane
+		}
 		again := focused && m.actionCursor(m.view, acts) == h.index
 		if m.view == homeView {
 			m.focus = actionsPane
@@ -304,6 +318,20 @@ func (m cockpit) mouse(e tea.MouseMsg) (tea.Model, tea.Cmd) {
 		m.scroll()
 		if again || double {
 			return m.key(keyMsg("enter"))
+		}
+	case hitJob, hitRun:
+		cursor := &m.jCursor
+		if h.kind == hitRun {
+			cursor = &m.rCursor
+		}
+		again := m.jobsFocused() == projectPane && *cursor == h.index
+		m.jobFocus, *cursor = projectPane, h.index
+		m.scroll()
+		if again || double {
+			return m.key(keyMsg("enter"))
+		}
+		if h.kind == hitRun {
+			return m, m.moreRuns()
 		}
 	}
 	return m, nil
@@ -326,6 +354,10 @@ func (m cockpit) wheel(e tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case m.view == boardView:
 		return m.boardKey(keyMsg(key))
+	case m.view == jobsView || m.view == jobView:
+		// The wheel moves through the jobs or the runs, whichever had the
+		// keys before; over the actions it moves through them.
+		return m.key(keyMsg(key))
 	case m.view == homeView:
 		if m.wide() && e.X < leftWidth {
 			m.focus = projectsPane

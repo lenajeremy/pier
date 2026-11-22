@@ -375,6 +375,10 @@ var migrations = []string{
 	CREATE INDEX job_runs_by_time ON job_runs(started_at);
 	ALTER TABLE projects ADD COLUMN cron_secret    TEXT NOT NULL DEFAULT '';
 	ALTER TABLE projects ADD COLUMN cron_secret_at INTEGER NOT NULL DEFAULT 0;`,
+
+	// 20: who ran a job by hand, by name, so a run's history says who
+	// pressed Run now, as a deployment says who sent it.
+	`ALTER TABLE job_runs ADD COLUMN run_by TEXT NOT NULL DEFAULT '';`,
 }
 
 // Open opens (and if needed creates) the database at path.
