@@ -180,7 +180,7 @@ func run(ctx context.Context, conn *pgconn.PgConn, sql string, maxRows int) ([]R
 				if v == nil {
 					continue
 				}
-				s := clip(string(v))
+				s := value(v, fields[i].DataTypeOID)
 				row[i] = &s
 			}
 			res.Rows = append(res.Rows, row)
@@ -208,6 +208,19 @@ func run(ctx context.Context, conn *pgconn.PgConn, sql string, maxRows int) ([]R
 		}
 	}
 	return out, nil
+}
+
+// byteaOID is Postgres's bytea type, which comes as hex: \x89504e47...
+const byteaOID = 17
+
+// value is one value as it's sent: clipped to MaxValue characters, and a
+// long bytea cut to its first 64 bytes with its whole size after them, as
+// …(34538 bytes), since a browser has no use for the rest as hex.
+func value(v []byte, oid uint32) string {
+	if oid == byteaOID && len(v) > 2+128 {
+		return string(v[:2+128]) + fmt.Sprintf("…(%d bytes)", (len(v)-2)/2)
+	}
+	return clip(string(v))
 }
 
 // clip keeps the first MaxValue characters of a value.
@@ -431,7 +444,7 @@ func params(ctx context.Context, conn *pgconn.PgConn, sql string, maxRows int) (
 		row := make([]*string, len(fields))
 		for i, v := range rr.Values() {
 			if v != nil {
-				s := clip(string(v))
+				s := value(v, fields[i].DataTypeOID)
 				row[i] = &s
 			}
 		}

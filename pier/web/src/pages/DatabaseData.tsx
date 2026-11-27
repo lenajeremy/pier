@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { type DbPage, type DbTable } from '../lib/api'
 import { useData } from '../lib/data'
 import { pretty, Value, isNumeric, json } from '../lib/sql'
-import { ChevronLeft, ChevronRight, Close } from '../components/Icons'
+import { ChevronLeft, ChevronRight, Close, Copy } from '../components/Icons'
 import { copy } from '../components/Toast'
 import { Problem, SearchField, Skeleton } from '../components/ui'
 import { databasePath } from './Database'
@@ -27,6 +27,7 @@ const count = (n: number, more: boolean) => (more ? `${n.toLocaleString('en-GB')
 // DataView is the Database tab's Data: the tables on the left, and the
 // chosen one's rows, a page at a time, with a filter and a sort.
 export function DataView({ project, db, onQuery }: { project: string; db: string; onQuery: (draft?: string) => void }) {
+  const side = useSideWidth()
   const tables = useData<{ tables: DbTable[] }>(`${databasePath(project)}/tables?db=${encodeURIComponent(db)}`, () => false, 30_000)
   const [chosen, setChosen] = useState<{ schema: string; name: string } | null>(null)
   const [search, setSearch] = useState('')
@@ -48,7 +49,8 @@ export function DataView({ project, db, onQuery }: { project: string; db: string
   const shown = list.filter((t) => !q || t.name.toLowerCase().includes(q))
   const schemas = [...new Set(shown.map((t) => t.schema))]
   return (
-    <div className="db-browser">
+    <div className="db-browser" style={{ ['--db-side' as string]: `${side.width}px` }}>
+      <SideHandle side={side} />
       <div className="panel db-tables">
         {list.length > 8 && (
           <div className="db-tables-search">
@@ -67,7 +69,9 @@ export function DataView({ project, db, onQuery }: { project: string; db: string
                     className={'db-table' + (current?.schema === t.schema && current?.name === t.name ? ' on' : '')}
                     onClick={() => setChosen({ schema: t.schema, name: t.name })}
                   >
-                    <span className="mono">{t.name}</span>
+                    <span className="mono" data-tip-cut data-tip-mono>
+                      {t.name}
+                    </span>
                     {t.kind === 'table' ? <span className="db-count">{count(t.rows, t.more)}</span> : <span className="db-kind">View</span>}
                   </button>
                 ))}
@@ -146,7 +150,7 @@ function Rows({ project, db, schema, name, onOpen, onQuery }: {
     <div className="panel db-grid-panel">
       <div className="db-grid-head">
         <span className="mono t-small t-strong">{name}</span>
-        <span className="t-note grow">{p ? (p.count === 0 && !p.where ? 'No rows' : `${count(p.count, p.more)} ${p.where ? 'matching' : ''} rows`.replace('  ', ' ')) : ''}</span>
+        <span className="t-note grow">{p ? (p.count === 0 && !p.where ? 'No rows' : `${count(p.count, p.more)}${p.where ? ' matching' : ''} ${p.count === 1 && !p.more ? 'row' : 'rows'}`) : ''}</span>
         <form className="db-filter" onSubmit={filter}>
           <svg viewBox="0 0 24 24" aria-hidden>
             <path d="M4 6H20M7 12H17M10 18H14" />
@@ -265,8 +269,21 @@ function FilterFromLink({ onFilter }: { onFilter: (f: string) => void }) {
   return null
 }
 
+// The row panel's width, kept in this browser.
+const SHEET_KEY = 'pier.rowPanelWidth'
+const SHEET_MIN = 360
+const sheetMax = () => Math.max(SHEET_MIN, Math.round(window.innerWidth * 0.85))
+const sheetWidth = () => {
+  try {
+    const w = Number(localStorage.getItem(SHEET_KEY))
+    return w >= SHEET_MIN ? Math.min(w, sheetMax()) : 480
+  } catch {
+    return 480
+  }
+}
+
 // RowSheet shows one row with every value in full, over the right of the
-// page.
+// page. Its left edge drags to make it wider or narrower.
 function RowSheet({ page, index, name, onMove, onClose, onFollow }: {
   page: DbPage
   index: number
@@ -276,6 +293,17 @@ function RowSheet({ page, index, name, onMove, onClose, onFollow }: {
   onFollow: (ref: DbPage['refs'][string], column: string, value: string) => void
 }) {
   const row = page.rows[index]
+  const [width, setWidth] = useState(sheetWidth)
+  const panel = useRef<HTMLElement>(null)
+  // While it's open the page behind is dimmed and out of reach; a click
+  // there closes it, and the page doesn't scroll under it.
+  useEffect(() => {
+    const before = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.body.style.overflow = before
+    }
+  }, [])
   const id = useMemo(() => {
     const k = page.key?.[0]
     const at = k ? page.columns.findIndex((c) => c.name === k) : -1
@@ -283,6 +311,7 @@ function RowSheet({ page, index, name, onMove, onClose, onFollow }: {
   }, [page, row])
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
+      if ((e.target as HTMLElement)?.closest?.('input, textarea, [role="separator"]')) return
       if (e.key === 'Escape') onClose()
       if (e.key === 'ArrowDown') (e.preventDefault(), onMove(1))
       if (e.key === 'ArrowUp') (e.preventDefault(), onMove(-1))
@@ -290,14 +319,63 @@ function RowSheet({ page, index, name, onMove, onClose, onFollow }: {
     window.addEventListener('keydown', key)
     return () => window.removeEventListener('keydown', key)
   }, [onClose, onMove])
-  const long = (v: string | null, type: string) => v !== null && (v.length > 60 || type === 'json' || type === 'jsonb' || v.includes('\n'))
+  const keep = (w: number) => {
+    const next = Math.min(sheetMax(), Math.max(SHEET_MIN, Math.round(w)))
+    setWidth(next)
+    try {
+      localStorage.setItem(SHEET_KEY, String(next))
+    } catch {
+      // A private window forgets the width.
+    }
+  }
+  const drag = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    const handle = e.currentTarget
+    handle.setPointerCapture(e.pointerId)
+    document.body.classList.add('resizing')
+    const move = (m: PointerEvent) => keep(window.innerWidth - m.clientX)
+    const up = () => {
+      handle.removeEventListener('pointermove', move)
+      handle.removeEventListener('pointerup', up)
+      handle.removeEventListener('pointercancel', up)
+      document.body.classList.remove('resizing')
+    }
+    handle.addEventListener('pointermove', move)
+    handle.addEventListener('pointerup', up)
+    handle.addEventListener('pointercancel', up)
+  }
+  const long = (v: string | null, type: string) => v !== null && type !== 'bytea' && (v.length > 60 || type === 'json' || type === 'jsonb' || v.includes('\n'))
   const object = Object.fromEntries(page.columns.map((c, i) => [c.name, row[i]]))
   const firstRef = page.columns.findIndex((c) => page.refs[c.name] && row[page.columns.indexOf(c)] !== null)
+  const ref = firstRef >= 0 ? page.refs[page.columns[firstRef].name] : null
+  const title = id ?? String(page.offset + index + 1)
   return (
-    <aside className="db-sheet" aria-label="Row">
+    <>
+    <div className="db-sheet-backdrop" onPointerDown={onClose} aria-hidden />
+    <aside ref={panel} className="db-sheet" role="dialog" aria-modal="true" aria-label="Row" style={{ width }}>
+      <div
+        className="db-sheet-resize"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize the row panel"
+        aria-valuenow={width}
+        aria-valuemin={SHEET_MIN}
+        aria-valuemax={sheetMax()}
+        tabIndex={0}
+        onPointerDown={drag}
+        onDoubleClick={() => keep(480)}
+        onKeyDown={(e) => {
+          if (e.key === 'ArrowLeft') (e.preventDefault(), keep(width + 32))
+          if (e.key === 'ArrowRight') (e.preventDefault(), keep(width - 32))
+        }}
+      />
       <div className="db-sheet-head">
-        <span className="t-small t-strong">{id ? `Row ${id}` : `Row ${page.offset + index + 1}`}</span>
-        <span className="mono t-note grow">{name}</span>
+        <div className="db-sheet-title">
+          <span className="mono t-note">{name}</span>
+          <span className="t-small t-strong db-sheet-id" data-tip={title.length > 24 ? title : undefined} data-tip-mono>
+            Row <span className="mono">{title}</span>
+          </span>
+        </div>
         <button className="icon-btn" aria-label="Row above" disabled={index === 0} onClick={() => onMove(-1)}>
           <ChevronLeft />
         </button>
@@ -313,8 +391,12 @@ function RowSheet({ page, index, name, onMove, onClose, onFollow }: {
           {page.columns.map((c, i) =>
             long(row[i], c.type) ? null : (
               <div key={c.name} className="db-field">
-                <span className="t-quiet">{c.name}</span>
-                <span>{row[i] === null ? <span className="v-null">NULL</span> : c.type === 'bool' ? (row[i] === 't' ? 'true' : 'false') : row[i]}</span>
+                <span className="t-quiet" data-tip={c.type} data-tip-mono>
+                  {c.name}
+                </span>
+                <span>
+                  {row[i] === null || c.type === 'bool' || c.type === 'bytea' ? <Value value={row[i]} type={c.type} /> : row[i]}
+                </span>
               </div>
             ),
           )}
@@ -322,7 +404,14 @@ function RowSheet({ page, index, name, onMove, onClose, onFollow }: {
         {page.columns.map((c, i) =>
           long(row[i], c.type) ? (
             <div key={c.name} className="db-long">
-              <span className="t-quiet">{c.name}</span>
+              <div className="db-long-head">
+                <span className="t-quiet" data-tip={c.type} data-tip-mono>
+                  {c.name}
+                </span>
+                <button className="icon-btn bare small" aria-label={`Copy ${c.name}`} data-tip="Copy" onClick={() => copy(row[i]!, c.name)}>
+                  <Copy />
+                </button>
+              </div>
               <pre className="db-value">{c.type === 'json' || c.type === 'jsonb' ? json(pretty(row[i]!)) : row[i]}</pre>
             </div>
           ) : null,
@@ -332,12 +421,86 @@ function RowSheet({ page, index, name, onMove, onClose, onFollow }: {
         <button className="btn quiet" onClick={() => copy(JSON.stringify(object, null, 2), 'the row as JSON')}>
           Copy as JSON
         </button>
-        {firstRef >= 0 && (
-          <button className="btn quiet" onClick={() => onFollow(page.refs[page.columns[firstRef].name], page.refs[page.columns[firstRef].name].column, row[firstRef]!)}>
-            Open {singular(page.refs[page.columns[firstRef].name].table)} {row[firstRef]}
+        {ref && (
+          <button
+            className="btn quiet db-follow"
+            data-tip={`${ref.table} where ${ref.column} = ${row[firstRef]}`}
+            data-tip-mono
+            onClick={() => onFollow(ref, ref.column, row[firstRef]!)}
+          >
+            <span>Open {singular(ref.table)}</span>
+            <span className="mono db-follow-value">{row[firstRef]}</span>
           </button>
         )}
       </div>
     </aside>
+    </>
+  )
+}
+
+// The column beside the grid (tables, or the query history) is as wide as
+// its owner drags it, remembered in this browser.
+const SIDE_KEY = 'pier.dbSideWidth'
+const SIDE_MIN = 200
+const SIDE_MAX = 480
+
+export function useSideWidth() {
+  const [width, setWidth] = useState(() => {
+    try {
+      const w = Number(localStorage.getItem(SIDE_KEY))
+      return w >= SIDE_MIN && w <= SIDE_MAX ? w : 232
+    } catch {
+      return 232
+    }
+  })
+  const keep = (w: number) => {
+    const next = Math.min(SIDE_MAX, Math.max(SIDE_MIN, Math.round(w)))
+    setWidth(next)
+    try {
+      localStorage.setItem(SIDE_KEY, String(next))
+    } catch {
+      // A private window forgets it.
+    }
+  }
+  return { width, keep }
+}
+
+// SideHandle is the side column's right edge, which drags to resize it.
+export function SideHandle({ side }: { side: ReturnType<typeof useSideWidth> }) {
+  const drag = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    const handle = e.currentTarget
+    const left = handle.parentElement!.getBoundingClientRect().left
+    handle.setPointerCapture(e.pointerId)
+    document.body.classList.add('resizing')
+    // The handle sits in the gap after the column, 8px past its edge.
+    const move = (m: PointerEvent) => side.keep(m.clientX - left - 8)
+    const up = () => {
+      handle.removeEventListener('pointermove', move)
+      handle.removeEventListener('pointerup', up)
+      handle.removeEventListener('pointercancel', up)
+      document.body.classList.remove('resizing')
+    }
+    handle.addEventListener('pointermove', move)
+    handle.addEventListener('pointerup', up)
+    handle.addEventListener('pointercancel', up)
+  }
+  return (
+    <div
+      className="db-side-resize"
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize the list"
+      aria-valuenow={side.width}
+      aria-valuemin={SIDE_MIN}
+      aria-valuemax={SIDE_MAX}
+      tabIndex={0}
+      onPointerDown={drag}
+      onDoubleClick={() => side.keep(232)}
+      onKeyDown={(e) => {
+        if (e.key === 'ArrowRight') (e.preventDefault(), side.keep(side.width + 24))
+        if (e.key === 'ArrowLeft') (e.preventDefault(), side.keep(side.width - 24))
+      }}
+    />
   )
 }

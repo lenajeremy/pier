@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom'
 // Tooltips are the one light surface (Components 4): small, short, after
 // 400ms of hover or at once on keyboard focus. Any element says what it
 // shows with data-tip; data-tip-mono sets it in mono, for exact times.
+// data-tip-cut shows the element's own text, only when it's cut off.
 type Tip = { text: string; mono: boolean; x: number; y: number; below: boolean }
 
 export function TooltipHost() {
@@ -12,9 +13,11 @@ export function TooltipHost() {
   const box = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    const target = (e: Event) => (e.target as Element | null)?.closest?.<HTMLElement>('[data-tip]') ?? null
+    const target = (e: Event) => (e.target as Element | null)?.closest?.<HTMLElement>('[data-tip], [data-tip-cut]') ?? null
     const show = (el: HTMLElement) => {
-      const text = el.dataset.tip
+      const cut = 'tipCut' in el.dataset
+      if (cut && el.scrollWidth <= el.clientWidth) return
+      const text = cut ? el.textContent?.trim() : el.dataset.tip
       if (!text) return
       const r = el.getBoundingClientRect()
       const below = r.top < 44

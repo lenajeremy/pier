@@ -45,6 +45,9 @@
   .db-browser {
     grid-template-columns: minmax(0, 1fr);
   }
+  .db-side-resize {
+    display: none;
+  }
   .db-tables,
   .db-history {
     position: static;

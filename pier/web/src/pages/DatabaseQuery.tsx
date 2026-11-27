@@ -5,6 +5,7 @@ import { csv, Highlight, isNumeric, lineOf, Value } from '../lib/sql'
 import { Spinner } from '../components/Spinner'
 import { copy } from '../components/Toast'
 import { databasePath } from './Database'
+import { SideHandle, useSideWidth } from './DatabaseData'
 
 // A query someone ran, kept in their browser: the SQL, which database,
 // and what it did.
@@ -60,6 +61,7 @@ function changed(tag: string): string {
 // QueryView is the Database tab's Query: an editor, the result of what ran,
 // and the queries this person ran before.
 export function QueryView({ project, db, role, draft }: { project: string; db: string; role: string; draft?: string }) {
+  const side = useSideWidth()
   const [sql, setSql] = useState(draft ?? '')
   const [ran, setRan] = useState<Ran[]>(() => history(project))
   const [out, setOut] = useState<{ sql: string; outcome: DbOutcome } | null>(null)
@@ -105,7 +107,8 @@ export function QueryView({ project, db, role, draft }: { project: string; db: s
   }
 
   return (
-    <div className="db-browser">
+    <div className="db-browser" style={{ ['--db-side' as string]: `${side.width}px` }}>
+      <SideHandle side={side} />
       <div className="panel db-history">
         <div className="db-history-head">
           <span className="t-small t-strong">History</span>

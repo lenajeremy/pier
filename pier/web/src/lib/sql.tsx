@@ -14,8 +14,18 @@ export const isNumeric = (type: string) => numeric.has(type)
 export function Value({ value, type }: { value: string | null; type: string }) {
   if (value === null) return <span className="v-null">NULL</span>
   if (type === 'bool') return <>{value === 't' ? 'true' : 'false'}</>
+  if (type === 'bytea') return <span className="v-dim">{binary(value)}</span>
   if (times.has(type)) return <>{value.replace(/\.\d+/, '').replace(/\+00$/, '')}</>
   return <>{value.length > 300 ? value.slice(0, 300) : value}</>
+}
+
+// binary describes a bytea value by its size. pierd sends a long one cut
+// short, with its whole size at the end: \x8950…(34538 bytes).
+export function binary(hex: string): string {
+  const whole = /…\((\d+) bytes\)$/.exec(hex)
+  const n = whole ? Number(whole[1]) : Math.max(0, Math.floor((hex.length - 2) / 2))
+  const sized = n >= 1e6 ? `${(n / 1e6).toFixed(1)} MB` : n >= 1e3 ? `${(n / 1e3).toFixed(1)} KB` : `${n} bytes`
+  return `binary, ${sized}`
 }
 
 // json colours a JSON value on one line: keys dimmed, punctuation faint.
