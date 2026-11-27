@@ -30,6 +30,12 @@ const (
 	HealthRecovered = "health.recovered"
 	JobFailed       = "job.failed"
 	JobRecovered    = "job.recovered"
+	// A project's Postgres server stopped answering, or answers again.
+	DatabaseDown      = "database.down"
+	DatabaseRecovered = "database.recovered"
+	// A nightly database backup failed, or the next one worked.
+	BackupFailed    = "backup.failed"
+	BackupRecovered = "backup.recovered"
 	TestAlert       = "test"
 )
 

@@ -138,6 +138,9 @@ type StartOptions struct {
 	HealthOff    bool // check only that the process runs and listens
 	MemoryMB     int
 	CPUs         float64
+	// Networks are joined as well as the network every app is on: the
+	// project's own, when it has a database.
+	Networks []string
 }
 
 // ContainerStatus summarizes the live state of an application container.
@@ -236,10 +239,31 @@ func (h *Host) StartWithOptions(ctx context.Context, name string, env []string, 
 	if err != nil {
 		return err
 	}
+	if err := h.joinNetworks(ctx, c, created.ID, opts.Networks); err != nil {
+		return err
+	}
 	if _, err = c.ContainerStart(ctx, created.ID, client.ContainerStartOptions{}); err != nil {
 		return err
 	}
 	return h.Ready(ctx, name)
+}
+
+// joinNetworks connects a container that hasn't started to more networks,
+// each of which must be this instance's.
+func (h *Host) joinNetworks(ctx context.Context, c *client.Client, id string, names []string) error {
+	for _, name := range names {
+		netw, err := c.NetworkInspect(ctx, name, client.NetworkInspectOptions{})
+		if err != nil {
+			return fmt.Errorf("network %s: %w", name, err)
+		}
+		if netw.Network.Labels[ownerLabel] != h.owner {
+			return fmt.Errorf("the network %s belongs to something else", name)
+		}
+		if _, err := c.NetworkConnect(ctx, name, client.NetworkConnectOptions{Container: id}); err != nil {
+			return fmt.Errorf("join network %s: %w", name, err)
+		}
+	}
+	return nil
 }
 
 // Status inspects an owned application container and reports its health, restart count, and limits.

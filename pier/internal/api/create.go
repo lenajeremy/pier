@@ -84,6 +84,8 @@ func (a *API) deleteProject(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "that isn't a project name"})
 		return
 	}
+	_, dbErr := a.Store.Database(r.Context(), name)
+	hadDatabase := dbErr == nil
 	err := a.Store.DeleteProject(r.Context(), name)
 	if errors.Is(err, store.ErrNotFound) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "there's no project called " + name})
@@ -99,6 +101,14 @@ func (a *API) deleteProject(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := a.Deployer.Sync(r.Context()); err != nil {
 		a.Log.Warn("sync router after project deletion", "project", name, "err", err)
+	}
+	if hadDatabase && a.Databases != nil {
+		// A last backup is kept for a while, in case the project comes back.
+		ctx, cancel := work(r)
+		if err := a.Databases.Purge(ctx, name); err != nil {
+			a.Log.Warn("remove a deleted project's database", "project", name, "err", err)
+		}
+		cancel()
 	}
 	if err := a.finishFiles(r.Context()); err != nil {
 		a.Log.Warn("deferred cleanup after project deletion", "project", name, "err", err)

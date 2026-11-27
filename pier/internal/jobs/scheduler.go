@@ -278,7 +278,7 @@ func (s *Scheduler) command(ctx context.Context, j store.Job, dep store.Deployme
 	if s.Commands == nil {
 		return "This server can't run containers."
 	}
-	env, err := s.Deployer.Variables(ctx, j.Project, store.TargetProduction)
+	env, networks, err := s.Deployer.JobEnvironment(ctx, j.Project)
 	if err != nil {
 		return "Pier couldn't open the project's variables: " + err.Error()
 	}
@@ -290,7 +290,7 @@ func (s *Scheduler) command(ctx context.Context, j store.Job, dep store.Deployme
 	log.say("in a fresh container from %s, production's image", dep.ID)
 	code, err := s.Commands.RunJob(ctx, apphost.JobSpec{
 		App: dep.Runtime, Command: j.Command, Env: env, MemoryMB: p.Runtime.MemoryMB, CPUs: p.Runtime.CPUs,
-		Run: strconv.FormatInt(run.ID, 10),
+		Run: strconv.FormatInt(run.ID, 10), Networks: networks,
 	}, func(l apphost.LogLine) error {
 		log.line(l.Stream, l.Text)
 		return nil

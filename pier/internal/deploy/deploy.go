@@ -66,6 +66,9 @@ type Deployer struct {
 	// Alerts hears about every build that fails, and the next one of the
 	// same address that works, and decides what to send. Nil sends nothing.
 	Alerts Alerter
+	// Databases gives a project's deployments DATABASE_URL when it has a
+	// Postgres database. Nil gives none.
+	Databases Databases
 
 	mu         sync.Mutex
 	locks      map[string]*sync.Mutex
@@ -350,7 +353,19 @@ func (d *Deployer) run(ctx context.Context, project string, src Source, out io.W
 	if len(varNames) > 0 {
 		say(out, "build", "with %s for %s: %s", plural(len(varNames), "variable"), src.Target, strings.Join(varNames, ", "))
 	}
-	res, err := d.build(buildCtx, dep, src, p.Build, p.Runtime, env, out)
+	env, networks, dbNote, err := d.withDatabase(ctx, project, src.Target, src.Branch, env)
+	if err != nil {
+		dep.Status, dep.Error, dep.BuildMS = store.Failed, "the project's database: "+err.Error(), time.Since(start).Milliseconds()
+		if ferr := d.Store.FinishDeployment(context.WithoutCancel(ctx), dep); ferr != nil {
+			d.Log.Error("record failed build", "err", ferr)
+		}
+		say(out, "pier", "can't give this build its database: %s", err)
+		return err
+	}
+	if dbNote != "" {
+		say(out, "build", "%s", dbNote)
+	}
+	res, err := d.build(buildCtx, dep, src, p.Build, p.Runtime, env, networks, out)
 	elapsed := time.Since(start)
 	dep.BuildMS = elapsed.Milliseconds()
 	dep.Framework, dep.Files, dep.Bytes, dep.Plan = res.label, res.files, res.bytes, res.plan
@@ -423,7 +438,7 @@ type result struct {
 	plan   string
 }
 
-func (d *Deployer) build(ctx context.Context, dep store.Deployment, src Source, settings store.Build, runtime store.Runtime, env []string, out io.Writer) (result, error) {
+func (d *Deployer) build(ctx context.Context, dep store.Deployment, src Source, settings store.Build, runtime store.Runtime, env, networks []string, out io.Writer) (result, error) {
 	var res result
 	if err := os.MkdirAll(d.Tmp, 0o755); err != nil {
 		return res, err
@@ -497,6 +512,7 @@ func (d *Deployer) build(ctx context.Context, dep store.Deployment, src Source, 
 			HealthOff:  runtime.HealthOff,
 			MemoryMB:   runtime.MemoryMB,
 			CPUs:       runtime.CPUs,
+			Networks:   networks,
 		}
 		if plan.Runtime == "dockerfile" && runtime.StartCommand != "" {
 			opts.StartCommand = runtime.StartCommand

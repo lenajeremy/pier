@@ -1,0 +1,375 @@
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+
+	"pier/internal/apphost"
+	"pier/internal/database"
+	"pier/internal/store"
+)
+
+// databaseView is a project's Database tab: the server, its previews'
+// databases, its backups, and whether production was started before the
+// database was added, so it doesn't have DATABASE_URL yet.
+type databaseView struct {
+	Database      *database.Status `json:"database"`
+	Backups       []store.Backup   `json:"backups"`
+	MemoryChoices []int            `json:"memory_choices"`
+	Default       int              `json:"default_memory_mb"`
+	Image         string           `json:"image"`
+	// Production is what production serves now, if it's a server app.
+	Production *databaseProduction `json:"production"`
+	NightlyAt  int                 `json:"nightly_at"` // the hour, server time
+	Timezone   string              `json:"timezone"`
+}
+
+type databaseProduction struct {
+	Deployment string `json:"deployment"`
+	// Connected reports whether production was started after the database
+	// was added, so it has DATABASE_URL.
+	Connected bool `json:"connected"`
+}
+
+// operation is how long a database change may take once it has begun. It
+// isn't cut short when the person who asked closes the page: a database
+// half made or half restored is worse than one that finishes unwatched.
+const operation = 10 * time.Minute
+
+func (a *API) databasesReady(w http.ResponseWriter) bool {
+	if a.Databases == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Databases aren't available on this server."})
+		return false
+	}
+	return true
+}
+
+func (a *API) databaseProject(w http.ResponseWriter, r *http.Request) (string, bool) {
+	name := r.PathValue("project")
+	if !a.databasesReady(w) {
+		return "", false
+	}
+	if _, err := a.Store.Project(r.Context(), name); errors.Is(err, store.ErrNotFound) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "there's no project called " + name})
+		return "", false
+	} else if err != nil {
+		a.fail(w, err)
+		return "", false
+	}
+	return name, true
+}
+
+// databaseError answers for the errors a database change can end with.
+func (a *API) databaseError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, database.ErrNone):
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "This project has no database."})
+	case errors.Is(err, store.ErrExists):
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "This project has a database already."})
+	case errors.Is(err, store.ErrNotFound):
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "There's no such backup."})
+	default:
+		a.Log.Warn("database", "err", err)
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": sentenceOf(err)})
+	}
+}
+
+func sentenceOf(err error) string {
+	s := strings.TrimSpace(err.Error())
+	if s == "" {
+		return "It failed."
+	}
+	s = strings.ToUpper(s[:1]) + s[1:]
+	if !strings.HasSuffix(s, ".") {
+		s += "."
+	}
+	return s
+}
+
+func (a *API) getDatabase(w http.ResponseWriter, r *http.Request) {
+	project, ok := a.databaseProject(w, r)
+	if !ok {
+		return
+	}
+	v := databaseView{MemoryChoices: apphost.DatabaseMemoryChoices, Default: database.DefaultMemoryMB, Image: database.Image,
+		NightlyAt: database.NightlyAt, Timezone: time.Now().Location().String(), Backups: []store.Backup{}}
+	st, err := a.Databases.Status(r.Context(), project)
+	if err != nil && !errors.Is(err, database.ErrNone) {
+		a.fail(w, err)
+		return
+	}
+	if err == nil {
+		if st.Previews == nil {
+			st.Previews = []database.PreviewStatus{}
+		}
+		v.Database = &st
+	}
+	if v.Backups, err = a.Store.Backups(r.Context(), project); err != nil {
+		a.fail(w, err)
+		return
+	}
+	if v.Backups == nil {
+		v.Backups = []store.Backup{}
+	}
+	hide, err := a.valueHider(r, project)
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	for i := range v.Backups {
+		v.Backups[i].Error = hide(v.Backups[i].Error)
+	}
+	if v.Database != nil {
+		v.Database.Problem = hide(v.Database.Problem)
+		apps, err := a.Store.ProductionApps(r.Context())
+		if err != nil {
+			a.fail(w, err)
+			return
+		}
+		for _, app := range apps {
+			if app.Project != project {
+				continue
+			}
+			if dep, err := a.Store.Deployment(r.Context(), app.Deployment); err == nil {
+				v.Production = &databaseProduction{Deployment: dep.ID, Connected: dep.CreatedAt.After(v.Database.CreatedAt)}
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, v)
+}
+
+// databaseURL shows production's DATABASE_URL, which holds its password,
+// to members and the owner.
+func (a *API) databaseURL(w http.ResponseWriter, r *http.Request) {
+	project, ok := a.databaseProject(w, r)
+	if !ok {
+		return
+	}
+	u, _, err := a.Databases.Production(r.Context(), project)
+	if err != nil {
+		a.databaseError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"url": u})
+}
+
+type databaseRequest struct {
+	MemoryMB int `json:"memory_mb"`
+}
+
+func readDatabaseRequest(w http.ResponseWriter, r *http.Request) (databaseRequest, bool) {
+	var req databaseRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "that isn't JSON"})
+		return req, false
+	}
+	if req.MemoryMB == 0 {
+		req.MemoryMB = database.DefaultMemoryMB
+	}
+	if !database.ValidMemory(req.MemoryMB) {
+		fieldError(w, "memory_mb", "Choose one of the memory sizes listed.")
+		return req, false
+	}
+	return req, true
+}
+
+// work is the context a database change runs in: the request's values,
+// but not its end.
+func work(r *http.Request) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(r.Context()), operation)
+}
+
+func (a *API) createDatabase(w http.ResponseWriter, r *http.Request) {
+	project, ok := a.databaseProject(w, r)
+	if !ok {
+		return
+	}
+	req, ok := readDatabaseRequest(w, r)
+	if !ok {
+		return
+	}
+	ctx, cancel := work(r)
+	defer cancel()
+	if err := a.Databases.Create(ctx, project, req.MemoryMB, userFrom(r.Context()).DisplayName()); err != nil {
+		a.databaseError(w, err)
+		return
+	}
+	a.getDatabase(w, r)
+}
+
+func (a *API) changeDatabase(w http.ResponseWriter, r *http.Request) {
+	project, ok := a.databaseProject(w, r)
+	if !ok {
+		return
+	}
+	req, ok := readDatabaseRequest(w, r)
+	if !ok {
+		return
+	}
+	ctx, cancel := work(r)
+	defer cancel()
+	if err := a.Databases.SetMemory(ctx, project, req.MemoryMB, userFrom(r.Context()).DisplayName()); err != nil {
+		a.databaseError(w, err)
+		return
+	}
+	a.getDatabase(w, r)
+}
+
+func (a *API) restartDatabase(w http.ResponseWriter, r *http.Request) {
+	project, ok := a.databaseProject(w, r)
+	if !ok {
+		return
+	}
+	ctx, cancel := work(r)
+	defer cancel()
+	if err := a.Databases.Restart(ctx, project, userFrom(r.Context()).DisplayName()); err != nil {
+		a.databaseError(w, err)
+		return
+	}
+	a.getDatabase(w, r)
+}
+
+func (a *API) deleteDatabase(w http.ResponseWriter, r *http.Request) {
+	project, ok := a.databaseProject(w, r)
+	if !ok {
+		return
+	}
+	ctx, cancel := work(r)
+	defer cancel()
+	if err := a.Databases.Delete(ctx, project, userFrom(r.Context()).DisplayName()); err != nil {
+		a.databaseError(w, err)
+		return
+	}
+	a.getDatabase(w, r)
+}
+
+func (a *API) backUpDatabase(w http.ResponseWriter, r *http.Request) {
+	project, ok := a.databaseProject(w, r)
+	if !ok {
+		return
+	}
+	ctx, cancel := work(r)
+	defer cancel()
+	if _, err := a.Store.Database(ctx, project); errors.Is(err, store.ErrNotFound) {
+		a.databaseError(w, database.ErrNone)
+		return
+	}
+	by := userFrom(r.Context()).DisplayName()
+	b, err := a.Databases.Backup(ctx, project, store.BackupManual, by)
+	if err != nil {
+		a.databaseError(w, err)
+		return
+	}
+	a.event(r.Context(), project, "Backed up the database", size(b.Bytes), "")
+	writeJSON(w, http.StatusCreated, b)
+}
+
+func (a *API) backupFrom(w http.ResponseWriter, r *http.Request) (store.Backup, bool) {
+	project, ok := a.databaseProject(w, r)
+	if !ok {
+		return store.Backup{}, false
+	}
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "There's no such backup."})
+		return store.Backup{}, false
+	}
+	b, err := a.Store.BackupByID(r.Context(), project, id)
+	if err != nil {
+		a.databaseError(w, err)
+		return b, false
+	}
+	return b, true
+}
+
+// downloadBackup sends a backup's file, which pg_restore reads.
+func (a *API) downloadBackup(w http.ResponseWriter, r *http.Request) {
+	b, ok := a.backupFrom(w, r)
+	if !ok {
+		return
+	}
+	if b.State != store.BackupDone || b.File == "" {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "That backup didn't finish, so there's no file."})
+		return
+	}
+	f, err := os.Open(a.Databases.BackupPath(b))
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "The backup's file is gone from this server."})
+		return
+	}
+	defer f.Close()
+	name := fmt.Sprintf("%s-%s.dump", b.Project, b.StartedAt.UTC().Format("2006-01-02-1504"))
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
+	w.Header().Set("Cache-Control", "no-store")
+	http.ServeContent(w, r, name, b.FinishedAt, f)
+}
+
+func (a *API) restoreBackup(w http.ResponseWriter, r *http.Request) {
+	b, ok := a.backupFrom(w, r)
+	if !ok {
+		return
+	}
+	ctx, cancel := work(r)
+	defer cancel()
+	if err := a.Databases.Restore(ctx, b.Project, b.ID, userFrom(r.Context()).DisplayName()); err != nil {
+		a.databaseError(w, err)
+		return
+	}
+	a.getDatabase(w, r)
+}
+
+// deletePreviewDatabase removes one branch's preview database; the branch's
+// next preview gets a new, empty one.
+func (a *API) deletePreviewDatabase(w http.ResponseWriter, r *http.Request) {
+	project, ok := a.databaseProject(w, r)
+	if !ok {
+		return
+	}
+	previews, err := a.Store.PreviewDatabases(r.Context(), project)
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	for _, p := range previews {
+		if p.Name != r.PathValue("name") {
+			continue
+		}
+		ctx, cancel := work(r)
+		defer cancel()
+		if err := a.Databases.DropPreview(ctx, project, p.Branch); err != nil {
+			a.databaseError(w, err)
+			return
+		}
+		what := p.Branch
+		if what == "" {
+			what = "previews sent with pier deploy"
+		}
+		a.event(r.Context(), project, "Deleted a preview database", what, "")
+		a.getDatabase(w, r)
+		return
+	}
+	writeJSON(w, http.StatusNotFound, map[string]string{"error": "There's no such preview database."})
+}
+
+// size writes a number of bytes the way the dashboard does.
+func size(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(unit), 0
+	for m := n / unit; m >= unit; m /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), "KMGTPE"[exp])
+}

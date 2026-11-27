@@ -35,6 +35,7 @@ import (
 	"pier/internal/apphost"
 	"pier/internal/build"
 	"pier/internal/challengedns"
+	"pier/internal/database"
 	"pier/internal/deploy"
 	"pier/internal/dnscheck"
 	"pier/internal/gitssh"
@@ -252,6 +253,10 @@ func serve(args []string) int {
 	// Alerts go out in the background, so a deploy never waits for one.
 	notifier := &alerts.Notifier{Store: st, Box: box, Log: log, Dashboard: dep.URL(*address), Server: *address}
 	dep.Alerts = notifier
+	// Each project's Postgres database, its previews' databases, and their
+	// backups, kept in the data folder.
+	dbs := &database.Manager{Store: st, Box: box, Host: dep.Apps, Backups: filepath.Join(*data, "backups"), Log: log, Alerts: notifier}
+	dep.Databases = dbs
 
 	self, err := os.Executable()
 	if err != nil {
@@ -328,7 +333,7 @@ func serve(args []string) int {
 		Commands: dep.Apps, Sites: dialable(*httpAddr), HTTPS: *https,
 	}
 	a := &api.API{StartedAt: time.Now(), Store: st, Deployer: dep, Token: tok, Log: log, Web: web.Handler(), Requests: reqs, SiteListener: dialable(*httpAddr), Alerts: notifier, Jobs: scheduler,
-		Releases: releases, Data: abs, UpgradeUnit: *upgradeUnit}
+		Databases: dbs, Releases: releases, Data: abs, UpgradeUnit: *upgradeUnit}
 	if err := a.ResumeCleanup(ctx); err != nil {
 		log.Warn("resume preview cleanup", "err", err)
 	}
@@ -350,6 +355,7 @@ func serve(args []string) int {
 	go func() { defer close(jobsDone); scheduler.Run(ctx) }()
 	defer func() { stop(); <-jobsDone }()
 	go a.SampleServer(ctx)
+	go dbs.Run(ctx)
 	domainsDone := make(chan struct{})
 	go func() { defer close(domainsDone); a.RunDomainChecks(ctx) }()
 	defer func() { stop(); <-domainsDone }()

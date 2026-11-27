@@ -18,6 +18,7 @@ import (
 
 	"pier/internal/alerts"
 	"pier/internal/board"
+	"pier/internal/database"
 	"pier/internal/deploy"
 	"pier/internal/hook"
 	"pier/internal/jobs"
@@ -46,6 +47,7 @@ type API struct {
 	Requests       *requests.Log // every request the sites answered; nil keeps none
 	Alerts         *alerts.Notifier
 	Jobs           *jobs.Scheduler
+	Databases      *database.Manager // each project's Postgres; nil when this server has none
 	Releases       *release.Checker // which release is the newest; nil never says
 	Data           string           // pierd's data folder, where an update is asked for
 	UpgradeUnit    string           // the update helper's unit file, if it's installed

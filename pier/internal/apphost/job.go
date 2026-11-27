@@ -26,6 +26,7 @@ type JobSpec struct {
 	MemoryMB int      // as the app's: 0 is DefaultMemoryMB, negative is no limit
 	CPUs     float64
 	Run      string // the run's ID, for the label
+	Networks []string // joined as well, as the app does: the project's, when it has a database
 }
 
 // ErrNoImage means the deployment's image is gone, so nothing can run in it.
@@ -73,6 +74,9 @@ func (h *Host) RunJob(ctx context.Context, spec JobSpec, emit func(LogLine) erro
 		defer cancel()
 		c.ContainerRemove(gone, created.ID, client.ContainerRemoveOptions{Force: true, RemoveVolumes: true})
 	}()
+	if err := h.joinNetworks(ctx, c, created.ID, spec.Networks); err != nil {
+		return -1, err
+	}
 	// Waiting starts before the start, so a command that exits at once
 	// isn't missed.
 	waiting, stopWaiting := context.WithCancel(context.WithoutCancel(ctx))

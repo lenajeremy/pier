@@ -398,6 +398,43 @@ var migrations = []string{
 	// 21: who ran a job by hand, by name, so a run's history says who
 	// pressed Run now, as a deployment says who sent it.
 	`ALTER TABLE job_runs ADD COLUMN run_by TEXT NOT NULL DEFAULT '';`,
+
+	// 22: a project's Postgres database. Each project with one has its own
+	// server; its passwords are sealed. A preview gets an empty database of
+	// its own on that server, one per branch. Backups are pg_dump files on
+	// this server's disk, and each says whether it was also sent offsite.
+	`CREATE TABLE databases (
+		project        TEXT PRIMARY KEY REFERENCES projects(name),
+		image          TEXT NOT NULL,
+		memory_mb      INTEGER NOT NULL,
+		admin_password TEXT NOT NULL,
+		password       TEXT NOT NULL,
+		created_at     INTEGER NOT NULL,
+		created_by     TEXT NOT NULL DEFAULT ''
+	);
+	CREATE TABLE preview_databases (
+		project    TEXT NOT NULL REFERENCES databases(project),
+		branch     TEXT NOT NULL,
+		name       TEXT NOT NULL,
+		password   TEXT NOT NULL,
+		created_at INTEGER NOT NULL,
+		PRIMARY KEY(project, branch),
+		UNIQUE(project, name)
+	);
+	CREATE TABLE database_backups (
+		id          INTEGER PRIMARY KEY,
+		project     TEXT NOT NULL,
+		reason      TEXT NOT NULL,
+		made_by     TEXT NOT NULL DEFAULT '',
+		state       TEXT NOT NULL,
+		file        TEXT NOT NULL DEFAULT '',
+		bytes       INTEGER NOT NULL DEFAULT 0,
+		error       TEXT NOT NULL DEFAULT '',
+		started_at  INTEGER NOT NULL,
+		finished_at INTEGER NOT NULL DEFAULT 0,
+		offsite     TEXT NOT NULL DEFAULT ''
+	);
+	CREATE INDEX database_backups_by_project ON database_backups(project, id);`,
 }
 
 // Open opens (and if needed creates) the database at path.
