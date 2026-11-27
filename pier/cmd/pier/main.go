@@ -108,6 +108,8 @@ func main() {
 		err = showDeployments(os.Args[2:])
 	case "jobs":
 		err = jobsCmd(os.Args[2:])
+	case "db":
+		err = dbCmd(os.Args[2:])
 	case "version":
 		err = showVersion(os.Args[2:])
 	case "upgrade":
@@ -153,6 +155,12 @@ func commandReferenceGroups() []commandGroup {
 			{"pier logs [PROJECT] --runtime", "Follow container stdout and stderr"},
 			{"pier logs [PROJECT] --build", "Follow a build (--deployment ID to choose)"},
 			{"pier logs --once | --follow", "Choose a snapshot or continuous output"},
+		}},
+		{"Database", [][2]string{
+			{"pier db [PROJECT]", "How the project's Postgres database is doing"},
+			{"pier db create [PROJECT]", "Give the project a Postgres database"},
+			{"pier db tunnel [PROJECT]", "Reach it from this computer, with its DATABASE_URL"},
+			{"pier db psql [PROJECT]", "Open psql on it"},
 		}},
 		{"Jobs", [][2]string{
 			{"pier jobs [PROJECT]", "A project's scheduled jobs and their last runs"},

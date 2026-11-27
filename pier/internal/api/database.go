@@ -147,14 +147,15 @@ func (a *API) getDatabase(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, v)
 }
 
-// databaseURL shows production's DATABASE_URL, which holds its password,
-// to members and the owner.
+// databaseURL shows a database's DATABASE_URL, which holds its password,
+// to members and the owner: production's, or with ?db= a preview's.
 func (a *API) databaseURL(w http.ResponseWriter, r *http.Request) {
 	project, ok := a.databaseProject(w, r)
 	if !ok {
 		return
 	}
-	u, _, err := a.Databases.Production(r.Context(), project)
+	// The address apps on Pier use; pier db tunnel swaps in its own host.
+	u, err := a.Databases.LocalURL(r.Context(), project, r.URL.Query().Get("db"), apphost.DatabaseHost+":"+database.Port)
 	if err != nil {
 		a.databaseError(w, err)
 		return

@@ -191,6 +191,14 @@ The dashboard is at http://pier.localhost:8088 (or http://127.0.0.1:7777).
 `*.localhost` resolves to your machine in browsers and curl, so no DNS is
 needed. `make pier-e2e` does all of this with throwaway data and ports.
 
+## Postgres databases
+
+Give a project its own Postgres server from the dashboard's Database tab or with `pier db create`. Pier runs Postgres 18 (Alpine) in a container with its data on a Docker volume, on a network only that project's apps and jobs join. Production gets `DATABASE_URL` from its next deploy (a variable named `DATABASE_URL` that you set yourself wins), and each branch's previews get an empty database of their own on the same server, removed with the branch. Previews sent with `pier deploy` share one.
+
+A server is sized from its memory limit (256 MB unless changed; 128 MB to 4 GB): a quarter for Postgres's cache, few background workers, JIT off, compressed WAL capped at 256 MB, and lz4 for large values. An idle one uses about 15 to 30 MB and 40 MB of disk. Backups are `pg_dump` files compressed with zstd, made nightly at 03:00 server time, by hand, before a restore and before a delete; the last 7 nightly and 10 by hand are kept in `backups/`. A restore loads into a new database and swaps it in, so a failed one changes nothing. Deleting the project keeps its last backup for 30 days.
+
+The Database tab's Data browses tables, sorted, filtered with a `WHERE` clause and paged, in a read-only transaction; Query runs SQL as the database's owner. From your computer, `pier db tunnel` reaches the database on `localhost:5433` and prints the `DATABASE_URL` for it (`--env .env.local` writes it there), and `pier db psql` opens psql through one. Viewers see the server's state, not its data or passwords.
+
 ## pierd's data folder
 
 ```
@@ -202,6 +210,7 @@ authorized_keys          keys that can push (pierd keys add)
 api.token                the CLI's token (pierd token)
 ssh_host_ed25519_key     the SSH host key
 pierd.sock               the git hook's socket
+backups/<project>/       each database's pg_dump backups; deleted/ keeps a deleted project's last for 30 days
 ```
 
 ## Public rollout

@@ -25,6 +25,8 @@ cleanup() {
 			docker rm -fv "$app" >/dev/null && docker image rm "$app:app" >/dev/null || true
 		done
 		docker network rm "$owner" >/dev/null 2>&1 || true
+		for n in $(docker network ls -q --filter "label=io.pier.instance=$owner"); do docker network rm "$n" >/dev/null 2>&1 || true; done
+		for v in $(docker volume ls -q --filter "label=io.pier.instance=$owner"); do docker volume rm "$v" >/dev/null 2>&1 || true; done
 	fi
 	if [[ ${KEEP:-} == 1 ]]; then echo "kept $WORK"; else rm -rf "$WORK"; fi
 }
@@ -265,7 +267,7 @@ curl -fsS -b "$JAR" "$API/api/projects/greet/variables" | grep -q '"production":
 cd "$WORK"
 echo "variables are scoped, kept out of the log, and a redeploy picks up a change"
 
-if [[ $BUILDER == railpack-preview ]]; then source "$ROOT/scripts/e2e-apps.sh"; fi
+if [[ $BUILDER == railpack-preview ]]; then source "$ROOT/scripts/e2e-apps.sh"; source "$ROOT/scripts/e2e-db.sh"; fi
 
 step "every request a site answers is in its Logs"
 for p in / /missing-page; do curl -s -o /dev/null --resolve "greet.$DOMAIN:$HTTP_PORT:127.0.0.1" "http://greet.$DOMAIN:$HTTP_PORT$p"; done
