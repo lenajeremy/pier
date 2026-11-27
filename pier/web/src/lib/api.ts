@@ -260,3 +260,78 @@ export interface LoginRequest {
   expires_at: string
   status: 'pending' | 'approved' | 'denied'
 }
+
+// A project's Postgres database, its previews' databases and its backups.
+export type DatabaseBackup = {
+  id: number
+  project: string
+  reason: 'nightly' | 'manual' | 'before-restore' | 'before-delete'
+  made_by?: string
+  state: 'running' | 'done' | 'failed'
+  bytes: number
+  error?: string
+  started_at: string
+  finished_at?: string
+  offsite?: string
+}
+
+export type PreviewDatabase = { branch: string; name: string; created_at: string; bytes: number }
+
+export type DatabaseStatus = {
+  project: string
+  image: string
+  memory_mb: number
+  created_at: string
+  created_by?: string
+  version: string
+  container: {
+    state: string
+    health?: string
+    started_at?: string
+    restarts?: number
+    oom_killed?: boolean
+    memory_bytes?: number
+    limit_bytes?: number
+  }
+  data_bytes: number
+  disk_bytes: number
+  connections: number
+  max_connections: number
+  previews: PreviewDatabase[]
+  problem?: string
+  host: string
+  port: string
+}
+
+export type DatabaseView = {
+  database: DatabaseStatus | null
+  backups: DatabaseBackup[]
+  memory_choices: number[]
+  default_memory_mb: number
+  image: string
+  production: { deployment: string; connected: boolean } | null
+  nightly_at: number
+  timezone: string
+}
+
+// A database's tables, a page of one's rows, and a query's results.
+export type DbTable = { schema: string; name: string; kind: string; rows: number; more: boolean; bytes: number }
+export type DbColumn = { name: string; type: string }
+export type DbPage = {
+  table: DbTable
+  columns: DbColumn[]
+  rows: (string | null)[][]
+  offset: number
+  limit: number
+  sort?: string
+  desc?: boolean
+  where?: string
+  key?: string[]
+  refs: Record<string, { schema: string; table: string; column: string }>
+  count: number
+  more: boolean
+  ms: number
+}
+export type DbResult = { columns: DbColumn[] | null; rows: (string | null)[][]; truncated?: boolean; tag: string }
+export type DbQueryError = { message: string; detail?: string; hint?: string; position?: number }
+export type DbOutcome = { results: DbResult[]; error?: DbQueryError; ms: number }

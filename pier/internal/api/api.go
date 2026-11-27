@@ -48,9 +48,9 @@ type API struct {
 	Alerts         *alerts.Notifier
 	Jobs           *jobs.Scheduler
 	Databases      *database.Manager // each project's Postgres; nil when this server has none
-	Releases       *release.Checker // which release is the newest; nil never says
-	Data           string           // pierd's data folder, where an update is asked for
-	UpgradeUnit    string           // the update helper's unit file, if it's installed
+	Releases       *release.Checker  // which release is the newest; nil never says
+	Data           string            // pierd's data folder, where an update is asked for
+	UpgradeUnit    string            // the update helper's unit file, if it's installed
 }
 
 // BoardRow is a board row with the address's full URL.

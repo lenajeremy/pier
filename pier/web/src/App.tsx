@@ -25,6 +25,7 @@ import { Logs } from './pages/Logs'
 import { Invite } from './pages/Invite'
 import { RoleProvider } from './lib/role'
 import { Jobs } from './pages/Jobs'
+import { Database } from './pages/Database'
 import { JobPage, JobRunPage } from './pages/JobPage'
 
 type Auth = { state: 'loading' } | { state: 'out'; address: string } | { state: 'in'; session: Session }
@@ -113,6 +114,8 @@ function Signed({ session, path, now }: { session: Session; path: string; now: n
             <JobRunPage key={jobRun.run} project={name} id={jobRun.id} run={jobRun.run} now={now} />
           ) : job ? (
             <JobPage key={job.id} project={name} id={job.id} now={now} />
+          ) : tab?.tab === 'database' ? (
+            <Database key={name} project={name} now={now} />
           ) : tab?.tab === 'jobs' ? (
             <Jobs project={name} now={now} />
           ) : tab?.tab === 'logs' ? (

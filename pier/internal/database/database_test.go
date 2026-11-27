@@ -60,7 +60,11 @@ func TestNightlyIsDueOncePastThreeAndNotYetMade(t *testing.T) {
 	if err := st.CreateDatabase(ctx, store.Database{Project: project, Image: Image, MemoryMB: 256, CreatedAt: created}); err != nil {
 		t.Fatal(err)
 	}
-	at := func(s string) { t.Helper(); now, _ := time.ParseInLocation("2006-01-02 15:04", s, loc); m.Now = func() time.Time { return now } }
+	at := func(s string) {
+		t.Helper()
+		now, _ := time.ParseInLocation("2006-01-02 15:04", s, loc)
+		m.Now = func() time.Time { return now }
+	}
 	at("2026-11-20 23:00")
 	if m.nightlyDue(ctx, project) {
 		t.Fatal("a database made today was due before its first night")
@@ -149,6 +153,50 @@ func TestPostgresLifecycle(t *testing.T) {
 	if out, err := app(prod, `CREATE TABLE orders (id serial PRIMARY KEY, note text); INSERT INTO orders(note) VALUES ('first')`); err != nil {
 		t.Fatal(out)
 	}
+	// The dashboard reads it through pierd's loopback port.
+	tables, err := m.Tables(ctx, project, "")
+	if err != nil || len(tables) != 1 || tables[0].Name != "orders" || tables[0].Rows != 1 {
+		t.Fatalf("tables %+v %v", tables, err)
+	}
+	page, err := m.Rows(ctx, project, "", "public", "orders", "note", true, "", 0, 50)
+	if err != nil || len(page.Rows) != 1 || *page.Rows[0][1] != "first" || page.Columns[0].Type != "int4" || len(page.Key) != 1 {
+		t.Fatalf("rows %+v %v", page, err)
+	}
+	if _, err := m.Rows(ctx, project, "", "public", "nope", "", false, "", 0, 50); err == nil {
+		t.Fatal("read a table that isn't there")
+	}
+	q, err := m.Query(ctx, project, "", "INSERT INTO orders(note) VALUES ('from query'); SELECT count(*) AS n, NULL::text AS nothing FROM orders", "Ada")
+	if err != nil || q.Error != nil || len(q.Results) != 2 || q.Results[0].Tag != "INSERT 0 1" || *q.Results[1].Rows[0][0] != "2" || q.Results[1].Rows[0][1] != nil || q.Results[1].Columns[0].Type != "int8" {
+		t.Fatalf("query %+v %v", q, err)
+	}
+	q, err = m.Query(ctx, project, "", "SELECT nope FROM orders", "Ada")
+	if err != nil || q.Error == nil || q.Error.Position == 0 {
+		t.Fatalf("a bad query: %+v %v", q, err)
+	}
+	if _, err := app(prod, `DELETE FROM orders WHERE note = 'from query'`); err != nil {
+		t.Fatal(err)
+	}
+	// Browsing can't change anything.
+	if _, err := m.Rows(ctx, project, "", "public", "orders", "note; DROP TABLE orders", false, "", 0, 50); err != nil {
+		t.Fatal(err)
+	}
+	// A filter can't end the read-only transaction or add a statement.
+	if _, err := m.Rows(ctx, project, "", "public", "orders", "", false, "true; COMMIT; DROP TABLE orders", 0, 50); err == nil {
+		t.Fatal("a filter ran a second statement")
+	}
+	if _, err := m.Rows(ctx, project, "", "public", "orders", "", false, "true) UNION SELECT 1, (SELECT 'x'", 0, 50); err == nil {
+		t.Log("a filter that closes the bracket only reads, in a read-only transaction")
+	}
+	if page, err := m.Rows(ctx, project, "", "public", "orders", "", false, "note = 'first'", 0, 50); err != nil || page.Count != 1 {
+		t.Fatalf("filter: %+v %v", page, err)
+	}
+	if _, err := m.Rows(ctx, project, "", "public", "orders", "", false, "(DELETE FROM orders) IS NULL", 0, 50); err == nil {
+		t.Fatal("a filter wrote")
+	}
+	if out, _ := app(prod, `SELECT count(*) FROM orders`); out != "1" {
+		t.Fatal("a sort name changed the table")
+	}
+
 	// An app on another network can't.
 	if out, err := exec.Command("docker", "run", "--rm", Image, "psql", prod, "-Atqc", "SELECT 1").CombinedOutput(); err == nil {
 		t.Fatalf("reached the database from outside its network: %s", out)

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"strconv"
 	"strings"
 	"time"
@@ -149,9 +150,22 @@ func (h *Host) StartPostgres(ctx context.Context, spec PostgresSpec) error {
 	for _, s := range spec.Settings {
 		cmd = append(cmd, "-c", s)
 	}
+	// pierd reaches the server on a loopback port only this machine can
+	// use: the dashboard's Data and Query, and pier db tunnel, go through
+	// it. Apps use the project's network instead.
+	socket, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		return err
+	}
+	published := strconv.Itoa(socket.Addr().(*net.TCPAddr).Port)
+	if err := socket.Close(); err != nil {
+		return err
+	}
+	pgPort, _ := network.PortFrom(5432, network.TCP)
 	stop := 60 // seconds for a clean shutdown, so a restart never needs recovery
 	config := &container.Config{
 		Image: spec.Image, Cmd: cmd, Labels: h.databaseLabels(spec.Project), StopTimeout: &stop,
+		ExposedPorts: network.PortSet{pgPort: {}},
 		Env: []string{
 			"POSTGRES_PASSWORD=" + spec.Password,
 			// The builtin C.UTF-8 locale sorts the same on every machine and
@@ -159,7 +173,7 @@ func (h *Host) StartPostgres(ctx context.Context, spec PostgresSpec) error {
 			"POSTGRES_INITDB_ARGS=--locale-provider=builtin --builtin-locale=C.UTF-8 --encoding=UTF8",
 		},
 		Healthcheck: &container.HealthConfig{
-			Test:     []string{"CMD", "pg_isready", "-U", "postgres", "-d", "postgres", "-q"},
+			Test:     []string{"CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-d", "postgres", "-q"},
 			Interval: 10 * time.Second, Timeout: 5 * time.Second, Retries: 3, StartPeriod: 60 * time.Second,
 		},
 	}
@@ -171,6 +185,7 @@ func (h *Host) StartPostgres(ctx context.Context, spec PostgresSpec) error {
 	}
 	host := &container.HostConfig{
 		NetworkMode:   container.NetworkMode(h.ProjectNetwork(spec.Project)),
+		PortBindings:  network.PortMap{pgPort: {{HostIP: loopback, HostPort: published}}},
 		RestartPolicy: restartPolicy, SecurityOpt: []string{"no-new-privileges"}, Resources: res2,
 		// The image keeps its data under /var/lib/postgresql/18/docker, so
 		// the volume holds every major version's folder side by side.
@@ -188,12 +203,42 @@ func (h *Host) StartPostgres(ctx context.Context, spec PostgresSpec) error {
 	return err
 }
 
+// PostgresAddress is where pierd reaches a project's server: a port on
+// this machine's loopback.
+func (h *Host) PostgresAddress(ctx context.Context, project string) (string, error) {
+	c, err := h.engine(ctx)
+	if err != nil {
+		return "", err
+	}
+	res, err := c.ContainerInspect(ctx, h.DatabaseContainer(project), client.ContainerInspectOptions{})
+	if err != nil {
+		return "", err
+	}
+	app := res.Container
+	if app.Config.Labels[ownerLabel] != h.owner || app.Config.Labels[databaseLabel] != project {
+		return "", errors.New("the database container belongs to something else")
+	}
+	if app.NetworkSettings != nil {
+		for _, bindings := range app.NetworkSettings.Ports {
+			for _, b := range bindings {
+				if b.HostIP == loopback && b.HostPort != "" {
+					return net.JoinHostPort("127.0.0.1", b.HostPort), nil
+				}
+			}
+		}
+	}
+	return "", errors.New("the database isn't running, or was made before it had a port for pierd; restart it")
+}
+
 // WaitPostgres waits until the project's server accepts connections.
 func (h *Host) WaitPostgres(ctx context.Context, project string, within time.Duration) error {
 	ctx, cancel := context.WithTimeout(ctx, within)
 	defer cancel()
 	for {
-		code, _, err := h.Exec(ctx, h.DatabaseContainer(project), []string{"pg_isready", "-U", "postgres", "-d", "postgres", "-q"}, nil, io.Discard)
+		// Over TCP: the first time a volume starts, the image runs a
+		// server on the socket alone to set it up, then restarts it, and
+		// only the real one listens on TCP.
+		code, _, err := h.Exec(ctx, h.DatabaseContainer(project), []string{"pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-d", "postgres", "-q"}, nil, io.Discard)
 		if err == nil && code == 0 {
 			return nil
 		}

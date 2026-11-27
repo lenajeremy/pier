@@ -25,7 +25,7 @@ type JobSpec struct {
 	Env      []string // the project's variables
 	MemoryMB int      // as the app's: 0 is DefaultMemoryMB, negative is no limit
 	CPUs     float64
-	Run      string // the run's ID, for the label
+	Run      string   // the run's ID, for the label
 	Networks []string // joined as well, as the app does: the project's, when it has a database
 }
 

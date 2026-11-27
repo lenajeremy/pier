@@ -35,6 +35,24 @@
   .table.jobs {
     --cols: minmax(0, 1.3fr) minmax(0, 1fr) 168px 32px;
   }
+  /* Previews give up their database's name; Data and Query stack. */
+  .table.preview-dbs {
+    --cols: minmax(0, 1fr) 96px 124px 32px;
+  }
+  .table.preview-dbs :is(.t-head, .t-row) > :nth-child(2) {
+    display: none;
+  }
+  .db-browser {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .db-tables,
+  .db-history {
+    position: static;
+    max-height: 240px;
+  }
+  .db-filter {
+    width: 200px;
+  }
   .table.jobs :is(.t-head, .t-row) > :nth-child(4) {
     display: none;
   }

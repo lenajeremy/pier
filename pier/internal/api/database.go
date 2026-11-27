@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
@@ -100,7 +101,7 @@ func (a *API) getDatabase(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	v := databaseView{MemoryChoices: apphost.DatabaseMemoryChoices, Default: database.DefaultMemoryMB, Image: database.Image,
-		NightlyAt: database.NightlyAt, Timezone: time.Now().Location().String(), Backups: []store.Backup{}}
+		NightlyAt: database.NightlyAt, Timezone: zoneName(), Backups: []store.Backup{}}
 	st, err := a.Databases.Status(r.Context(), project)
 	if err != nil && !errors.Is(err, database.ErrNone) {
 		a.fail(w, err)
@@ -362,14 +363,161 @@ func (a *API) deletePreviewDatabase(w http.ResponseWriter, r *http.Request) {
 
 // size writes a number of bytes the way the dashboard does.
 func size(n int64) string {
-	const unit = 1024
-	if n < unit {
-		return fmt.Sprintf("%d B", n)
+	switch {
+	case n >= 1e9:
+		return fmt.Sprintf("%.1f GB", float64(n)/1e9)
+	case n >= 1e6:
+		return fmt.Sprintf("%d MB", (n+5e5)/1e6)
+	case n >= 1e3:
+		return fmt.Sprintf("%d KB", (n+500)/1e3)
 	}
-	div, exp := int64(unit), 0
-	for m := n / unit; m >= unit; m /= unit {
-		div *= unit
-		exp++
+	return fmt.Sprintf("%d bytes", n)
+}
+
+// browseError answers for a failed read of a database's data: what
+// Postgres said, when it said something.
+func (a *API) browseError(w http.ResponseWriter, err error) {
+	var qe *database.QueryError
+	if errors.As(err, &qe) {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": qe.Message, "detail": qe})
+		return
 	}
-	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), "KMGTPE"[exp])
+	a.databaseError(w, err)
+}
+
+// databaseTables lists the tables in one of the project's databases.
+func (a *API) databaseTables(w http.ResponseWriter, r *http.Request) {
+	project, ok := a.databaseProject(w, r)
+	if !ok {
+		return
+	}
+	tables, err := a.Databases.Tables(r.Context(), project, r.URL.Query().Get("db"))
+	if err != nil {
+		a.browseError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"tables": tables})
+}
+
+// databaseRows is a page of one table's rows.
+func (a *API) databaseRows(w http.ResponseWriter, r *http.Request) {
+	project, ok := a.databaseProject(w, r)
+	if !ok {
+		return
+	}
+	q := r.URL.Query()
+	offset, _ := strconv.Atoi(q.Get("offset"))
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	if limit == 0 {
+		limit = 50
+	}
+	page, err := a.Databases.Rows(r.Context(), project, q.Get("db"), r.PathValue("schema"), r.PathValue("table"), q.Get("sort"), q.Get("desc") == "1", q.Get("where"), offset, limit)
+	if err != nil {
+		a.browseError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, page)
+}
+
+// runQuery runs SQL in one of the project's databases.
+func (a *API) runQuery(w http.ResponseWriter, r *http.Request) {
+	project, ok := a.databaseProject(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		DB  string `json:"db"`
+		SQL string `json:"sql"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "that isn't JSON"})
+		return
+	}
+	if strings.TrimSpace(req.SQL) == "" {
+		fieldError(w, "sql", "Write some SQL to run.")
+		return
+	}
+	out, err := a.Databases.Query(r.Context(), project, req.DB, req.SQL, userFrom(r.Context()).DisplayName())
+	if err != nil {
+		a.browseError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// tunnelProtocol is what pier db tunnel asks to upgrade a request to: after
+// pierd's 101, the connection carries Postgres's own protocol to and from
+// the database's server, as if the computer were beside it.
+const tunnelProtocol = "pier-postgres"
+
+// databaseTunnel joins the request's connection to the project's Postgres
+// server. Postgres still asks for the role's password, which pier db
+// tunnel gets from databaseURL.
+func (a *API) databaseTunnel(w http.ResponseWriter, r *http.Request) {
+	project, ok := a.databaseProject(w, r)
+	if !ok {
+		return
+	}
+	if !strings.EqualFold(r.Header.Get("Upgrade"), tunnelProtocol) {
+		writeJSON(w, http.StatusUpgradeRequired, map[string]string{"error": "Connect with pier db tunnel."})
+		return
+	}
+	if _, err := a.Store.Database(r.Context(), project); errors.Is(err, store.ErrNotFound) {
+		a.databaseError(w, database.ErrNone)
+		return
+	}
+	addr, err := a.Databases.Host.PostgresAddress(r.Context(), project)
+	if err != nil {
+		a.databaseError(w, err)
+		return
+	}
+	upstream, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	if err != nil {
+		a.databaseError(w, fmt.Errorf("couldn't reach the database: %w", err))
+		return
+	}
+	defer upstream.Close()
+	conn, buf, err := http.NewResponseController(w).Hijack()
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	defer conn.Close()
+	conn.SetDeadline(time.Time{})
+	io.WriteString(conn, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: "+tunnelProtocol+"\r\nConnection: Upgrade\r\n\r\n")
+	done := make(chan struct{}, 2)
+	go func() {
+		// Anything the client sent with the request comes first.
+		if n := buf.Reader.Buffered(); n > 0 {
+			b, _ := buf.Reader.Peek(n)
+			upstream.Write(b)
+		}
+		io.Copy(upstream, conn)
+		if c, ok := upstream.(*net.TCPConn); ok {
+			c.CloseWrite()
+		}
+		done <- struct{}{}
+	}()
+	go func() {
+		io.Copy(conn, upstream)
+		if c, ok := conn.(interface{ CloseWrite() error }); ok {
+			c.CloseWrite()
+		}
+		done <- struct{}{}
+	}()
+	<-done
+	<-done
+}
+
+// zoneName is this server's time zone as people write it: UTC, WAT, or
+// an offset like +0100 when the zone has no abbreviation.
+func zoneName() string {
+	name, offset := time.Now().Zone()
+	if name == "" || name == "Local" {
+		return time.Now().Format("-0700")
+	}
+	if offset == 0 {
+		return "UTC"
+	}
+	return name
 }
