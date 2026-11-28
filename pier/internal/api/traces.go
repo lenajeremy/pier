@@ -147,3 +147,26 @@ func (a *API) projectTrace(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"trace": t, "request": request, "logs": logs})
 }
+
+// projectServiceMap is GET /api/projects/{project}/servicemap?from=&to=&env=.
+func (a *API) projectServiceMap(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("project")
+	if _, ok := a.findProject(w, r, name); !ok {
+		return
+	}
+	if a.Telemetry == nil || !a.Telemetry.On(r.Context()) {
+		writeJSON(w, http.StatusOK, map[string]any{"on": false, "nodes": []telemetry.MapNode{}, "edges": []telemetry.MapEdge{}})
+		return
+	}
+	env, ok := envOf(w, r)
+	if !ok {
+		return
+	}
+	from, to := traceSpan(r)
+	nodes, edges, err := a.Telemetry.ServiceMap(r.Context(), name, env, time.UnixMilli(from), time.UnixMilli(to))
+	if err != nil {
+		a.telemetryFail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"on": true, "nodes": nodes, "edges": edges, "from": from, "to": to})
+}

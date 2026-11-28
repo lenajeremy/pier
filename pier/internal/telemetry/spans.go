@@ -97,6 +97,11 @@ func (m *Manager) sendRequests(ctx context.Context, project string, rs []Request
 		return nil
 	}
 	req := &colt.ExportTraceServiceRequest{}
+	defer func() {
+		for _, rs := range req.ResourceSpans {
+			m.graph().observe(project, attr(rs.Resource.Attributes, "deployment.environment"), []*trace.ResourceSpans{rs})
+		}
+	}()
 	for _, k := range order {
 		res := &resource.Resource{Attributes: []*common.KeyValue{str("service.name", RouterService), str("pier.project", project), str("pier.deployment", k.dep)}}
 		if k.env != "" {

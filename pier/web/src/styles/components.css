@@ -6175,3 +6175,92 @@ button.lg-n:hover {
   font-size: 13px;
   line-height: 20px;
 }
+
+/* The service map. */
+.sm-legend > span {
+  gap: 6px;
+}
+.sm-panel {
+  padding: 8px 0;
+  overflow: hidden;
+}
+.sm-canvas {
+  position: relative;
+  margin: 0 16px;
+}
+.sm-canvas > svg {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+}
+.sm-rate {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  padding: 1px 7px;
+  border-radius: 5px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--d-panel);
+  font-size: 11.5px;
+  color: var(--d-muted);
+  white-space: nowrap;
+}
+.sm-node {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: stretch;
+  gap: 3px;
+  line-height: 18px;
+  padding: 10px 13px;
+  border-radius: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: #111520;
+  text-align: left;
+  color: var(--d-text);
+}
+.sm-node:hover {
+  border-color: rgba(141, 178, 248, 0.6);
+}
+.sm-node.external {
+  border-style: dashed;
+  background: transparent;
+}
+.sm-node-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  min-width: 0;
+  font-size: 12px;
+}
+.sm-node-head .t-note {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.sm-node-head b {
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sm-sq {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+.sm-health {
+  display: flex;
+  margin-left: auto;
+}
+.sm-line {
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sm-node.tight .sm-node-head .t-note {
+  display: none;
+}

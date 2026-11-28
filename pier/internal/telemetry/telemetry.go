@@ -86,6 +86,9 @@ type Manager struct {
 
 	mu    sync.Mutex
 	addrs map[string]string // "tempo:4318" -> 127.0.0.1:port
+
+	graphOnce sync.Once
+	graphs    *graph // the service map's counts
 }
 
 // On reports whether the stack is turned on.
@@ -340,6 +343,7 @@ func (m *Manager) Forward(ctx context.Context, signal, project, env, contentType
 	isJSON := strings.HasPrefix(contentType, "application/json")
 	var msg proto.Message
 	var resources func(func(*resource.Resource) *resource.Resource)
+	var after func() // once the resources say whose they are
 	var target, path string
 	var port int
 	switch signal {
@@ -351,6 +355,7 @@ func (m *Manager) Forward(ctx context.Context, signal, project, env, contentType
 				x.Resource = f(x.Resource)
 			}
 		}
+		after = func() { m.graph().observe(project, env, r.ResourceSpans) }
 	case Logs:
 		r := &coll.ExportLogsServiceRequest{}
 		msg, target, port, path = r, Loki, lokiAPI, "/otlp/v1/logs"
@@ -388,6 +393,9 @@ func (m *Manager) Forward(ctx context.Context, signal, project, env, contentType
 		r.Attributes = stamp(r.Attributes, map[string]string{"pier.project": project, "deployment.environment": env}, project)
 		return r
 	})
+	if after != nil {
+		after()
+	}
 	out, err := proto.Marshal(msg)
 	if err != nil {
 		return http.StatusInternalServerError, err

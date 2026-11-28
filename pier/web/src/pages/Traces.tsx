@@ -3,7 +3,7 @@ import { api, type TraceDoc, type TraceList, type TraceRow, type TraceSpan } fro
 import { useData } from '../lib/data'
 import { size } from '../lib/format'
 import { Gate, onlyOwner, useRole } from '../lib/role'
-import { Calendar, ChevronLeft, ChevronRight, Close, SortDown } from '../components/Icons'
+import { Calendar, Check, ChevronLeft, ChevronRight, Close, FailedMark, SortDown, Warning } from '../components/Icons'
 import { Menu } from '../components/Menu'
 import { toast } from '../components/Toast'
 import { Problem, Skeleton } from '../components/ui'
@@ -153,7 +153,19 @@ export function Traces({ project, tabs, onOpen }: { project: string; tabs: (righ
           <div className="t-caption t-muted">{query ? 'Try a wider range, or a looser query.' : 'Requests to server apps show here a few seconds after they finish.'}</div>
         </div>
       ) : (
-        <TraceLists d={d} from={from} to={to} pick={pick} setPick={setPick} onOpen={onOpen} />
+        <>
+          <ServiceMap
+            project={project}
+            from={second(from)}
+            to={second(to) + 1000}
+            onPick={(q) => {
+              setDraft(q)
+              setQuery(q)
+              setPick(null)
+            }}
+          />
+          <TraceLists d={d} from={from} to={to} pick={pick} setPick={setPick} onOpen={onOpen} />
+        </>
       )}
     </main>
   )
@@ -969,5 +981,158 @@ export function TelemetryOff({ project, onOn }: { project: string; onOn: () => v
         </section>
       </div>
     </>
+  )
+}
+
+type MapNode = { name: string; kind: 'router' | 'service' | 'database' | 'external'; rate: number; errors: number; p95_ms: number }
+type MapEdge = { from: string; to: string; kind: '' | 'database' | 'external'; rate: number; errors: number; p95_ms: number }
+
+const health = (n: { errors: number; p95_ms: number }) => (n.errors >= 0.05 ? 'failing' : n.p95_ms >= 1000 ? 'slow' : 'healthy')
+const perSecond = (r: number) => (r >= 100 ? `${Math.round(r)}/s` : r >= 0.1 ? `${+r.toFixed(1)}/s` : `${+(r * 60).toFixed(1)}/min`)
+const share = (e: number) => (e === 0 ? '0%' : e < 0.001 ? '<0.1%' : `${+(e * 100).toFixed(1)}%`)
+
+function HealthMark({ h }: { h: string }) {
+  if (h === 'failing') return <FailedMark size={14} />
+  if (h === 'slow') return <Warning size={14} color="var(--d-amber)" />
+  return <Check size={14} />
+}
+
+// ServiceMap draws who calls whom, from the traces: each box says how busy,
+// how failing and how slow a service is; each link how often one calls the
+// other. Choosing a box finds its traces.
+function ServiceMap({ project, from, to, onPick }: { project: string; from: number; to: number; onPick: (query: string) => void }) {
+  const m = useData<{ on: boolean; nodes: MapNode[]; edges: MapEdge[] }>(`/api/projects/${encodeURIComponent(project)}/servicemap?from=${from}&to=${to}`)
+  const box = useRef<HTMLDivElement>(null)
+  const [w, setW] = useState(1000)
+  useLayoutEffect(() => {
+    const el = box.current
+    if (!el) return
+    const ro = new ResizeObserver(() => setW(el.clientWidth))
+    ro.observe(el)
+    setW(el.clientWidth)
+    return () => ro.disconnect()
+  }, [m.data])
+  const nodes = m.data?.nodes ?? []
+  const edges = m.data?.edges ?? []
+  // Columns by the longest chain of calls into each; databases and
+  // servers outside Pier one past what calls them.
+  const layout = useMemo(() => {
+    const depth = new Map<string, number>()
+    for (const n of nodes) depth.set(n.name, 0)
+    for (let i = 0; i < nodes.length; i++) for (const e of edges) if (e.from !== e.to) depth.set(e.to, Math.max(depth.get(e.to) ?? 0, (depth.get(e.from) ?? 0) + 1))
+    const cols: MapNode[][] = []
+    for (const n of [...nodes].sort((a, b) => (a.kind === 'router' ? -1 : b.kind === 'router' ? 1 : a.name.localeCompare(b.name)))) {
+      const d = Math.min(depth.get(n.name) ?? 0, 6)
+      ;(cols[d] ??= []).push(n)
+    }
+    return cols.filter(Boolean)
+  }, [nodes, edges])
+  if (!m.data || !m.data.on || nodes.length === 0) return null
+  // Wide, calls run left to right; narrow, top to bottom.
+  const down = w < 640
+  const BH = 76
+  const GAP = 28
+  const widest = Math.max(...layout.map((c) => c.length))
+  const BW = down ? Math.min(236, (w - (widest - 1) * 12) / widest) : Math.min(236, Math.max(160, (w - 40) / Math.max(1, layout.length) - 64))
+  const H = down ? layout.length * BH + (layout.length - 1) * 52 + 24 : widest * BH + (widest - 1) * GAP + 40
+  const pos = new Map<string, { x: number; y: number }>()
+  layout.forEach((col, ci) => {
+    if (down) {
+      const left = (w - (col.length * BW + (col.length - 1) * 12)) / 2
+      col.forEach((n, ri) => pos.set(n.name, { x: left + ri * (BW + 12), y: 12 + ci * (BH + 52) }))
+      return
+    }
+    const x = layout.length === 1 ? (w - BW) / 2 : 20 + (ci * (w - 40 - BW)) / (layout.length - 1)
+    const top = (H - (col.length * BH + (col.length - 1) * GAP)) / 2
+    col.forEach((n, ri) => pos.set(n.name, { x, y: top + ri * (BH + GAP) }))
+  })
+  const ends = (a: { x: number; y: number }, b: { x: number; y: number }) =>
+    down ? { x1: a.x + BW / 2, y1: a.y + BH, x2: b.x + BW / 2, y2: b.y - 4 } : { x1: a.x + BW, y1: a.y + BH / 2, x2: b.x - 4, y2: b.y + BH / 2 }
+  const query = (n: MapNode) =>
+    n.kind === 'database' ? `{ span.db.system = "${n.name}" }` : n.kind === 'external' ? `{ span.server.address = "${n.name}" }` : `{ resource.service.name = "${n.name}" }`
+  return (
+    <section className="a-section">
+      <div className="a-section-head">
+        <h2>
+          Service map<span>Who calls whom, from the traces</span>
+        </h2>
+        <div className="a-legend sm-legend">
+          <span>
+            <Check size={14} />
+            Healthy
+          </span>
+          <span>
+            <Warning size={14} color="var(--d-amber)" />
+            Slow
+          </span>
+          <span>
+            <FailedMark size={14} />
+            Failing
+          </span>
+        </div>
+      </div>
+      <div className="panel sm-panel">
+        <div className="sm-canvas" ref={box} style={{ height: H }}>
+          <svg width={w} height={H} aria-hidden>
+            <defs>
+              <marker id="sm-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path d="M1 1L9 5L1 9" fill="none" stroke="context-stroke" strokeWidth="1.5" />
+              </marker>
+            </defs>
+            {edges.map((e) => {
+              const a = pos.get(e.from)
+              const b = pos.get(e.to)
+              if (!a || !b) return null
+              const { x1, y1, x2, y2 } = ends(a, b)
+              const mx = (x1 + x2) / 2
+              const my = (y1 + y2) / 2
+              const bad = e.errors >= 0.05
+              return (
+                <path
+                  key={e.from + e.to}
+                  d={down ? `M${x1} ${y1} C${x1} ${my}, ${x2} ${my}, ${x2} ${y2}` : `M${x1} ${y1} C${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`}
+                  fill="none"
+                  stroke={bad ? 'rgba(240, 122, 122, 0.8)' : 'rgba(255, 255, 255, 0.3)'}
+                  strokeWidth="1.25"
+                  strokeDasharray={e.kind === 'external' || bad ? '4 4' : undefined}
+                  markerEnd="url(#sm-arrow)"
+                />
+              )
+            })}
+          </svg>
+          {edges.map((e) => {
+            const a = pos.get(e.from)
+            const b = pos.get(e.to)
+            if (!a || !b) return null
+            return (
+              <span key={'l' + e.from + e.to} className="sm-rate mono" style={{ left: (ends(a, b).x1 + ends(a, b).x2) / 2, top: (ends(a, b).y1 + ends(a, b).y2) / 2 }} title={`${share(e.errors)} errors, p95 ${dur(e.p95_ms)}`}>
+                {perSecond(e.rate)}
+              </span>
+            )
+          })}
+          {nodes.map((n) => {
+            const p = pos.get(n.name)
+            if (!p) return null
+            const h = health(n)
+            return (
+              <button key={n.name} className={'sm-node ' + n.kind + (BW < 200 ? ' tight' : '')} style={{ left: p.x, top: p.y, width: BW, height: BH }} onClick={() => onPick(query(n))} title="Find its traces">
+                <span className="sm-node-head">
+                  <span className="sm-sq" style={{ background: n.kind === 'database' ? '#9085e9' : n.kind === 'external' ? '#199e70' : serviceColor(n.name) }} />
+                  <b className="mono">{n.name}</b>
+                  {n.kind !== 'service' && <span className="t-note">{n.kind === 'router' ? 'router' : n.kind === 'database' ? 'database' : 'outside Pier'}</span>}
+                  <span className="sm-health">
+                    <HealthMark h={h} />
+                  </span>
+                </span>
+                <span className="mono sm-line">
+                  {perSecond(n.rate)} <span className="t-muted">{share(n.errors)} errors</span>
+                </span>
+                <span className="mono sm-line t-muted">p95 {dur(n.p95_ms)}</span>
+              </button>
+            )
+          })}
+        </div>
+      </div>
+    </section>
   )
 }

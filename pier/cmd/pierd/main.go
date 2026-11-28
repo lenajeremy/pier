@@ -462,6 +462,7 @@ func serve(args []string) int {
 	go a.SampleServer(ctx)
 	go tel.Ensure(ctx)
 	go tel.FollowLogs(ctx)
+	go tel.RunGraph(ctx)
 	go dbs.Run(ctx)
 	if externalDB {
 		if ln, err := net.Listen("tcp", *pgAddr); err != nil {
