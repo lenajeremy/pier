@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/shirou/gopsutil/v4/cpu"
@@ -51,10 +52,21 @@ func (a *API) history(w http.ResponseWriter, r *http.Request) {
 	}
 	end := time.Now().UnixMilli()
 	start := end - span.Milliseconds()
+	// The minutes around one moment, like when a trace was slow.
+	if at, err := strconv.ParseInt(r.URL.Query().Get("at"), 10, 64); err == nil && at > end-7*24*time.Hour.Milliseconds() && at <= end {
+		start, end, bucket = at-5*time.Minute.Milliseconds(), min(end, at+5*time.Minute.Milliseconds()), time.Minute
+	}
 	samples, err := a.Store.Samples(r.Context(), start, bucket)
 	if err != nil {
 		a.fail(w, err)
 		return
 	}
+	kept := samples[:0]
+	for _, s := range samples {
+		if s.At <= end {
+			kept = append(kept, s)
+		}
+	}
+	samples = kept
 	writeJSON(w, 200, map[string]any{"samples": samples, "start": start, "end": end, "bucket": bucket.Milliseconds()})
 }

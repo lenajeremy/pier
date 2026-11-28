@@ -511,6 +511,13 @@ function Waterfall({ doc, head, grafana }: { doc: TraceDoc; head: ReactNode; gra
   })
   const [logSpan, setLogSpan] = useState<string | null>(null)
   const detailW = useWidth('pier.trace.details', 340, 260, 720)
+  // Pier's router only passes a request on; a gap before the app's own span
+  // is the app not taking it yet: busy, starting or short of CPU.
+  const firstApp = roots[0]?.service === ROUTER ? roots[0].children.find((c) => c.service !== ROUTER) : undefined
+  const wait = firstApp ? firstApp.start - roots[0].start : 0
+  const waited = wait >= 200 && wait >= trace.ms * 0.05
+  const around = useData<{ samples: { at: number; cpu: number }[] }>(waited ? `/api/server/history?at=${Math.round(trace.start)}` : null)
+  const cpu = Math.max(-1, ...(around.data?.samples ?? []).filter((x) => Math.abs(x.at - trace.start) <= 90_000).map((x) => x.cpu))
   const labelW = useWidth('pier.trace.names', 380, 200, 900)
   const logsRef = useRef<HTMLElement>(null)
   const rows = useMemo(() => {
@@ -579,6 +586,15 @@ function Waterfall({ doc, head, grafana }: { doc: TraceDoc; head: ReactNode; gra
           )}
         </div>
       </div>
+      {waited && firstApp && (
+        <div className="tr-wait">
+          <span className="a-dot" style={{ background: 'var(--d-amber)' }} />
+          <span>
+            {firstApp.service} took the request {dur(wait)} after Pier's router passed it on, so the app was busy or starting.
+            {cpu >= 0 && ` The server's CPU was at ${Math.round(cpu)}% then.`}
+          </span>
+        </div>
+      )}
       <div className="panel tr-view">
         <div className="tr-mini">
           <svg viewBox={`0 0 1000 ${Math.max(8, all.length * pitch + 6)}`} preserveAspectRatio="none" aria-hidden>
@@ -655,7 +671,7 @@ function Waterfall({ doc, head, grafana }: { doc: TraceDoc; head: ReactNode; gra
                 {bySvc.map(([s, v]) => (
                   <span key={s}>
                     <span className="a-dot" style={{ background: serviceColor(s) }} />
-                    {s}
+                    {s === ROUTER && waited ? 'pier, waiting for the app' : s}
                     <b>{dur(v)}</b>
                   </span>
                 ))}

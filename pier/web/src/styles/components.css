@@ -6453,3 +6453,15 @@ button.lg-n:hover {
 .resizer:active::after {
   background: var(--d-focus);
 }
+.tr-wait {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  margin-top: -8px;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--d-muted);
+}
+.tr-wait .a-dot {
+  transform: translateY(-1px);
+}
