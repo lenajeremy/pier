@@ -103,6 +103,53 @@ func TestNightlyIsDueOncePastThreeAndNotYetMade(t *testing.T) {
 	}
 }
 
+func TestDeleteBackup(t *testing.T) {
+	m, st, _ := newManager(t, nil)
+	ctx := context.Background()
+	if err := st.CreateProject(ctx, store.Project{Name: "shop"}); err != nil {
+		t.Fatal(err)
+	}
+	made := func(state string) store.Backup {
+		t.Helper()
+		b := store.Backup{Project: "shop", Database: "production", Reason: store.BackupManual, StartedAt: time.Now()}
+		id, err := st.StartBackup(ctx, b)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b.ID, b.State, b.FinishedAt = id, state, time.Now()
+		if state == store.BackupDone {
+			b.File = "1-x.dump"
+			os.MkdirAll(m.projectDir("shop"), 0o700)
+			os.WriteFile(m.BackupPath(b), []byte("dump"), 0o600)
+		}
+		if state != store.BackupRunning {
+			st.FinishBackup(ctx, b)
+		}
+		return b
+	}
+	done := made(store.BackupDone)
+	if _, err := m.DeleteBackup(ctx, "shop", done.ID, "Ada"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(m.BackupPath(done)); !os.IsNotExist(err) {
+		t.Fatal("the backup's file is still there")
+	}
+	if _, err := st.BackupByID(ctx, "shop", done.ID); err != store.ErrNotFound {
+		t.Fatal("the backup is still listed")
+	}
+	failed := made(store.BackupFailed)
+	if _, err := m.DeleteBackup(ctx, "shop", failed.ID, "Ada"); err != nil {
+		t.Fatal("a failed backup:", err)
+	}
+	running := made(store.BackupRunning)
+	if _, err := m.DeleteBackup(ctx, "shop", running.ID, "Ada"); err != ErrBackupRunning {
+		t.Fatalf("deleted a backup being made: %v", err)
+	}
+	if _, err := m.DeleteBackup(ctx, "other", running.ID, "Ada"); err != store.ErrNotFound {
+		t.Fatalf("deleted another project's backup: %v", err)
+	}
+}
+
 func newManager(t *testing.T, host *apphost.Host) (*Manager, *store.Store, string) {
 	t.Helper()
 	dir := t.TempDir()

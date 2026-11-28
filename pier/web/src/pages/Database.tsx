@@ -381,9 +381,28 @@ function BackupRow({ b, project, now, reload, restorable }: {
       },
     }).then((ok) => ok && toast(`Restored ${b.database}`))
   const done = b.state === 'done'
+  const made = new Date(b.started_at).toLocaleString('en-GB', { dateStyle: 'long', timeStyle: 'short' })
+  const remove = () =>
+    confirm({
+      title: 'Delete this backup?',
+      body: (
+        <p>
+          The backup of <span className="mono">{b.database}</span> from {made} is deleted.
+        </p>
+      ),
+      action: 'Delete backup',
+      working: 'Deleting…',
+      danger: true,
+      run: async () => {
+        await api(base, { method: 'DELETE' })
+        reload()
+      },
+    }).then((ok) => ok && toast('Deleted the backup'))
   const items: MenuItem[] = [
-    { label: 'Download', onSelect: () => (window.location.href = `${base}/file`) },
-    ...(restorable ? (['separator', { label: 'Restore', icon: <RollBack />, onSelect: restore }] as MenuItem[]) : []),
+    ...(done ? ([{ label: 'Download', onSelect: () => (window.location.href = `${base}/file`) }] as MenuItem[]) : []),
+    ...(done && restorable ? ([{ label: 'Restore', icon: <RollBack />, onSelect: restore }] as MenuItem[]) : []),
+    ...(done ? (['separator'] as MenuItem[]) : []),
+    { label: 'Delete backup', icon: <Trash />, danger: true, onSelect: remove },
   ]
   return (
     <div className="t-row">
@@ -408,7 +427,7 @@ function BackupRow({ b, project, now, reload, restorable }: {
         )}
       </span>
       <span className="t-muted">{done ? size(b.bytes) : ''}</span>
-      <span className="row-more">{change && done && <Menu label="Actions for this backup" items={items} className="icon-btn bare" />}</span>
+      <span className="row-more">{change && b.state !== 'running' && <Menu label="Actions for this backup" items={items} className="icon-btn bare" />}</span>
     </div>
   )
 }

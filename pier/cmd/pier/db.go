@@ -41,6 +41,8 @@ unless you say otherwise. These commands are for you.
                                        closes it
   pier db psql [PROJECT]               open psql on a database, through a tunnel
   pier db backup [PROJECT]             back up every database now
+  pier db backups [PROJECT]            list the backups
+  pier db backups rm ID [PROJECT] --yes  delete one
 
 --db NAME picks a database (default: the one production uses).
 PROJECT defaults to the one this folder is linked to.
@@ -72,6 +74,7 @@ type dbStatus struct {
 	} `json:"database"`
 	Backups []struct {
 		ID        int64     `json:"id"`
+		Database  string    `json:"database"`
 		Reason    string    `json:"reason"`
 		State     string    `json:"state"`
 		Bytes     int64     `json:"bytes"`
@@ -91,7 +94,7 @@ func dbCmd(args []string) error {
 	sub := ""
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		switch args[0] {
-		case "create", "add", "link", "rm", "url", "external", "tunnel", "psql", "backup", "status":
+		case "create", "add", "link", "rm", "url", "external", "tunnel", "psql", "backup", "backups", "status":
 			sub, args = args[0], args[1:]
 		case "help":
 			fmt.Print(dbHelp)
@@ -121,6 +124,15 @@ func dbCmd(args []string) error {
 	}
 	fs.Parse(reorder(args, flags))
 	name := ""
+	if sub == "backups" && fs.NArg() > 0 && fs.Arg(0) == "rm" {
+		if fs.NArg() < 2 {
+			return errors.New("say which backup: pier db backups rm ID")
+		}
+		sub, name = "backups rm", fs.Arg(1)
+		rest := fs.Args()[2:]
+		fs = flag.NewFlagSet("db", flag.ExitOnError)
+		fs.Parse(rest)
+	}
 	if sub == "add" || sub == "link" || sub == "rm" {
 		if fs.NArg() == 0 {
 			return errors.New("name the database: pier db " + sub + " NAME [PROJECT]")
@@ -239,6 +251,38 @@ func dbCmd(args []string) error {
 		return dbTunnel(c, project, *db, *port, *envFile)
 	case "psql":
 		return dbPsql(c, project, *db)
+	case "backups":
+		var s dbStatus
+		if err := callWith("Loading "+project+"'s backups", c, http.MethodGet, dbPath(project), nil, &s); err != nil {
+			return err
+		}
+		if len(s.Backups) == 0 {
+			fmt.Printf("%s has no backups yet. Nightly ones are made at %02d:00 %s.\n", project, s.NightlyAt, s.Timezone)
+			return nil
+		}
+		for _, b := range s.Backups {
+			size := human(b.Bytes)
+			if b.State != "done" {
+				size = b.State
+			}
+			fmt.Printf("  %-6d %-14s %-15s %-10s %s\n", b.ID, b.Database, b.Reason, size, b.StartedAt.Local().Format("2 Jan 2006 15:04"))
+		}
+		return nil
+	case "backups rm":
+		if !*yes {
+			if !term() {
+				return errors.New("a deleted backup can't be restored; add --yes")
+			}
+			answer, err := ask(fmt.Sprintf("Delete backup %s? Type its number: ", name))
+			if err != nil || answer != name {
+				return errors.New("not deleted")
+			}
+		}
+		if err := callWith("Deleting backup "+name, c, http.MethodDelete, dbPath(project)+"/backups/"+url.PathEscape(name), nil, nil); err != nil {
+			return err
+		}
+		fmt.Printf("%s Deleted backup %s.\n", tick(), name)
+		return nil
 	case "backup":
 		var b struct {
 			Backups []json.RawMessage `json:"backups"`

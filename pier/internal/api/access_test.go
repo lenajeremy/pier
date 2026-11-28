@@ -116,6 +116,7 @@ var decisions = map[string]string{
 	"POST /api/projects/{project}/database/backups":                    "member",
 	"GET /api/projects/{project}/database/backups/{id}/file":           "member",
 	"POST /api/projects/{project}/database/backups/{id}/restore":       "member",
+	"DELETE /api/projects/{project}/database/backups/{id}":             "member",
 	"POST /api/projects/{project}/database/databases":                  "member",
 	"PUT /api/projects/{project}/database/databases/{name}":            "member",
 	"DELETE /api/projects/{project}/database/databases/{name}":         "member",

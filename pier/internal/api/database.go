@@ -310,6 +310,23 @@ func (a *API) backupFrom(w http.ResponseWriter, r *http.Request) (store.Backup, 
 	return b, true
 }
 
+// deleteBackup removes a backup and its file.
+func (a *API) deleteBackup(w http.ResponseWriter, r *http.Request) {
+	b, ok := a.backupFrom(w, r)
+	if !ok {
+		return
+	}
+	if _, err := a.Databases.DeleteBackup(r.Context(), b.Project, b.ID, userFrom(r.Context()).DisplayName()); err != nil {
+		if errors.Is(err, database.ErrBackupRunning) {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": sentenceOf(err)})
+			return
+		}
+		a.databaseError(w, err)
+		return
+	}
+	a.getDatabase(w, r)
+}
+
 // downloadBackup sends a backup's file, which pg_restore reads.
 func (a *API) downloadBackup(w http.ResponseWriter, r *http.Request) {
 	b, ok := a.backupFrom(w, r)

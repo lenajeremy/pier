@@ -749,6 +749,40 @@ func (m *Manager) BackupPath(b store.Backup) string {
 	return filepath.Join(m.projectDir(b.Project), b.File)
 }
 
+// ErrBackupRunning means the backup is still being made.
+var ErrBackupRunning = errors.New("that backup is still being made; delete it once it's done")
+
+// DeleteBackup removes one of a project's backups: its file on this server,
+// its copy offsite if it was sent there, and its row. A backup still being
+// made can't be deleted.
+func (m *Manager) DeleteBackup(ctx context.Context, project string, id int64, by string) (store.Backup, error) {
+	unlock := m.lock(project)
+	defer unlock()
+	b, err := m.Store.BackupByID(ctx, project, id)
+	if err != nil {
+		return b, err
+	}
+	if b.State == store.BackupRunning {
+		return b, ErrBackupRunning
+	}
+	if b.File != "" {
+		if err := os.Remove(m.BackupPath(b)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return b, err
+		}
+		if m.Offsite != nil && b.Offsite == "sent" && m.Offsite.Configured(ctx) {
+			if err := m.Offsite.Delete(ctx, offsiteKey(b)); err != nil {
+				m.Log.Warn("remove a deleted backup offsite", "project", project, "backup", b.ID, "err", err)
+			}
+		}
+	}
+	if err := m.Store.DeleteBackup(ctx, b.ID); err != nil {
+		return b, err
+	}
+	m.Store.RecordEvent(context.WithoutCancel(ctx), project, "Deleted a backup of "+b.Database,
+		"Made "+b.StartedAt.UTC().Format("2 January 2006, 15:04 UTC")+".", "", by)
+	return b, nil
+}
+
 // Backup dumps one of a project's databases to a file on this server,
 // compressed, sends it offsite if that's set up, and removes the oldest
 // backups of the same kind beyond the number kept.

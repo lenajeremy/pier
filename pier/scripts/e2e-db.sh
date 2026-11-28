@@ -42,6 +42,9 @@ curl -fsS -b "$JAR" "$API/api/projects/store/database/tables/public/visits?where
 curl -fsS -b "$JAR" -H 'X-Pier: 1' -d '{"sql":"SELECT count(*) AS n FROM visits"}' "$API/api/projects/store/database/query" | grep -q '"tag":"SELECT 1"' || fail "a query didn't run"
 curl -fsS -b "$JAR" -H 'X-Pier: 1' -X POST "$API/api/projects/store/database/backups" | grep -o '"state":"done"' | wc -l | grep -q 3 || fail "the backups failed"
 "$PIER" db url store | grep -q '@postgres:5432/production' || fail "pier db url"
+before=$("$PIER" db backups store | wc -l)
+"$PIER" db backups rm "$("$PIER" db backups store | awk 'NR==1{print $1}')" store --yes | grep -q 'Deleted backup' || fail "pier db backups rm"
+[[ $("$PIER" db backups store | wc -l) -eq $((before - 1)) ]] || fail "the deleted backup is still listed"
 if command -v psql >/dev/null; then
 	"$PIER" db tunnel store --port 15499 > "$WORK/tunnel.log" 2>&1 &
 	TUNNEL=$!

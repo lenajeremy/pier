@@ -145,6 +145,7 @@ func (a *API) routes() []route {
 		{"POST /api/projects/{project}/database/backups", member, "back up databases", a.backUpDatabase},
 		{"GET /api/projects/{project}/database/backups/{id}/file", member, "download backups", a.downloadBackup},
 		{"POST /api/projects/{project}/database/backups/{id}/restore", member, "restore backups", a.restoreBackup},
+		{"DELETE /api/projects/{project}/database/backups/{id}", member, "delete backups", a.deleteBackup},
 		{"POST /api/projects/{project}/database/databases", member, "add databases", a.addProjectDatabase},
 		{"PUT /api/projects/{project}/database/databases/{name}", member, "change databases", a.linkProjectDatabase},
 		{"DELETE /api/projects/{project}/database/databases/{name}", member, "delete databases", a.dropProjectDatabase},

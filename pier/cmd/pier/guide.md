@@ -43,6 +43,8 @@ A deploy gets variables when it builds; redeploy after a change.
     pier db add analytics --env production --var ANALYTICS_URL
     pier db link preview --env none          # what a database serves
     pier db                   # the server and its databases
+    pier db backup            # back up every database now; nightly ones are automatic
+    pier db backups           # list them; pier db backups rm ID --yes deletes one
 
 Apps read DATABASE_URL (or the variable you chose); it reaches the database only
 from the project's own apps. From your computer:
