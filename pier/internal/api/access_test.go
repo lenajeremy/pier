@@ -61,6 +61,7 @@ var decisions = map[string]string{
 	"GET /api/projects/{project}/requests":                     "viewer",
 	"GET /api/projects/{project}/requests/chart":               "viewer",
 	"GET /api/projects/{project}/analytics":                    "viewer",
+	"GET /api/projects/{project}/requests/values":              "viewer",
 	"GET /api/projects/{project}/domains":                      "viewer",
 	"GET /api/shared-variables":                                "viewer",
 	"GET /api/activity":                                        "viewer",

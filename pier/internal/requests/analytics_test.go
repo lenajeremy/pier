@@ -135,3 +135,48 @@ func TestParseReadsHeaders(t *testing.T) {
 		t.Fatal("the same person on the same day got two visitor numbers")
 	}
 }
+
+func TestFieldFilters(t *testing.T) {
+	ctx := context.Background()
+	l, err := Open(filepath.Join(t.TempDir(), "requests.db"), func(string) string { return "shop" }, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	now := time.Now().UnixMilli()
+	for i, c := range []struct {
+		status  int
+		browser string
+	}{{200, "Chrome"}, {200, "Safari"}, {404, "Chrome"}, {502, "Chrome"}, {502, "Firefox"}} {
+		l.Add(Line{Project: "shop", Deployment: "d1", At: now - int64(10-i)*1000, Method: "GET", Path: "/x?y=1", Status: c.status, Browser: c.browser})
+	}
+	if err := l.Flush(ctx); err != nil {
+		t.Fatal(err)
+	}
+	f := Filter{From: now - 60_000, To: now + 1, Match: []Match{{Field: "browser", Value: "Chrome"}, {Field: "level", Value: "info", Not: true}}}
+	lines, err := l.Lines(ctx, "shop", f)
+	if err != nil || len(lines) != 2 {
+		t.Fatalf("Chrome and not info: %d lines, %v", len(lines), err)
+	}
+	vals, rest, err := l.Values(ctx, "shop", "browser", f, 5)
+	if err != nil || len(vals) != 2 || vals[0].Name != "Chrome" || vals[0].Count != 2 || rest != 0 {
+		t.Fatalf("browsers among errors and warnings, the browser match left out: %+v %d %v", vals, rest, err)
+	}
+	if v, _, _ := l.Values(ctx, "shop", "path", Filter{From: now - 60_000, To: now + 1}, 5); len(v) != 1 || v[0].Name != "/x" {
+		t.Fatalf("paths lose their query: %+v", v)
+	}
+	if _, _, err := l.Values(ctx, "shop", "secret", f, 5); err == nil {
+		t.Fatal("grouped by a field that isn't one")
+	}
+	b, _, err := l.ChartOf(ctx, "shop", Filter{From: now - 60_000, To: now + 1, Match: []Match{{Field: "status", Value: "502"}}}, time.UTC)
+	if err != nil {
+		t.Fatal(err)
+	}
+	total := 0
+	for _, x := range b {
+		total += x.E5xx
+	}
+	if total != 2 {
+		t.Fatalf("chart of status 502 counts %d", total)
+	}
+}

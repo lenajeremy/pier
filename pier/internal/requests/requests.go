@@ -392,7 +392,22 @@ type Filter struct {
 	Query    string // part of the path
 	After    int64  // only requests newer than this ID, for following
 	Limit    int
-	Forward  bool // read the earliest page after a follow cursor
+	Forward  bool    // read the earliest page after a follow cursor
+	Match    []Match // fields that must, or mustn't, hold a value
+}
+
+// Match is one filter on a field: status is 500, browser isn't Safari.
+type Match struct {
+	Field string `json:"field"`
+	Value string `json:"value"`
+	Not   bool   `json:"not,omitempty"`
+}
+
+// Fields are what a request can be filtered and grouped by, as SQL.
+var Fields = map[string]string{
+	"status": "CAST(status AS TEXT)", "method": "method", "path": pathNoQuery, "host": "host", "env": "env",
+	"deployment": "deployment", "browser": "browser", "device": "device", "referrer": "referrer", "country": "country",
+	"bot": "bot", "level": "CASE WHEN status >= 500 THEN 'error' WHEN status >= 400 THEN 'warning' ELSE 'info' END",
 }
 
 func (f Filter) where(project string) (string, []any) {
@@ -422,6 +437,18 @@ func (f Filter) where(project string) (string, []any) {
 	if f.After > 0 {
 		w = append(w, "id > ?")
 		args = append(args, f.After)
+	}
+	for _, m := range f.Match {
+		col, ok := Fields[m.Field]
+		if !ok {
+			continue
+		}
+		op := " = ?"
+		if m.Not {
+			op = " <> ?"
+		}
+		w = append(w, col+op)
+		args = append(args, m.Value)
 	}
 	return strings.Join(w, " AND "), args
 }
@@ -459,10 +486,11 @@ func (l *Log) Lines(ctx context.Context, project string, f Filter) ([]Line, erro
 
 // Bucket is one point of the chart.
 type Bucket struct {
-	At         int64 `json:"at"` // ms, the bucket's start
-	Requests   int   `json:"requests"`
-	Errors     int   `json:"errors"`
-	E4xx, E5xx int   `json:"-"`
+	At       int64 `json:"at"` // ms, the bucket's start
+	Requests int   `json:"requests"`
+	Errors   int   `json:"errors"`
+	E4xx     int   `json:"e4xx"`
+	E5xx     int   `json:"e5xx"`
 }
 
 // MaxOffset is the furthest a viewer's clock can be from UTC.
@@ -528,6 +556,12 @@ func gcd(a, b int64) int64 {
 // is still a day. Minutes and hours start at the same moment everywhere that
 // matters. A nil loc is UTC.
 func (l *Log) Chart(ctx context.Context, project string, from, to int64, status, query string, loc *time.Location) ([]Bucket, int64, error) {
+	return l.ChartOf(ctx, project, Filter{From: from, To: to, Status: status, Query: query}, loc)
+}
+
+// ChartOf is Chart for any filter, field matches included.
+func (l *Log) ChartOf(ctx context.Context, project string, f Filter, loc *time.Location) ([]Bucket, int64, error) {
+	from, to, status, query := f.From, f.To, f.Status, f.Query
 	span := time.Duration(to-from) * time.Millisecond
 	var size time.Duration
 	switch {
@@ -574,11 +608,11 @@ func (l *Log) Chart(ctx context.Context, project string, from, to int64, status,
 	// Whole hours can use retained counts. At a recent range boundary we
 	// still have individual timestamps, so count only the part of that hour
 	// inside the range (local midnight need not fall on a UTC hour).
-	where, args := Filter{From: from, To: to, Status: status, Query: query}.where(project)
+	where, args := Filter{From: from, To: to, Status: status, Query: query, Match: f.Match}.where(project)
 	linesSQL := `SELECT ts - ts % ? AS bucket, count(*), sum(status BETWEEN 400 AND 499), sum(status >= 500)
 		FROM requests WHERE ` + where
 	args = append([]any{piece}, args...)
-	if size != time.Minute && status == "" && strings.TrimSpace(query) == "" {
+	if size != time.Minute && status == "" && strings.TrimSpace(query) == "" && len(f.Match) == 0 {
 		first, last := from-from%hour, to
 		cutoff := time.Now().Add(-KeepLines).UnixMilli()
 		if first < from && first >= cutoff {
@@ -653,4 +687,41 @@ func (l *Log) Since(ctx context.Context, project string, from, to int64) (Totals
 		return t, nil
 	}
 	return t, err
+}
+
+// Values is how often each value of a field turns up among the requests a
+// filter leaves, most first; the filter's own matches on that field are
+// left out, so every value stays in reach.
+func (l *Log) Values(ctx context.Context, project, field string, f Filter, top int) ([]Count, int64, error) {
+	col, ok := Fields[field]
+	if !ok {
+		return nil, 0, fmt.Errorf("there's no field %q", field)
+	}
+	var keep []Match
+	for _, m := range f.Match {
+		if m.Field != field {
+			keep = append(keep, m)
+		}
+	}
+	f.Match, f.After = keep, 0
+	where, args := f.where(project)
+	rows, err := l.db.QueryContext(ctx, `SELECT `+col+`, count(*) FROM requests WHERE `+where+` GROUP BY 1 ORDER BY 2 DESC, 1`, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	out := []Count{}
+	var rest int64
+	for rows.Next() {
+		var c Count
+		if err := rows.Scan(&c.Name, &c.Count); err != nil {
+			return nil, 0, err
+		}
+		if len(out) < top {
+			out = append(out, c)
+		} else {
+			rest += c.Count
+		}
+	}
+	return out, rest, rows.Err()
 }

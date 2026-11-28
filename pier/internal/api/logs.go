@@ -3,7 +3,9 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"pier/internal/requests"
@@ -60,6 +62,7 @@ func (a *API) requestLines(w http.ResponseWriter, r *http.Request) {
 	}
 	filter := requests.Filter{
 		From: from, To: to, Status: statusFilter(q.Get("status")), Query: q.Get("q"), After: after, Forward: q.Has("after"), Limit: limit,
+		Match: matches(q),
 	}
 	if q.Get("follow") == "1" {
 		a.followRequests(w, r, name, filter)
@@ -97,7 +100,7 @@ func (a *API) requestChart(w http.ResponseWriter, r *http.Request) {
 	var buckets []requests.Bucket
 	var step int64
 	if a.Requests != nil {
-		buckets, step, err = a.Requests.Chart(r.Context(), name, from, to, statusFilter(q.Get("status")), q.Get("q"), tz)
+		buckets, step, err = a.Requests.ChartOf(r.Context(), name, requests.Filter{From: from, To: to, Status: statusFilter(q.Get("status")), Query: q.Get("q"), Match: matches(q)}, tz)
 		if err != nil {
 			a.fail(w, err)
 			return
@@ -174,4 +177,46 @@ func (a *API) followRequests(w http.ResponseWriter, r *http.Request, project str
 		case <-changed:
 		}
 	}
+}
+
+// matches reads field filters: f=browser:Chrome keeps requests whose browser
+// is Chrome, nf=status:200 drops those whose status is 200. Fields Pier
+// doesn't know are ignored.
+func matches(q url.Values) []requests.Match {
+	var out []requests.Match
+	for _, k := range []string{"f", "nf"} {
+		for _, v := range q[k] {
+			field, value, ok := strings.Cut(v, ":")
+			if _, known := requests.Fields[field]; ok && known {
+				out = append(out, requests.Match{Field: field, Value: value, Not: k == "nf"})
+			}
+		}
+	}
+	return out
+}
+
+// requestValues is a field's commonest values among the requests the other
+// filters leave, for the field list beside the lines.
+func (a *API) requestValues(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("project")
+	if _, ok := a.findProject(w, r, name); !ok {
+		return
+	}
+	q := r.URL.Query()
+	field := q.Get("field")
+	if _, ok := requests.Fields[field]; !ok {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "field is one of status, method, path, host, env, deployment, browser, device, referrer, country, bot or level"})
+		return
+	}
+	if a.Requests == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"values": []requests.Count{}, "rest": 0})
+		return
+	}
+	from, to := span(r)
+	values, rest, err := a.Requests.Values(r.Context(), name, field, requests.Filter{From: from, To: to, Status: statusFilter(q.Get("status")), Query: q.Get("q"), Match: matches(q)}, 8)
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"values": values, "rest": rest})
 }

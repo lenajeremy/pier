@@ -5,7 +5,7 @@ import { Sparkline, TrafficChart, type Deploy } from '../components/AnalyticsCha
 import { Calendar, Disclosure } from '../components/Icons'
 import { Menu } from '../components/Menu'
 import { Problem, Skeleton } from '../components/ui'
-import { Logs } from './Logs'
+import { LogExplorer } from './LogExplorer'
 
 // Analytics is the project's traffic and logs. Overview counts visitors,
 // pages and errors from the request log Pier already keeps; Logs is every
@@ -17,7 +17,7 @@ const views: [View, string][] = [
   ['logs', 'Logs'],
 ]
 
-export function Analytics({ project, address, initial }: { project: string; address: string; initial: View }) {
+export function Analytics({ project, initial }: { project: string; initial: View }) {
   const [view, setView] = useState<View>(initial)
   useEffect(() => setView(initial), [initial])
   const pick = (v: View) => {
@@ -36,7 +36,7 @@ export function Analytics({ project, address, initial }: { project: string; addr
       {right && <div className="a-head-right">{right}</div>}
     </div>
   )
-  if (view === 'logs') return <Logs project={project} address={address} head={tabs()} />
+  if (view === 'logs') return <LogExplorer project={project} head={tabs()} />
   return <Overview project={project} tabs={tabs} />
 }
 

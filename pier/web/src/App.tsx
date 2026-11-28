@@ -126,7 +126,6 @@ function Signed({ session, path, now }: { session: Session; path: string; now: n
             <Analytics
               key={name}
               project={name}
-              address={project.address}
               initial={tab.tab === 'logs' || new URLSearchParams(location.search).get('view') === 'logs' ? 'logs' : 'overview'}
             />
           ) : tab?.tab === 'variables' ? (
