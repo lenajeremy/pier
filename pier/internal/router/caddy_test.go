@@ -1,6 +1,7 @@
 package router
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -340,5 +341,26 @@ func TestNothingDeployedPage(t *testing.T) {
 	}
 	if code, kind, body := get(""); code != 404 || !strings.HasPrefix(kind, "text/plain") || body != notFoundText {
 		t.Fatalf("curl got %d %s %q", code, kind, body)
+	}
+}
+
+// With an events listener, every deployment's address sends /_pier/event to
+// it with the deployment named, and everything else as before; redirects
+// and the dashboard don't.
+func TestEventsGoToPierd(t *testing.T) {
+	c := Caddy{Listen: []string{":8088"}, Storage: t.TempDir(), Events: "127.0.0.1:41999"}
+	raw := mustConfig(t, c, []Route{
+		{Host: "shop.pier.localhost", Root: t.TempDir(), DeploymentID: "d00001"},
+		{Host: "www.shop.example.com", Redirect: "https://shop.example.com"},
+		{Host: "pier.localhost", Upstream: "127.0.0.1:41000"},
+	})
+	if err := validate(raw); err != nil {
+		t.Fatal(err)
+	}
+	var compact bytes.Buffer
+	json.Compact(&compact, raw)
+	s := compact.String()
+	if strings.Count(s, `"/_pier/event"`) != 1 || !strings.Contains(s, `"X-Pier-Event":["d00001"]`) || !strings.Contains(s, `"dial":"127.0.0.1:41999"`) {
+		t.Fatalf("the deployment's events don't reach pierd:\n%s", s)
 	}
 }

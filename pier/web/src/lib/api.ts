@@ -412,3 +412,28 @@ export interface AnalyticsOverview extends AnalyticsHeadline {
   bots: AnalyticsList
   slowest: { route: string; requests: number; errors: number; p95_ms: number }[]
 }
+
+// Events an app sends.
+export interface EventRow {
+  name: string
+  count: number
+  visitors: number
+  value: number | null
+  trend: number[]
+}
+export interface EventDetail {
+  name: string
+  by: string
+  props: string[]
+  step: number
+  steps: number[]
+  series: { key: string; counts: number[]; values: number[] }[]
+  breakdown: { key: string; count: number; value: number | null }[]
+  count: number
+  value: number | null
+}
+export interface Funnel {
+  steps: string[]
+  counts: number[]
+  names: string[]
+}

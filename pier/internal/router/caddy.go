@@ -36,6 +36,14 @@ type Route struct {
 // it, replacing any a visitor sent.
 const WakeHeader = "X-Pier-Wake"
 
+// EventPath is where an app's pages send events, on the app's own address.
+// EventHeader names the deployment they came from; Caddy sets it,
+// replacing any a visitor sent.
+const (
+	EventPath   = "/_pier/event"
+	EventHeader = "X-Pier-Event"
+)
+
 // Fallbacks for a path that isn't a file.
 const (
 	// FallbackSPA serves index.html, so a single-page app's own routes work
@@ -56,6 +64,9 @@ type Caddy struct {
 	BaseDomain    string
 	ACMECA        string // optional staging or private ACME directory
 	WildcardReady func() bool
+	// Events is pierd's listener for /_pier/event, host:port; every app's
+	// address sends that path there, saying which deployment it came from.
+	Events string
 	// Certify names hosts with no site that still need a certificate in
 	// storage: the public Postgres port's.
 	Certify   []string
@@ -112,6 +123,17 @@ func (c Caddy) Config(routes []Route) ([]byte, error) {
 			if r.DeploymentID != "" {
 				h["headers"] = map[string]any{"response": map[string]any{"set": map[string][]string{"X-Pier-Deployment": {r.DeploymentID}}}}
 			}
+		}
+		if c.Events != "" && r.DeploymentID != "" && r.Redirect == "" {
+			h = map[string]any{"handler": "subroute", "routes": []any{
+				map[string]any{
+					"match": []any{map[string]any{"path": []string{EventPath}}},
+					"handle": []any{map[string]any{"handler": "reverse_proxy", "upstreams": []any{map[string]any{"dial": c.Events}},
+						"headers": map[string]any{"request": map[string]any{"set": map[string][]string{EventHeader: {r.DeploymentID}}}}}},
+					"terminal": true,
+				},
+				map[string]any{"handle": []any{h}},
+			}}
 		}
 		handlers = append(handlers, map[string]any{
 			"match":    []any{map[string]any{"host": []string{r.Host}}},

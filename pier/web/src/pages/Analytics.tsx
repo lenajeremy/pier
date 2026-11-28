@@ -6,15 +6,17 @@ import { Calendar, Disclosure } from '../components/Icons'
 import { Menu } from '../components/Menu'
 import { Problem, Skeleton } from '../components/ui'
 import { LogExplorer } from './LogExplorer'
+import { Events } from './Events'
 
 // Analytics is the project's traffic and logs. Overview counts visitors,
 // pages and errors from the request log Pier already keeps; Logs is every
 // request, line by line.
 
-type View = 'overview' | 'logs'
+type View = 'overview' | 'logs' | 'events'
 const views: [View, string][] = [
   ['overview', 'Overview'],
   ['logs', 'Logs'],
+  ['events', 'Events'],
 ]
 
 export function Analytics({ project, initial }: { project: string; initial: View }) {
@@ -37,6 +39,7 @@ export function Analytics({ project, initial }: { project: string; initial: View
     </div>
   )
   if (view === 'logs') return <LogExplorer project={project} head={tabs()} />
+  if (view === 'events') return <Events project={project} tabs={tabs} />
   return <Overview project={project} tabs={tabs} />
 }
 

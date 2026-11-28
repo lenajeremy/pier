@@ -101,10 +101,11 @@ type Log struct {
 	// preview; nil leaves a request's environment empty.
 	Target func(deployment string) string
 
-	mu      sync.Mutex
-	pending []Line
-	changed chan struct{}
-	seen    map[string]int64 // deployment -> its latest request, ms since the epoch
+	mu            sync.Mutex
+	pending       []Line
+	pendingEvents []Event
+	changed       chan struct{}
+	seen          map[string]int64 // deployment -> its latest request, ms since the epoch
 }
 
 // Open opens (and if needed creates) the requests database. project maps a
@@ -115,7 +116,7 @@ func Open(path string, project func(string) string, log *slog.Logger) (*Log, err
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(schema + saltSchema); err != nil {
+	if _, err := db.Exec(schema + saltSchema + eventSchema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("requests schema: %w", err)
 	}
@@ -311,10 +312,10 @@ func (l *Log) LastSeen(deployment string) time.Time {
 // Flush writes the requests waiting in memory.
 func (l *Log) Flush(ctx context.Context) error {
 	l.mu.Lock()
-	batch := l.pending
-	l.pending = nil
+	batch, events := l.pending, l.pendingEvents
+	l.pending, l.pendingEvents = nil, nil
 	l.mu.Unlock()
-	if len(batch) == 0 {
+	if len(batch) == 0 && len(events) == 0 {
 		return nil
 	}
 	requeue := func() {
@@ -325,6 +326,7 @@ func (l *Log) Flush(ctx context.Context) error {
 			merged = merged[len(merged)-maxPending:]
 		}
 		l.pending = merged
+		l.pendingEvents = append(events, l.pendingEvents...)
 		l.mu.Unlock()
 	}
 	tx, err := l.db.BeginTx(ctx, nil)
@@ -356,6 +358,10 @@ func (l *Log) Flush(ctx context.Context) error {
 			return err
 		}
 	}
+	if err := l.flushEvents(ctx, tx, events); err != nil {
+		requeue()
+		return err
+	}
 	if err := tx.Commit(); err != nil {
 		requeue()
 		return err
@@ -382,6 +388,9 @@ func (l *Log) cleanUp(ctx context.Context) {
 	}
 	if _, err := l.db.ExecContext(ctx, `DELETE FROM hours WHERE hour < ?`, now.Add(-KeepHours).UnixMilli()); err != nil {
 		l.log.Warn("clear old request counts", "err", err)
+	}
+	if _, err := l.db.ExecContext(ctx, `DELETE FROM events WHERE ts < ?`, now.Add(-KeepEvents).UnixMilli()); err != nil {
+		l.log.Warn("clear old events", "err", err)
 	}
 }
 

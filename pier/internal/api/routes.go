@@ -53,6 +53,7 @@ func (a *API) routes() []route {
 		// approval, joining with an invite, and GitHub's signed deliveries.
 		{"GET /healthz", public, "", func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "ok\n") }},
 		{"POST /api/session", public, "", a.signIn},
+		{"POST /api/events", public, "", a.sendEvents},
 		{"POST /api/cli/login", public, "", a.cliStart},
 		{"POST /api/cli/login/poll", public, "", a.cliPoll},
 		{"POST /api/invites/lookup", public, "", a.lookupInvite},
@@ -93,6 +94,10 @@ func (a *API) routes() []route {
 		{"GET /api/projects/{project}/requests/chart", viewer, "", a.requestChart},
 		{"GET /api/projects/{project}/analytics", viewer, "", a.analyticsOverview},
 		{"GET /api/projects/{project}/requests/values", viewer, "", a.requestValues},
+		{"GET /api/projects/{project}/events", viewer, "", a.projectEvents},
+		{"GET /api/projects/{project}/events/detail", viewer, "", a.projectEvent},
+		{"GET /api/projects/{project}/events/funnel", viewer, "", a.projectFunnel},
+		{"PUT /api/projects/{project}/events/funnel", member, "change the funnel", a.setFunnel},
 		{"GET /api/projects/{project}/domains", viewer, "", a.domains},
 		{"GET /api/projects/{project}/database", viewer, "", a.getDatabase},
 		{"GET /api/projects/{project}/storage", viewer, "", a.getStorage},

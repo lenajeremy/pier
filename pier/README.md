@@ -214,6 +214,12 @@ Then add buckets from a project's Storage tab, or with `pier storage add NAME`: 
 
 A deployment gets each linked bucket as `<PREFIX>_BUCKET`, `_ENDPOINT`, `_ACCESS_KEY_ID`, `_SECRET_ACCESS_KEY`, `_REGION` and, for a public one, `_PUBLIC_URL`; the prefix is `STORAGE` for the first, which also sets `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ENDPOINT_URL_S3` and `AWS_REGION`, so S3 clients work with no setup. Apps talk to R2 directly. A public bucket is served at `files-<project>-<name>.<base domain>` through Cloudflare's network when the base domain is on Cloudflare in the same account, and at an `r2.dev` address otherwise, which Cloudflare rate-limits. The Storage tab's Files browses a bucket by folder, uploads, previews images, video, audio and PDFs from short-lived links straight to R2, and deletes files and folders. Deleting a bucket or its project empties and deletes it.
 
+## Analytics
+
+A project's Analytics tab reads the requests Pier already logs. Overview counts visitors, page views, the error rate and the p95 response time, with requests and errors over time, production deploys marked, the top pages, referrers, countries (when Cloudflare is in front), browsers and devices, the slowest routes, and bots on their own. Logs lists every request with a field browser on the left: a field's commonest values filter the lines, and a line opens to everything recorded about it. A visitor is a hash of the address and browser with a salt that changes every day; addresses are never stored.
+
+Apps send their own events, shown under Events with a breakdown by any property and a funnel of steps. Every deploy gets `PIER_EVENTS_URL` and `PIER_EVENTS_TOKEN` for sending from the server; a page posts to `/_pier/event` on its own address, which Caddy hands to pierd with the deployment it came from. Events are kept 90 days and limited to 6,000 a minute per project. `pier docs` has the details.
+
 ## For coding agents
 
 `pier docs` prints a short guide to everything an agent needs, with no network: deploying (`pier deploy --project NAME --create`), variables (`pier env set`), Postgres (`pier db`), buckets (`pier storage`), the variables apps get, and code for using them. It's `cmd/pier/guide.md`. Every command works without a terminal: output is plain when it isn't one, and deleting needs `--yes`. A machine signs in with `PIER_SERVER` and `PIER_TOKEN`.

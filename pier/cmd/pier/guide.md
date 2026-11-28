@@ -100,6 +100,28 @@ makes. From your computer:
     pier storage ls media/brand
     pier storage get files/invoices/1.pdf
 
+## Analytics and events
+
+The dashboard's Analytics tab counts visitors, pages, referrers, browsers,
+errors and response times from every request, with nothing to install, and
+lists each request in Logs. Apps add their own events, each with a name, an
+optional number and properties to split by:
+
+    await fetch(process.env.PIER_EVENTS_URL, {
+      method: "POST",
+      headers: { authorization: `Bearer ${process.env.PIER_EVENTS_TOKEN}` },
+      body: JSON.stringify({ name: "order", value: 42.5, props: { plan: "pro" }, user: "u_123" }),
+    })
+
+From a page, post to the app's own address, no token needed:
+
+    navigator.sendBeacon("/_pier/event", JSON.stringify({ name: "search" }))
+
+A body is one event or a list of up to 50. Names are up to 64 letters,
+digits and _ . : / -; up to 20 properties of text, numbers or true/false;
+user (optional) ties server events to one person for funnels. Events are
+kept 90 days.
+
 ## Jobs
 
     pier jobs                 # scheduled jobs and their last runs

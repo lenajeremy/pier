@@ -247,6 +247,15 @@ func serve(args []string) int {
 		return 1
 	}
 	defer wakeLn.Close()
+	// Caddy sends each app's /_pier/event here, with the deployment it came
+	// from; loopback too, for the same reason.
+	eventsLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		log.Error("listen for events from apps", "err", err)
+		return 1
+	}
+	defer eventsLn.Close()
+	caddyCfg.Events = eventsLn.Addr().String()
 	dep := &deploy.Deployer{
 		Waker: wakeLn.Addr().String(), SleepAfter: *sleepAfter,
 		Store: st, Repos: paths.repos, Deployments: paths.deployments, Logs: paths.logs, Sources: paths.sources, Tmp: paths.tmp,
@@ -275,6 +284,18 @@ func serve(args []string) int {
 		// Stand-ins for Cloudflare's API and R2, for tests only.
 		Base: os.Getenv("PIER_TEST_CLOUDFLARE_API"), Endpoint: os.Getenv("PIER_TEST_R2_ENDPOINT")}
 	dep.Storage = buckets
+	// Apps post their own events to the dashboard's address with a token
+	// for their project and environment.
+	dep.EventVars = func(ctx context.Context, project, target string) ([]string, error) {
+		if *address == "" {
+			return nil, nil
+		}
+		token, err := api.EventsToken(ctx, st, project, target)
+		if err != nil {
+			return nil, err
+		}
+		return []string{"PIER_EVENTS_URL=" + dep.URL(*address) + "/api/events", "PIER_EVENTS_TOKEN=" + token}, nil
+	}
 
 	self, err := os.Executable()
 	if err != nil {
@@ -354,6 +375,9 @@ func serve(args []string) int {
 	}
 	a := &api.API{StartedAt: time.Now(), Store: st, Deployer: dep, Token: tok, Log: log, Web: web.Handler(), Requests: reqs, SiteListener: dialable(*httpAddr), Alerts: notifier, Jobs: scheduler,
 		Databases: dbs, Storage: buckets, Releases: releases, Data: abs, UpgradeUnit: *upgradeUnit}
+	events := &http.Server{Handler: a.BrowserEvents(), ReadHeaderTimeout: 5 * time.Second}
+	go events.Serve(eventsLn)
+	defer events.Close()
 	if err := a.ResumeCleanup(ctx); err != nil {
 		log.Warn("resume preview cleanup", "err", err)
 	}
