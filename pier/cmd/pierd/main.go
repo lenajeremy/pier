@@ -320,7 +320,7 @@ func serve(args []string) int {
 			return dep.Apps.OpenLogs(ctx, container, 1000, since, true)
 		},
 	}
-	dep.EventVars = func(ctx context.Context, project, target string) ([]string, error) {
+	dep.EventVars = func(ctx context.Context, project, target, deployment string) ([]string, error) {
 		if *address == "" {
 			return nil, nil
 		}
@@ -340,7 +340,9 @@ func serve(args []string) int {
 				"OTEL_METRICS_EXPORTER=otlp",
 				"OTEL_EXPORTER_OTLP_HEADERS=authorization=Bearer%20"+token,
 				"OTEL_SERVICE_NAME="+project,
-				"OTEL_RESOURCE_ATTRIBUTES=deployment.environment="+target,
+				// Each deployment is its own instance: an old one still
+				// running mustn't write into the new one's series.
+				"OTEL_RESOURCE_ATTRIBUTES=deployment.environment="+target+",service.instance.id="+deployment+",pier.deployment="+deployment,
 			)
 		}
 		return vars, nil

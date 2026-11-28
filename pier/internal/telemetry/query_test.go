@@ -97,3 +97,25 @@ func TestSearchAndReadATrace(t *testing.T) {
 		}
 	}
 }
+
+func TestFamilies(t *testing.T) {
+	got := families([]string{
+		"http_server_request_duration_seconds_bucket", "http_server_request_duration_seconds_count", "http_server_request_duration_seconds_sum",
+		"orders_placed_total", "rpc_latency_count", "rpc_latency_sum", "process_memory_usage_bytes", "target_info", "jobs_count",
+	})
+	want := []Metric{
+		{Name: "http_server_request_duration_seconds", Type: "histogram", Unit: "seconds"},
+		{Name: "jobs_count", Type: "counter"},
+		{Name: "orders_placed_total", Type: "counter"},
+		{Name: "process_memory_usage_bytes", Type: "gauge", Unit: "bytes"},
+		{Name: "rpc_latency", Type: "summary"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("%+v", got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("%d: got %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}

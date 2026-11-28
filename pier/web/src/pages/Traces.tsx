@@ -839,7 +839,7 @@ const snippets: Record<string, [string, string][]> = {
 
 // TelemetryOff is the Traces tab before the server keeps traces: what
 // turning them on runs, and what apps then get.
-function TelemetryOff({ project, onOn }: { project: string; onOn: () => void }) {
+export function TelemetryOff({ project, onOn }: { project: string; onOn: () => void }) {
   const { owner } = useRole()
   const t = useData<Telemetry>('/api/server/telemetry', (d) => !!d.doing, 2000)
   const server = useData<{ memory_total?: number; memory_used?: number }>('/api/server')

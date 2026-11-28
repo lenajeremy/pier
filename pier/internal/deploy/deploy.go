@@ -74,7 +74,7 @@ type Deployer struct {
 	Storage Storage
 	// EventVars are the variables an app sends its own events with:
 	// PIER_EVENTS_URL and PIER_EVENTS_TOKEN. Nil gives none.
-	EventVars func(ctx context.Context, project, target string) ([]string, error)
+	EventVars func(ctx context.Context, project, target, deployment string) ([]string, error)
 
 	mu         sync.Mutex
 	locks      map[string]*sync.Mutex
@@ -384,7 +384,7 @@ func (d *Deployer) run(ctx context.Context, project string, src Source, out io.W
 		say(out, "build", "%s", storageNote)
 	}
 	if d.EventVars != nil {
-		vars, err := d.EventVars(ctx, project, src.Target)
+		vars, err := d.EventVars(ctx, project, src.Target, dep.ID)
 		if err != nil {
 			d.Log.Warn("event variables", "project", project, "err", err)
 		}

@@ -68,7 +68,7 @@ func (m *Manager) do(req *http.Request, server string) ([]byte, error) {
 	switch {
 	case resp.StatusCode == http.StatusNotFound:
 		return nil, ErrNoTrace
-	case resp.StatusCode == http.StatusBadRequest:
+	case resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusUnprocessableEntity:
 		return nil, QueryError{strings.TrimSpace(string(body))}
 	case resp.StatusCode >= 300:
 		return nil, fmt.Errorf("%s said %d: %s", server, resp.StatusCode, strings.TrimSpace(string(body)))
