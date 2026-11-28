@@ -199,7 +199,7 @@ A server is sized from its memory limit (256 MB unless changed; 128 MB to 4 GB):
 
 The Database tab's Data browses tables, sorted, filtered with a `WHERE` clause and paged, in a read-only transaction; Query runs SQL as the database's owner. Opening a database shows its URL and its external URL. From your computer, `pier db tunnel` reaches a database on `localhost:5433` and prints the URL for it (`--env .env.local` writes it there), and `pier db psql` opens psql through one. Viewers see the server's state, not its data or passwords.
 
-A database can have one external URL, made when you ask (`pier db external`, or the database's panel): a role of its own that acts as the database's owner, reached at `db.<base domain>:5432` over TLS with the base domain's wildcard certificate, so services outside Pier can use it. pierd sends each connection to the right project's server by its user name; it never sees the password. Revoking it closes its connections. Port 5432 has to be open on the server's firewall; `-postgres` changes it, and an empty one turns external URLs off.
+A database can have one external URL, made when you ask (`pier db external`, or the database's panel): a role of its own that acts as the database's owner, reached at `db.<base domain>:5432` over TLS, with a certificate pierd gets for that address (or the base domain's wildcard), so services outside Pier can use it. pierd sends each connection to the right project's server by its user name; it never sees the password. Revoking it closes its connections. Port 5432 has to be open on the server's firewall; `-postgres` changes it, and an empty one turns external URLs off.
 
 ## File storage
 

@@ -380,7 +380,23 @@ func (c *S3) DeleteMany(ctx context.Context, bucket string, keys []string) error
 	if err != nil {
 		return err
 	}
-	resp.Body.Close()
+	defer resp.Body.Close()
+	// A quiet delete answers 200 and lists only the keys it couldn't
+	// delete; one left behind would have Empty list it again forever.
+	var r struct {
+		Errors []struct {
+			Key     string `xml:"Key"`
+			Code    string `xml:"Code"`
+			Message string `xml:"Message"`
+		} `xml:"Error"`
+	}
+	if err := xml.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&r); err != nil && !errors.Is(err, io.EOF) {
+		return fmt.Errorf("couldn't read what the delete did: %w", err)
+	}
+	if len(r.Errors) > 0 {
+		e := r.Errors[0]
+		return &S3Error{Status: http.StatusOK, Code: e.Code, Message: fmt.Sprintf("%d files weren't deleted, %s among them: %s", len(r.Errors), e.Key, e.Message)}
+	}
 	return nil
 }
 

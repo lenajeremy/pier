@@ -32,6 +32,7 @@ type fakeCloudflare struct {
 	tokens  map[string][]string // key id -> its buckets
 	domains map[string]string   // bucket -> custom domain
 	dev     map[string]bool
+	buckets map[string]bool // the account's buckets
 }
 
 func (f *fakeCloudflare) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -56,6 +57,12 @@ func (f *fakeCloudflare) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case p == "/accounts/0123456789abcdef0123456789abcdef/r2/buckets" && r.Method == http.MethodPost:
 		var b struct{ Name string }
 		json.NewDecoder(r.Body).Decode(&b)
+		if f.buckets[b.Name] {
+			w.WriteHeader(409)
+			json.NewEncoder(w).Encode(map[string]any{"success": false, "errors": []any{map[string]any{"code": 10004, "message": "The bucket you tried to create already exists, and you own it."}}})
+			return
+		}
+		f.buckets[b.Name] = true
 		resp, err := f.s3.request(r.Context(), http.MethodPut, b.Name, "", nil, nil, nil, 0, "")
 		if err != nil {
 			f.t.Errorf("make %s: %v", b.Name, err)
@@ -91,6 +98,7 @@ func (f *fakeCloudflare) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			resp.Body.Close()
 		}
+		delete(f.buckets, name)
 		ok(map[string]string{})
 	case p == "/accounts/0123456789abcdef0123456789abcdef/tokens" && r.Method == http.MethodPost:
 		var body struct {
@@ -120,7 +128,7 @@ func TestStorageLifecycle(t *testing.T) {
 	if os.Getenv("PIER_TEST_DOCKER") == "" {
 		t.Skip("set PIER_TEST_DOCKER=1 to run an S3 server in Docker")
 	}
-	keys := [][2]string{{"key1", "value-one"}, {"key2", "value-two"}, {"key3", "value-three"}}
+	keys := [][2]string{{"key1", "value-one"}, {"key2", "value-two"}, {"key3", "value-three"}, {"key4", "value-four"}, {"key5", "value-five"}, {"key6", "value-six"}}
 	auth := []string{"--auth-key", "adminkey," + sha256Hex("admin-token")}
 	for _, k := range keys {
 		auth = append(auth, "--auth-key", k[0]+","+sha256Hex(k[1]))
@@ -146,7 +154,7 @@ func TestStorageLifecycle(t *testing.T) {
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-	fake := &fakeCloudflare{t: t, s3: admin, keys: keys, tokens: map[string][]string{}, domains: map[string]string{}, dev: map[string]bool{}}
+	fake := &fakeCloudflare{t: t, s3: admin, keys: keys, tokens: map[string][]string{}, domains: map[string]string{}, dev: map[string]bool{}, buckets: map[string]bool{}}
 	api := httptest.NewServer(fake)
 	defer api.Close()
 
@@ -266,6 +274,34 @@ func TestStorageLifecycle(t *testing.T) {
 	}
 	if err := m.Disconnect(ctx); err == nil {
 		t.Fatal("disconnected while projects have buckets")
+	}
+
+	// shop's old-files and shop-old's files would get the same name and
+	// address; the second gets its own.
+	if err := st.CreateProject(ctx, store.Project{Name: "shop-old"}); err != nil {
+		t.Fatal(err)
+	}
+	oldFiles, err := m.Add(ctx, "shop", Spec{Name: "old-files", Public: true}, "Ada")
+	if err != nil || oldFiles.Bucket != a.Prefix+"-shop-old-files" {
+		t.Fatalf("add old-files %+v %v", oldFiles, err)
+	}
+	clash, err := m.Add(ctx, "shop-old", Spec{Name: "files", Public: true}, "Ada")
+	if err != nil || clash.Bucket == oldFiles.Bucket || clash.PublicURL == oldFiles.PublicURL ||
+		!strings.HasPrefix(clash.Bucket, a.Prefix+"-shop-old-files-") || !strings.HasPrefix(clash.PublicURL, "https://files-shop-old-files-") {
+		t.Fatalf("clashing names %+v %+v %v", oldFiles, clash, err)
+	}
+	// A bucket left on the account under the name it would get.
+	fake.mu.Lock()
+	fake.buckets[a.Prefix+"-shop-leftover"] = true
+	fake.mu.Unlock()
+	leftover, err := m.Add(ctx, "shop", Spec{Name: "leftover"}, "Ada")
+	if err != nil || !strings.HasPrefix(leftover.Bucket, a.Prefix+"-shop-leftover-") {
+		t.Fatalf("add over a leftover %+v %v", leftover, err)
+	}
+	for _, b := range []store.Bucket{oldFiles, clash, leftover} {
+		if err := m.Remove(ctx, b.Project, b.Name, "Ada"); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	// Deleting a bucket empties it and removes its key and address.

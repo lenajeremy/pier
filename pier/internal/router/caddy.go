@@ -56,9 +56,12 @@ type Caddy struct {
 	BaseDomain    string
 	ACMECA        string // optional staging or private ACME directory
 	WildcardReady func() bool
-	Resolvers     []string
-	AccessLog     string
-	Client        *http.Client
+	// Certify names hosts with no site that still need a certificate in
+	// storage: the public Postgres port's.
+	Certify   []string
+	Resolvers []string
+	AccessLog string
+	Client    *http.Client
 }
 
 // streamCloseDelay keeps proxied WebSockets and other streams open when a

@@ -460,18 +460,24 @@ function Files({ project, bucket, now, onChange }: { project: string; bucket: Bu
     return () => clearTimeout(t)
   }, [typed])
 
+  // Only the newest listing lands: one for a folder left behind, answering
+  // late, would otherwise replace the folder now open.
+  const latest = useRef(0)
   const load = async (after?: string) => {
+    const asked = ++latest.current
     setLoading(true)
     try {
       const q = new URLSearchParams({ prefix: folder + query })
       if (after) q.set('after', after)
       const page = await api<FileListing>(`${base}/files?${q}`)
+      if (asked !== latest.current) return
       setPages((p) => (after ? [...p, page] : [page]))
       setProblem('')
     } catch (e) {
+      if (asked !== latest.current) return
       setProblem(e instanceof Error ? e.message : "Can't reach pierd.")
     } finally {
-      setLoading(false)
+      if (asked === latest.current) setLoading(false)
     }
   }
   useEffect(() => {

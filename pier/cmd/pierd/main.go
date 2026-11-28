@@ -206,6 +206,14 @@ func serve(args []string) int {
 		scheme = "https"
 	}
 	caddyCfg := router.Caddy{Admin: *caddyAdmin, Storage: filepath.Join(*data, "caddy"), Listen: []string{*httpAddr}, HTTPS: *https, BaseDomain: *domain, AccessLog: paths.accessSock}
+	// External URLs are on for a server with HTTPS on a real domain, or
+	// when -postgres is given. No site asks for db.<domain>'s certificate,
+	// so the router asks for it.
+	realDomain := *https && *caddyAdmin == "" && *domain != "" && *domain != "localhost" && !strings.HasSuffix(*domain, ".localhost")
+	externalDB := *pgAddr != "" && (realDomain || flagSet(fs, "postgres"))
+	if externalDB && *https && *caddyAdmin == "" {
+		caddyCfg.Certify = []string{"db." + *domain}
+	}
 	var wild wildcard
 	var challengeNS string
 	// probeWildcard asks DNS once whether the wildcard certificate can be
@@ -366,10 +374,7 @@ func serve(args []string) int {
 	defer func() { stop(); <-jobsDone }()
 	go a.SampleServer(ctx)
 	go dbs.Run(ctx)
-	// External URLs are on for a server with HTTPS on a real domain, or
-	// when -postgres is given.
-	realDomain := *https && *caddyAdmin == "" && *domain != "" && *domain != "localhost" && !strings.HasSuffix(*domain, ".localhost")
-	if *pgAddr != "" && (realDomain || flagSet(fs, "postgres")) {
+	if externalDB {
 		if ln, err := net.Listen("tcp", *pgAddr); err != nil {
 			log.Warn("external database URLs are off: can't listen", "addr", *pgAddr, "err", err)
 		} else {

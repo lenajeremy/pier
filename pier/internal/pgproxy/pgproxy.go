@@ -278,18 +278,21 @@ func readPacket(r io.Reader, first []byte) ([]byte, error) {
 }
 
 // startupUser is the user a startup message names: its parameters follow
-// the version as pairs of null-terminated strings.
+// the version as pairs of null-terminated strings. Postgres takes the last
+// "user" when one is named twice, so the proxy does too: routing by the
+// first would let a client reach a server as a role of the second.
 func startupUser(pkt []byte) string {
 	fields := strings.Split(string(pkt[8:]), "\x00")
+	user := ""
 	for i := 0; i+1 < len(fields); i += 2 {
 		if fields[i] == "" {
 			break
 		}
 		if fields[i] == "user" {
-			return fields[i+1]
+			user = fields[i+1]
 		}
 	}
-	return ""
+	return user
 }
 
 // errorResponse is a FATAL ErrorResponse message.

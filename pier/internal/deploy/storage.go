@@ -42,9 +42,15 @@ func (d *Deployer) withStorage(ctx context.Context, project, target string, env 
 			buckets = append(buckets, v)
 		}
 	}
-	note := "with " + plural(len(buckets), "bucket") + ": " + strings.Join(buckets, ", ")
+	note := ""
+	if len(buckets) > 0 {
+		note = "with " + plural(len(buckets), "bucket") + ": " + strings.Join(buckets, ", ")
+	}
 	if len(kept) > 0 {
-		note += "; the project's own " + strings.Join(kept, ", ") + " kept"
+		if note != "" {
+			note += "; "
+		}
+		note += "the project's own " + strings.Join(kept, ", ") + " kept"
 	}
 	return out, note, nil
 }

@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -126,6 +127,21 @@ func (c Caddy) tlsConfig(routes []Route) map[string]any {
 			custom = append(custom, r.Host)
 		}
 	}
+	// A host to certify gets a certificate kept up to date like a custom
+	// domain's, though no route asks for one, unless the wildcard covers it.
+	wildReady := c.WildcardReady != nil && c.WildcardReady()
+	var automate []string
+	for _, h := range c.Certify {
+		h = strings.ToLower(h)
+		if wildReady || net.ParseIP(h) != nil || !certmagic.SubjectQualifiesForPublicCert(h) {
+			continue
+		}
+		generated = slices.DeleteFunc(generated, func(g string) bool { return g == h })
+		if !slices.Contains(custom, h) {
+			custom = append(custom, h)
+		}
+		automate = append(automate, h)
+	}
 	issuer := func() map[string]any {
 		ca := c.ACMECA
 		if ca == "" {
@@ -146,12 +162,15 @@ func (c Caddy) tlsConfig(routes []Route) map[string]any {
 		policies = append(policies, map[string]any{"subjects": ips, "issuers": []any{i}})
 	}
 	app := map[string]any{}
-	if c.WildcardReady != nil && c.WildcardReady() {
+	if wildReady {
 		wild := "*." + c.BaseDomain
 		i := issuer()
 		i["challenges"] = map[string]any{"dns": map[string]any{"provider": map[string]any{"name": "pier", "zone": "_acme-challenge." + c.BaseDomain}, "resolvers": c.Resolvers}}
 		policies = append(policies, map[string]any{"subjects": []string{wild}, "issuers": []any{i}})
-		app["certificates"] = map[string]any{"automate": []string{wild}}
+		automate = append(automate, wild)
+	}
+	if len(automate) > 0 {
+		app["certificates"] = map[string]any{"automate": automate}
 	}
 	app["automation"] = map[string]any{"on_demand": map[string]any{"permission": map[string]any{"module": "pier", "hosts": allowed}}, "policies": policies}
 	return app

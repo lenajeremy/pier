@@ -383,6 +383,8 @@ func TestStartupUser(t *testing.T) {
 		{[]string{"user", "ext_shop", "database", "production"}, "ext_shop"},
 		{[]string{"database", "production", "user", "ext_shop"}, "ext_shop"},
 		{[]string{"database", "user"}, ""},
+		// Postgres takes the last, so the proxy routes by it.
+		{[]string{"user", "ext_shop", "user", "postgres"}, "postgres"},
 		{nil, ""},
 	} {
 		if got := startupUser(startupMessage(c.params...)); got != c.want {

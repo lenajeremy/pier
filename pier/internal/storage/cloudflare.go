@@ -161,6 +161,13 @@ func (c *Cloudflare) CreateBucket(ctx context.Context, name string) error {
 	return c.call(ctx, http.MethodPost, c.account()+"/r2/buckets", map[string]string{"name": name}, nil)
 }
 
+// exists reports whether err is Cloudflare refusing a bucket name that's in
+// use on the account.
+func exists(err error) bool {
+	var e *APIError
+	return errors.As(err, &e) && e.Status == http.StatusConflict
+}
+
 // DeleteBucket removes an empty bucket. One that's gone already counts.
 func (c *Cloudflare) DeleteBucket(ctx context.Context, name string) error {
 	err := c.call(ctx, http.MethodDelete, c.account()+"/r2/buckets/"+url.PathEscape(name), nil, nil)

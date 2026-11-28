@@ -94,6 +94,10 @@ func TestRealCloudflare(t *testing.T) {
 		t.Fatal("add a private bucket:", err)
 	}
 	t.Cleanup(func() { m.Purge(context.Background(), []store.Bucket{files}) })
+	// Add takes another name when Cloudflare says this one is in use.
+	if err := m.api(a).CreateBucket(ctx, files.Bucket); !exists(err) {
+		t.Fatalf("making a bucket that's there didn't answer a conflict: %v", err)
+	}
 	media, err := m.Add(ctx, project, Spec{Name: "media", Public: true, Environments: []string{store.TargetProduction}}, "test")
 	if err != nil {
 		t.Fatal("add a public bucket:", err)

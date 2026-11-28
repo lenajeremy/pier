@@ -115,13 +115,23 @@ func (m *Manager) RevokeExternal(ctx context.Context, project, role, by string) 
 	if err != nil || e.Project != project {
 		return store.ErrNotFound
 	}
-	if !sqlName.MatchString(role) {
+	if !sqlName.MatchString(role) || !sqlName.MatchString(e.Database) {
 		return errors.New("that isn't a role Pier makes")
 	}
 	if _, err := m.psql(ctx, project, "postgres",
 		fmt.Sprintf(`ALTER ROLE %s NOLOGIN`, role),
-		fmt.Sprintf(`SELECT count(pg_terminate_backend(pid)) FROM pg_stat_activity WHERE usename = '%s'`, role),
-		fmt.Sprintf(`DROP ROLE IF EXISTS %s`, role)); err != nil {
+		fmt.Sprintf(`SELECT count(pg_terminate_backend(pid)) FROM pg_stat_activity WHERE usename = '%s'`, role)); err != nil {
+		return err
+	}
+	// A client that reset its role may have made objects as the external
+	// role itself, or been granted some; the database's role takes them,
+	// or the role couldn't be dropped.
+	if _, err := m.psql(ctx, project, e.Database,
+		fmt.Sprintf(`REASSIGN OWNED BY %s TO %s`, role, e.Database),
+		fmt.Sprintf(`DROP OWNED BY %s`, role)); err != nil {
+		return err
+	}
+	if _, err := m.psql(ctx, project, "postgres", fmt.Sprintf(`DROP ROLE IF EXISTS %s`, role)); err != nil {
 		return err
 	}
 	if err := m.Store.DeleteExternal(ctx, project, role); err != nil {

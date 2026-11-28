@@ -147,6 +147,19 @@ func (m *Manager) Connect(ctx context.Context, account, token string) (Account, 
 	if !regexp.MustCompile(`^[0-9a-f]{32}$`).MatchString(account) {
 		return Account{}, errors.New("an account ID is 32 letters and digits, from the account's overview page")
 	}
+	// Buckets made on one account can't be emptied or deleted with
+	// another's token, so the account only changes once there are none.
+	if current, err := m.Store.Setting(ctx, store.SettingCloudflareAccount); err != nil {
+		return Account{}, err
+	} else if current != "" && current != account {
+		all, err := m.Store.Buckets(ctx, "")
+		if err != nil {
+			return Account{}, err
+		}
+		if len(all) > 0 {
+			return Account{}, fmt.Errorf("projects still have %d buckets on the connected account; delete them from their Storage tabs before connecting another", len(all))
+		}
+	}
 	a := Account{ID: account, Token: token}
 	cf := m.api(a)
 	id, err := cf.Verify(ctx)
@@ -251,6 +264,10 @@ func check(others []store.Bucket, name, prefix string, envs []string) error {
 	if !prefixRule.MatchString(prefix) {
 		return errors.New("a prefix is capital letters, digits and underscores, starting with a letter")
 	}
+	if prefix == "AWS" {
+		// AWS_ACCESS_KEY_ID and the rest come from the STORAGE_ bucket.
+		return errors.New("AWS_ is for the STORAGE_ bucket's standard variables; pick another prefix")
+	}
 	for _, o := range others {
 		if o.Name == name {
 			continue
@@ -267,14 +284,52 @@ func check(others []store.Bucket, name, prefix string, envs []string) error {
 	return nil
 }
 
-// bucketName is the R2 bucket's name: <server prefix>-<project>-<name>, in
-// R2's 63 characters.
-func bucketName(prefix, project, name string) string {
+// bucketName is the R2 bucket's name: <server prefix>-<project>-<name>, and
+// -<suffix> when that name is taken, the project shortened to keep it in R2's
+// 63 characters.
+func bucketName(prefix, project, name, suffix string) string {
 	p := strings.Trim(bucketSafe.ReplaceAllString(strings.ToLower(project), "-"), "-")
-	if len(p) > 28 {
-		p = strings.TrimRight(p[:28], "-")
+	if suffix != "" {
+		name += "-" + suffix
+	}
+	if room := min(28, 63-len(prefix)-len(name)-2); len(p) > room {
+		p = strings.TrimRight(p[:room], "-")
 	}
 	return prefix + "-" + p + "-" + name
+}
+
+// publicHost is a public bucket's address: files-<label>-<name>, and
+// -<suffix> when that's taken, the label shortened so the first part stays
+// in DNS's 63 characters.
+func publicHost(label, name, suffix, domain string) string {
+	if suffix != "" {
+		name += "-" + suffix
+	}
+	if room := 63 - len("files-") - len("-") - len(name); len(label) > room {
+		label = strings.TrimRight(label[:room], "-")
+	}
+	return "files-" + label + "-" + name + "." + domain
+}
+
+// nameSuffix tells apart two buckets whose names would come out the same:
+// project a's b-c and project a-b's c.
+func nameSuffix() string { return strings.ToLower(rand.Text()[:4]) }
+
+// taken is every R2 bucket name and public address this server's buckets
+// use, across projects.
+func (m *Manager) taken(ctx context.Context) (map[string]bool, error) {
+	all, err := m.Store.Buckets(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]bool{}
+	for _, b := range all {
+		out[b.Bucket] = true
+		if host := strings.TrimPrefix(b.PublicURL, "https://"); host != "" {
+			out[host] = true
+		}
+	}
+	return out, nil
 }
 
 // Add makes one of a project's buckets: the R2 bucket, its key, and for a
@@ -312,7 +367,14 @@ func (m *Manager) Add(ctx context.Context, project string, spec Spec, by string)
 		return store.Bucket{}, err
 	}
 	cf := m.api(a)
-	name := bucketName(a.Prefix, project, spec.Name)
+	taken, err := m.taken(ctx)
+	if err != nil {
+		return store.Bucket{}, err
+	}
+	name := bucketName(a.Prefix, project, spec.Name, "")
+	if taken[name] {
+		name = bucketName(a.Prefix, project, spec.Name, nameSuffix())
+	}
 	var undo []func()
 	fail := func(err error) (store.Bucket, error) {
 		for i := len(undo) - 1; i >= 0; i-- {
@@ -321,7 +383,14 @@ func (m *Manager) Add(ctx context.Context, project string, spec Spec, by string)
 		m.Log.Warn("storage: couldn't add a bucket", "project", project, "bucket", name, "err", err)
 		return store.Bucket{}, err
 	}
-	if err := cf.CreateBucket(ctx, name); err != nil {
+	err = cf.CreateBucket(ctx, name)
+	if exists(err) {
+		// Left on the account by something else, or made a moment ago for
+		// another project: this one takes a name of its own.
+		name = bucketName(a.Prefix, project, spec.Name, nameSuffix())
+		err = cf.CreateBucket(ctx, name)
+	}
+	if err != nil {
 		return fail(fmt.Errorf("couldn't make the bucket: %w", err))
 	}
 	undo = append(undo, func() { cf.DeleteBucket(context.Background(), name) })
@@ -338,7 +407,10 @@ func (m *Manager) Add(ctx context.Context, project string, spec Spec, by string)
 		Prefix: spec.Prefix, KeyID: id, CreatedAt: time.Now(), CreatedBy: by}
 	if spec.Public {
 		if a.Zone != "" && m.Domain != "" {
-			host := "files-" + m.label(ctx, project) + "-" + spec.Name + "." + m.Domain
+			host := publicHost(m.label(ctx, project), spec.Name, "", m.Domain)
+			if taken[host] {
+				host = publicHost(m.label(ctx, project), spec.Name, nameSuffix(), m.Domain)
+			}
 			if err := cf.AttachDomain(ctx, name, host, a.Zone); err != nil {
 				return fail(fmt.Errorf("couldn't serve the bucket at %s: %w", host, err))
 			}
