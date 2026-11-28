@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { api } from '../lib/api'
 import { timeZone, utcOffset } from '../lib/calendar'
 import { Calendar, Close, Copy, Disclosure, Search } from '../components/Icons'
+import { Resizer, useWidth } from '../components/Resize'
 import { Menu } from '../components/Menu'
 import { Problem, Skeleton } from '../components/ui'
 import { copy } from '../components/Toast'
@@ -64,6 +65,7 @@ export function LogExplorer({ project, head, onTrace }: { project: string; head:
   const [field, setField] = useState<string | null>('status')
   const [fieldSearch, setFieldSearch] = useState('')
   const live = zoom === null
+  const side = useWidth('pier.logs.fields', 232, 180, 560)
 
   useEffect(() => {
     const t = window.setTimeout(() => setQ(typed), 300)
@@ -134,7 +136,8 @@ export function LogExplorer({ project, head, onTrace }: { project: string; head:
   return (
     <main className="main" style={{ gap: 16 }}>
       {head}
-      <div className="le">
+      <div className="le" style={{ '--le-side': `${side.width}px` } as React.CSSProperties}>
+        <Resizer w={side} panel="left" label="Resize the fields" style={{ left: side.width + 3 }} />
         <aside className="panel le-fields">
           <label className="le-input">
             <Search />

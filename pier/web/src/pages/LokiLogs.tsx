@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { api } from '../lib/api'
 import { Calendar, Close, Copy, Disclosure, Search, Visit } from '../components/Icons'
 import { explore, useGrafana } from '../lib/grafana'
+import { Resizer, useWidth } from '../components/Resize'
 import { Menu } from '../components/Menu'
 import { toast } from '../components/Toast'
 import { Skeleton } from '../components/ui'
@@ -124,6 +125,7 @@ export function LokiLogs({ project, head, onTrace }: { project: string; head: Re
 
   const query = logql(fields, filters, text)
   const grafana = useGrafana(project)
+  const side = useWidth('pier.logs.fields', 232, 180, 560)
   const bounds = zoom ?? { from: now - range.ms, to: now }
   const params = (extra: Record<string, string> = {}) => new URLSearchParams({ q: query, from: String(Math.floor(bounds.from)), to: String(Math.ceil(bounds.to)), ...extra })
 
@@ -179,7 +181,9 @@ export function LokiLogs({ project, head, onTrace }: { project: string; head: Re
   }, [volume])
   const count = Object.values(totals).reduce((a, b) => a + b, 0)
 
-  const visible = fields.filter((f) => !hidden.has(f.name))
+  // Loki's detected level comes from a JSON line's level: one is enough.
+  const detected = fields.some((f) => f.name === 'detected_level')
+  const visible = fields.filter((f) => !hidden.has(f.name) && !(detected && f.name === 'level'))
   const known = new Set(groups.flatMap(([, fs]) => fs))
   const grouped: [string, Field[]][] = [
     ...groups.map(([g, fs]) => [g, fs.map((n) => visible.find((f) => f.name === n)).filter((f): f is Field => !!f)] as [string, Field[]]),
@@ -191,7 +195,8 @@ export function LokiLogs({ project, head, onTrace }: { project: string; head: Re
   return (
     <main className="main" style={{ gap: 16 }}>
       {head}
-      <div className="le">
+      <div className="le" style={{ '--le-side': `${side.width}px` } as React.CSSProperties}>
+        <Resizer w={side} panel="left" label="Resize the fields" style={{ left: side.width + 3 }} />
         <aside className="panel le-fields">
           <label className="le-input">
             <Search />

@@ -4262,8 +4262,9 @@ body.resizing {
 
 /* The log explorer: fields on the left, the lines on the right. */
 .le {
+  position: relative;
   display: grid;
-  grid-template-columns: 232px 1fr;
+  grid-template-columns: var(--le-side, 232px) minmax(0, 1fr);
   gap: 16px;
   align-items: start;
 }
@@ -4949,18 +4950,22 @@ body.resizing {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
 }
+.tr-body {
+  position: relative;
+}
 .tr-body.with-detail {
-  grid-template-columns: minmax(0, 1fr) 340px;
+  grid-template-columns: minmax(0, 1fr) var(--tr-detail, 340px);
   min-height: 460px;
 }
 .tr-water {
+  position: relative;
   display: flex;
   flex-direction: column;
   min-width: 0;
 }
 .tr-water .tr-row {
   display: grid;
-  grid-template-columns: minmax(280px, 48%) 1fr;
+  grid-template-columns: min(var(--tr-label, 380px), 75%) minmax(0, 1fr);
   align-items: center;
   cursor: default;
 }
@@ -5000,7 +5005,7 @@ body.resizing {
   position: absolute;
   top: 0;
   bottom: 0;
-  left: max(280px, 48%);
+  left: min(var(--tr-label, 380px), 75%);
   right: 18px;
   pointer-events: none;
 }
@@ -6420,4 +6425,31 @@ button.lg-n:hover {
   line-height: 17px;
   color: var(--d-red-text);
   overflow-wrap: anywhere;
+}
+
+/* The edge of a panel that can be made wider. */
+.resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 10px;
+  cursor: col-resize;
+  outline: none;
+  z-index: 3;
+}
+.resizer::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 4px;
+  width: 2px;
+  border-radius: 1px;
+  background: transparent;
+  transition: background 0.15s;
+}
+.resizer:hover::after,
+.resizer:focus-visible::after,
+.resizer:active::after {
+  background: var(--d-focus);
 }

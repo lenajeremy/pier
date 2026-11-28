@@ -5,6 +5,7 @@ import { size } from '../lib/format'
 import { Gate, onlyOwner, useRole } from '../lib/role'
 import { Calendar, Check, ChevronLeft, ChevronRight, Close, FailedMark, SortDown, Visit, Warning } from '../components/Icons'
 import { explore, useGrafana } from '../lib/grafana'
+import { Resizer, useWidth } from '../components/Resize'
 import { Menu } from '../components/Menu'
 import { toast } from '../components/Toast'
 import { Problem, Skeleton } from '../components/ui'
@@ -509,6 +510,8 @@ function Waterfall({ doc, head, grafana }: { doc: TraceDoc; head: ReactNode; gra
     return all.length > 1 ? [...all].sort((a, b) => b.self - a.self)[0].id : null
   })
   const [logSpan, setLogSpan] = useState<string | null>(null)
+  const detailW = useWidth('pier.trace.details', 340, 260, 720)
+  const labelW = useWidth('pier.trace.names', 380, 200, 900)
   const logsRef = useRef<HTMLElement>(null)
   const rows = useMemo(() => {
     const out: Node[] = []
@@ -584,8 +587,10 @@ function Waterfall({ doc, head, grafana }: { doc: TraceDoc; head: ReactNode; gra
             ))}
           </svg>
         </div>
-        <div className={'tr-body' + (selected ? ' with-detail' : '')}>
-          <div className="tr-water">
+        <div className={'tr-body' + (selected ? ' with-detail' : '')} style={{ '--tr-detail': `${detailW.width}px` } as React.CSSProperties}>
+          {selected && <Resizer w={detailW} panel="right" label="Resize the span's details" style={{ right: detailW.width - 5 }} />}
+          <div className="tr-water" style={{ '--tr-label': `${labelW.width}px` } as React.CSSProperties}>
+            <Resizer w={labelW} panel="left" label="Resize the span names" style={{ left: `min(${labelW.width}px, 75%)`, marginLeft: -5 }} />
             <div className="tr-row tr-axis">
               <span className="tr-label t-note">Span</span>
               <span className="tr-track">

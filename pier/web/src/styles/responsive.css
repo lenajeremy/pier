@@ -311,6 +311,10 @@
     max-height: 280px;
     overflow-y: auto;
   }
+  .le > .resizer,
+  .tr-body > .resizer {
+    display: none;
+  }
   .tr-body.with-detail {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -368,6 +372,9 @@
   }
   .tr-grid {
     left: 60%;
+  }
+  .tr-water > .resizer {
+    display: none;
   }
   .tr-svc,
   .tr-axis .tr-tick:not(:first-child):not(:last-child) {
