@@ -48,12 +48,17 @@ const (
 	Tempo      = "tempo"
 	Loki       = "loki"
 	Prometheus = "prometheus"
+	Grafana    = "grafana"
 )
+
+// servers is the stack, in the order the Server page lists it.
+var servers = []string{Tempo, Loki, Prometheus, Grafana}
 
 var images = map[string]string{
 	Tempo:      "grafana/tempo:2.8.2",
 	Loki:       "grafana/loki:3.5.5",
 	Prometheus: "prom/prometheus:v3.5.0",
+	Grafana:    "grafana/grafana:12.1.1",
 }
 
 // The ports pierd uses on each.
@@ -79,6 +84,11 @@ type Manager struct {
 	Dir        string // where the servers' settings files are written
 	Log        *slog.Logger
 	Client     *http.Client
+	// Projects lists the server's projects, for Grafana's data sources, and
+	// GrafanaURL is where Grafana is reached: the dashboard's address and
+	// /grafana/.
+	Projects   func(ctx context.Context) ([]string, error)
+	GrafanaURL string
 	// Apps lists the running app containers, and OpenLogs follows one's
 	// output from a time (Docker's since), for FollowLogs.
 	Apps     func(ctx context.Context) ([]App, error)
@@ -112,7 +122,7 @@ func (m *Manager) Disable(ctx context.Context) error {
 		return err
 	}
 	var errs []error
-	for _, name := range []string{Tempo, Loki, Prometheus} {
+	for _, name := range servers {
 		if err := m.Containers.StopService(ctx, name); err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", name, err))
 		}
@@ -145,6 +155,11 @@ func (m *Manager) start(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	g, err := m.grafanaSpec(ctx)
+	if err != nil {
+		return err
+	}
+	specs = append(specs, g)
 	var errs []error
 	for _, spec := range specs {
 		if err := m.Containers.StartService(ctx, spec); err != nil {
@@ -232,7 +247,8 @@ storage:
 		if err := os.WriteFile(path, []byte(files[name]), 0o644); err != nil {
 			return "", "", err
 		}
-		sum := sha256.Sum256([]byte(images[name] + files[name]))
+		// On the stack's network since Grafana came.
+		sum := sha256.Sum256([]byte(images[name] + files[name] + "shared"))
 		return path, hex.EncodeToString(sum[:8]), nil
 	}
 	tp, th, err := write(Tempo)
@@ -249,10 +265,10 @@ storage:
 	}
 	return []apphost.ServiceSpec{
 		{Name: Tempo, Image: images[Tempo], Cmd: []string{"-config.file=/etc/tempo.yaml"}, Ports: []int{tempoAPI, tempoOTLP},
-			Files: map[string]string{tp: "/etc/tempo.yaml"}, Data: "/var/tempo", MemoryMB: 512, Config: th},
+			Files: map[string]string{tp: "/etc/tempo.yaml"}, Data: "/var/tempo", MemoryMB: 512, Config: th, Shared: true},
 		{Name: Loki, Image: images[Loki], Cmd: []string{"-config.file=/etc/loki/pier.yaml"}, Ports: []int{lokiAPI},
-			Files: map[string]string{lp: "/etc/loki/pier.yaml"}, Data: "/loki", MemoryMB: 384, Config: lh},
-		{Name: Prometheus, Image: images[Prometheus], Ports: []int{promAPI}, Files: map[string]string{pp: "/etc/prometheus/prometheus.yml"}, Data: "/prometheus", MemoryMB: 384, Config: ph,
+			Files: map[string]string{lp: "/etc/loki/pier.yaml"}, Data: "/loki", MemoryMB: 384, Config: lh, Shared: true},
+		{Name: Prometheus, Image: images[Prometheus], Ports: []int{promAPI}, Files: map[string]string{pp: "/etc/prometheus/prometheus.yml"}, Data: "/prometheus", MemoryMB: 384, Config: ph, Shared: true,
 			Cmd: []string{"--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus", "--storage.tsdb.retention.time=" + hours, "--web.enable-otlp-receiver"}},
 	}, nil
 }
@@ -303,7 +319,7 @@ type Status struct {
 
 func (m *Manager) Status(ctx context.Context) Status {
 	s := Status{On: m.On(ctx), Retention: int(Retention.Hours() / 24)}
-	for _, name := range []string{Tempo, Loki, Prometheus} {
+	for _, name := range servers {
 		st, err := m.Containers.ServiceStatus(ctx, name)
 		if err != nil {
 			st = apphost.ServiceState{State: "unknown"}

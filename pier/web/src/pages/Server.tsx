@@ -305,7 +305,7 @@ type TelemetryState = {
   doing?: '' | 'starting' | 'stopping'
   status?: { on: boolean; retention_days: number; servers: { name: string; image: string; state: { state: string; memory_bytes?: number } }[] }
 }
-const keeps: Record<string, string> = { tempo: 'Keeps traces.', loki: 'Keeps app logs.', prometheus: 'Keeps metrics.' }
+const keeps: Record<string, string> = { tempo: 'Keeps traces.', loki: 'Keeps app logs.', prometheus: 'Keeps metrics.', grafana: 'Grafana’s own views, signed in as you.' }
 
 // Telemetry turns on the servers that keep apps' traces, metrics and logs.
 function Telemetry({ owner }: { owner: boolean }) {
@@ -327,7 +327,12 @@ function Telemetry({ owner }: { owner: boolean }) {
     <section className="panel">
       <div className="panel-head">
         <h2 className="t-small t-strong">Traces, metrics and app logs</h2>
-        <span className="end">
+        <span className="end tl-head-end">
+          {on && !doing && (
+            <a className="btn quiet medium" href="/grafana/" target="_blank" rel="noreferrer">
+              Open Grafana
+            </a>
+          )}
           <Gate allow={owner} reason={onlyOwner('turn these on or off')}>
             <button className={'btn medium ' + (on ? 'quiet' : 'primary')} disabled={!!doing} onClick={change}>
               {doing === 'starting' ? 'Starting' : doing === 'stopping' ? 'Stopping' : on ? 'Turn off' : 'Turn on'}
@@ -337,7 +342,7 @@ function Telemetry({ owner }: { owner: boolean }) {
       </div>
       {!on && doing !== 'starting' ? (
         <p className="tl-off t-note">
-          Pier runs Grafana's Tempo, Loki and Prometheus on this server, and every deploy sends its OpenTelemetry to them, each project kept apart. They use up to 1.3 GB of memory and keep {d.status.retention_days} days.
+          Pier runs Grafana's Tempo, Loki and Prometheus on this server, and Grafana itself, and every deploy sends its OpenTelemetry to them, each project kept apart. They use up to 1.6 GB of memory and keep {d.status.retention_days} days.
         </p>
       ) : (
         d.status.servers.map((s) => (

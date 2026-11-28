@@ -3,7 +3,8 @@ import { api, type TraceDoc, type TraceList, type TraceRow, type TraceSpan } fro
 import { useData } from '../lib/data'
 import { size } from '../lib/format'
 import { Gate, onlyOwner, useRole } from '../lib/role'
-import { Calendar, Check, ChevronLeft, ChevronRight, Close, FailedMark, SortDown, Warning } from '../components/Icons'
+import { Calendar, Check, ChevronLeft, ChevronRight, Close, FailedMark, SortDown, Visit, Warning } from '../components/Icons'
+import { explore, useGrafana } from '../lib/grafana'
 import { Menu } from '../components/Menu'
 import { toast } from '../components/Toast'
 import { Problem, Skeleton } from '../components/ui'
@@ -460,6 +461,7 @@ function tree(spans: TraceSpan[]) {
 
 export function TraceView({ project, id, onBack }: { project: string; id: string; onBack: () => void }) {
   const t = useData<TraceDoc>(`/api/projects/${encodeURIComponent(project)}/traces/${id}`)
+  const g = useGrafana(project)
   const head = (
     <button className="tr-crumb" onClick={onBack}>
       <ChevronLeft />
@@ -486,10 +488,10 @@ export function TraceView({ project, id, onBack }: { project: string; id: string
       </>
     )
   }
-  return <Waterfall doc={t.data} head={head} />
+  return <Waterfall doc={t.data} head={head} grafana={g} />
 }
 
-function Waterfall({ doc, head }: { doc: TraceDoc; head: ReactNode }) {
+function Waterfall({ doc, head, grafana }: { doc: TraceDoc; head: ReactNode; grafana: ReturnType<typeof useGrafana> }) {
   const { trace, request, logs } = doc
   const { roots, byId } = useMemo(() => tree(trace.spans), [trace])
   const [closed, setClosed] = useState<Set<string>>(new Set())
@@ -560,11 +562,19 @@ function Waterfall({ doc, head }: { doc: TraceDoc; head: ReactNode }) {
             )}
           </div>
         </div>
-        {logs.length > 0 && (
-          <button className="btn quiet medium" onClick={() => showLogs(null)}>
-            Logs, {logs.length}
-          </button>
-        )}
+        <div className="tr-title-actions">
+          {logs.length > 0 && (
+            <button className="btn quiet medium" onClick={() => showLogs(null)}>
+              Logs, {logs.length}
+            </button>
+          )}
+          {grafana && (
+            <a className="btn quiet medium" href={explore(grafana, 'traces', { queryType: 'traceql', query: trace.id }, trace.start - 60_000, trace.start + trace.ms + 60_000)} target="_blank" rel="noreferrer">
+              Open in Grafana
+              <Visit size={13} />
+            </a>
+          )}
+        </div>
       </div>
       <div className="panel tr-view">
         <div className="tr-mini">
@@ -870,11 +880,12 @@ export function TelemetryOff({ project, onOn }: { project: string; onOn: () => v
   }
   const total = server.data?.memory_total ?? 0
   const used = server.data?.memory_used ?? 0
-  const stack = 1280 * 2 ** 20 // the three servers' memory limits
+  const stack = 1536 * 2 ** 20 // the four servers' memory limits
   const runs: [string, string][] = [
     ['Tempo', 'traces'],
     ['Loki', 'app logs'],
     ['Prometheus', 'metrics'],
+    ['Grafana', 'Grafana’s own views'],
   ]
   const vars: [string, string][] = [
     ['OTEL_EXPORTER_OTLP_ENDPOINT', `${location.origin}/otlp`],

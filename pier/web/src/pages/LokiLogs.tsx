@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { api } from '../lib/api'
-import { Calendar, Close, Copy, Disclosure, Search } from '../components/Icons'
+import { Calendar, Close, Copy, Disclosure, Search, Visit } from '../components/Icons'
+import { explore, useGrafana } from '../lib/grafana'
 import { Menu } from '../components/Menu'
 import { toast } from '../components/Toast'
 import { Skeleton } from '../components/ui'
@@ -122,6 +123,7 @@ export function LokiLogs({ project, head, onTrace }: { project: string; head: Re
   }, [zoom])
 
   const query = logql(fields, filters, text)
+  const grafana = useGrafana(project)
   const bounds = zoom ?? { from: now - range.ms, to: now }
   const params = (extra: Record<string, string> = {}) => new URLSearchParams({ q: query, from: String(Math.floor(bounds.from)), to: String(Math.ceil(bounds.to)), ...extra })
 
@@ -226,6 +228,12 @@ export function LokiLogs({ project, head, onTrace }: { project: string; head: Re
               <Calendar />
               {range.label}
             </Menu>
+            {grafana && (
+              <a className="btn quiet medium" href={explore(grafana, 'logs', { expr: query, queryType: 'range' }, bounds.from, bounds.to)} target="_blank" rel="noreferrer" title="Open in Grafana">
+                Grafana
+                <Visit size={13} />
+              </a>
+            )}
           </div>
           {(filters.length > 0 || zoom || count > 0) && (
             <div className="le-chips">

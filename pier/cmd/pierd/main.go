@@ -298,7 +298,7 @@ func serve(args []string) int {
 	// for their project and environment.
 	// Apps' traces, metrics and logs, through Grafana's Tempo, Prometheus
 	// and Loki, once the owner turns them on in Server.
-	tel = &telemetry.Manager{Store: st, Containers: dep.Apps, Dir: filepath.Join(*data, "telemetry"), Log: log,
+	tel = &telemetry.Manager{Store: st, Containers: dep.Apps, Dir: filepath.Join(*data, "telemetry"), Log: log, Projects: st.Projects,
 		Apps: func(ctx context.Context) ([]telemetry.App, error) {
 			running, err := dep.Apps.Running(ctx)
 			if err != nil {
@@ -460,6 +460,9 @@ func serve(args []string) int {
 	go func() { defer close(jobsDone); scheduler.Run(ctx) }()
 	defer func() { stop(); <-jobsDone }()
 	go a.SampleServer(ctx)
+	if *address != "" {
+		tel.GrafanaURL = dep.URL(*address) + "/grafana/"
+	}
 	go tel.Ensure(ctx)
 	go tel.FollowLogs(ctx)
 	go tel.RunGraph(ctx)

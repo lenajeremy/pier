@@ -316,6 +316,9 @@ func (m *Manager) RunGraph(ctx context.Context) {
 			if !m.On(ctx) {
 				continue
 			}
+			if err := m.SyncGrafana(ctx); err != nil {
+				m.Log.Debug("telemetry: grafana's data sources", "err", err)
+			}
 			for project, req := range g.export(now) {
 				if err := m.postMetrics(ctx, project, req); err != nil {
 					m.Log.Debug("telemetry: service map", "project", project, "err", err)

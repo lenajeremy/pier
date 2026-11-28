@@ -34,13 +34,41 @@ type ServiceSpec struct {
 	Ports    []int             // the container's ports pierd reaches
 	Files    map[string]string // a file on this machine -> where the server reads it
 	Data     string            // where the server keeps its data, on the volume
+	Env      []string
 	MemoryMB int
-	Config   string // a hash of everything above that should restart it when it changes
+	// Shared puts the server on the stack's own network, where the others
+	// reach it by its name: Grafana reads Tempo, Loki and Prometheus there.
+	Shared bool
+	Config string // a hash of everything above that should restart it when it changes
 }
 
 // ServiceContainer is the name of one of the stack's containers. Its
 // volume has the same name.
 func (h *Host) ServiceContainer(name string) string { return h.owner + "-telemetry-" + name }
+
+// TelemetryNetwork is the network the stack's servers share.
+func (h *Host) TelemetryNetwork() string { return h.owner + "-telemetry" }
+
+func (h *Host) ensureTelemetryNetwork(ctx context.Context, c *client.Client) error {
+	name := h.TelemetryNetwork()
+	netw, err := c.NetworkInspect(ctx, name, client.NetworkInspectOptions{})
+	if errdefs.IsNotFound(err) {
+		labels := h.Labels()
+		labels[telemetryLabel] = "network"
+		_, err = c.NetworkCreate(ctx, name, client.NetworkCreateOptions{Driver: "bridge", Labels: labels})
+		if err != nil && !errdefs.IsConflict(err) {
+			return err
+		}
+		netw, err = c.NetworkInspect(ctx, name, client.NetworkInspectOptions{})
+	}
+	if err != nil {
+		return err
+	}
+	if netw.Network.Labels[ownerLabel] != h.owner || netw.Network.Labels[telemetryLabel] != "network" {
+		return fmt.Errorf("the network %s belongs to something else", name)
+	}
+	return nil
+}
 
 // StartService makes sure one server of the stack runs with these settings:
 // it downloads the image and makes the volume if they're missing, replaces
@@ -102,12 +130,20 @@ func (h *Host) StartService(ctx context.Context, spec ServiceSpec) error {
 	if spec.MemoryMB > 0 {
 		resources.Memory = int64(spec.MemoryMB) << 20
 	}
-	config := &container.Config{Image: spec.Image, Cmd: spec.Cmd, Labels: labels, StopTimeout: &stop, ExposedPorts: exposed}
+	config := &container.Config{Image: spec.Image, Cmd: spec.Cmd, Env: spec.Env, Labels: labels, StopTimeout: &stop, ExposedPorts: exposed}
 	host := &container.HostConfig{
 		PortBindings: bindings, RestartPolicy: restartPolicy, SecurityOpt: []string{"no-new-privileges"}, Resources: resources, Mounts: mounts,
 		LogConfig: container.LogConfig{Type: "json-file", Config: map[string]string{"max-size": "10m", "max-file": "2"}},
 	}
-	created, err := c.ContainerCreate(ctx, client.ContainerCreateOptions{Name: name, Config: config, HostConfig: host})
+	var netConfig *network.NetworkingConfig
+	if spec.Shared {
+		if err := h.ensureTelemetryNetwork(ctx, c); err != nil {
+			return err
+		}
+		host.NetworkMode = container.NetworkMode(h.TelemetryNetwork())
+		netConfig = &network.NetworkingConfig{EndpointsConfig: map[string]*network.EndpointSettings{h.TelemetryNetwork(): {Aliases: []string{spec.Name}}}}
+	}
+	created, err := c.ContainerCreate(ctx, client.ContainerCreateOptions{Name: name, Config: config, HostConfig: host, NetworkingConfig: netConfig})
 	if err != nil {
 		return err
 	}

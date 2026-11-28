@@ -5,7 +5,8 @@ import { useRole } from '../lib/role'
 import { toast } from '../components/Toast'
 import { useData } from '../lib/data'
 import { size } from '../lib/format'
-import { Calendar, Check, Close, Play, Plus, SortDown } from '../components/Icons'
+import { Calendar, Check, Close, Play, Plus, SortDown, Visit } from '../components/Icons'
+import { explore, useGrafana } from '../lib/grafana'
 import { Menu } from '../components/Menu'
 import { Problem, Skeleton } from '../components/ui'
 import { TelemetryOff, dur } from './Traces'
@@ -534,6 +535,7 @@ function Results({ project, ran, range }: { project: string; ran: { q: string; u
   const sec = (t: number) => t - (t % 1000)
   const q = new URLSearchParams({ q: ran.q, from: String(sec(from)), to: String(sec(to)) })
   const res = useData<{ result: Result }>(`/api/projects/${encodeURIComponent(project)}/metrics/query?${q}`)
+  const grafana = useGrafana(project)
   const deps = useData<{ deployments: Deployment[] }>(`/api/projects/${encodeURIComponent(project)}/deployments`)
   const deploys = (deps.data?.deployments ?? []).filter((d) => d.target === 'production' && d.status === 'ready').map((d) => ({ id: d.id, at: Date.parse(d.created_at) + (d.build_ms || 0) }))
   const series = res.data?.result.series ?? []
@@ -553,6 +555,13 @@ function Results({ project, ran, range }: { project: string; ran: { q: string; u
           {ran.title}
           {ran.note && <span>{ran.note}</span>}
         </h2>
+        <div className="m-result-actions">
+          {grafana && res.data && (
+            <a className="btn quiet small" href={explore(grafana, 'metrics', { expr: res.data.result.query, range: true }, from, to)} target="_blank" rel="noreferrer">
+              Open in Grafana
+              <Visit size={12} />
+            </a>
+          )}
         <div className="seg small" role="tablist" aria-label="Show as">
           <button role="tab" aria-selected={view === 'graph'} className={view === 'graph' ? 'on' : ''} onClick={() => setView('graph')}>
             Graph
@@ -560,6 +569,7 @@ function Results({ project, ran, range }: { project: string; ran: { q: string; u
           <button role="tab" aria-selected={view === 'table'} className={view === 'table' ? 'on' : ''} onClick={() => setView('table')}>
             Table
           </button>
+        </div>
         </div>
       </div>
       {res.error ? (

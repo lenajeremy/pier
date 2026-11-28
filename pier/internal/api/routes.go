@@ -99,6 +99,7 @@ func (a *API) routes() []route {
 		{"GET /api/projects/{project}/traces", viewer, "", a.projectTraces},
 		{"GET /api/projects/{project}/traces/{id}", viewer, "", a.projectTrace},
 		{"GET /api/projects/{project}/servicemap", viewer, "", a.projectServiceMap},
+		{"GET /api/projects/{project}/grafana", viewer, "", a.projectGrafana},
 		{"GET /api/projects/{project}/metrics", viewer, "", a.projectMetrics},
 		{"GET /api/projects/{project}/metrics/labels", viewer, "", a.projectMetricLabels},
 		{"GET /api/projects/{project}/metrics/query", viewer, "", a.projectMetricQuery},
@@ -234,6 +235,8 @@ func (a *API) serve(rs []route) *http.ServeMux {
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such API endpoint"})
 	})
+	mux.Handle("/grafana/", a.grafana())
+	mux.Handle("/grafana", http.RedirectHandler("/grafana/", http.StatusMovedPermanently))
 	if a.Web != nil {
 		mux.Handle("/", a.Web)
 	}
