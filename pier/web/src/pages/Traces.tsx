@@ -160,6 +160,7 @@ export function Traces({ project, tabs, onOpen }: { project: string; tabs: (righ
             project={project}
             from={second(from)}
             to={second(to) + 1000}
+            range={range.label}
             onPick={(q) => {
               setDraft(q)
               setQuery(q)
@@ -1030,7 +1031,8 @@ function health(n: MapNode, out: MapEdge[]) {
   const calls = Math.max(0, ...out.map((e) => e.p95_ms))
   return n.p95_ms - calls >= 1000 ? 'slow' : 'healthy'
 }
-const perSecond = (r: number) => (r >= 100 ? `${Math.round(r)}/s` : r >= 0.1 ? `${+r.toFixed(1)}/s` : `${+(r * 60).toFixed(1)}/min`)
+// One unit for the whole map: a second when anything is that busy, else a minute.
+const count = (v: number) => (v >= 100 ? Math.round(v).toLocaleString() : v >= 10 ? v.toFixed(0) : `${+v.toFixed(1)}`)
 const share = (e: number) => (e === 0 ? '0%' : e < 0.001 ? '<0.1%' : `${+(e * 100).toFixed(1)}%`)
 
 function HealthMark({ h }: { h: string }) {
@@ -1042,7 +1044,7 @@ function HealthMark({ h }: { h: string }) {
 // ServiceMap draws who calls whom, from the traces: each box says how busy,
 // how failing and how slow a service is; each link how often one calls the
 // other. Choosing a box finds its traces.
-function ServiceMap({ project, from, to, onPick }: { project: string; from: number; to: number; onPick: (query: string) => void }) {
+function ServiceMap({ project, from, to, range, onPick }: { project: string; from: number; to: number; range: string; onPick: (query: string) => void }) {
   const m = useData<{ on: boolean; nodes: MapNode[]; edges: MapEdge[] }>(`/api/projects/${encodeURIComponent(project)}/servicemap?from=${from}&to=${to}`)
   const box = useRef<HTMLDivElement>(null)
   const [w, setW] = useState(1000)
@@ -1070,6 +1072,8 @@ function ServiceMap({ project, from, to, onPick }: { project: string; from: numb
     return cols.filter(Boolean)
   }, [nodes, edges])
   if (!m.data || !m.data.on || nodes.length === 0) return null
+  const unit = Math.max(...nodes.map((n) => n.rate), ...edges.map((e) => e.rate)) >= 1 ? 'second' : 'minute'
+  const rate = (r: number) => (unit === 'second' ? count(r) : count(r * 60))
   // Wide, calls run left to right; narrow, top to bottom.
   const down = w < 640
   const BH = 76
@@ -1096,7 +1100,7 @@ function ServiceMap({ project, from, to, onPick }: { project: string; from: numb
     <section className="a-section">
       <div className="a-section-head">
         <h2>
-          Service map<span>Who calls whom, from the traces</span>
+          Service map<span>Calls a {unit}, {range.toLowerCase()}</span>
         </h2>
         <div className="a-legend sm-legend">
           <span>
@@ -1148,7 +1152,7 @@ function ServiceMap({ project, from, to, onPick }: { project: string; from: numb
             if (!a || !b) return null
             return (
               <span key={'l' + e.from + e.to} className="sm-rate mono" style={{ left: (ends(a, b).x1 + ends(a, b).x2) / 2, top: (ends(a, b).y1 + ends(a, b).y2) / 2 }} title={`${share(e.errors)} errors, p95 ${dur(e.p95_ms)}`}>
-                {perSecond(e.rate)}
+                {rate(e.rate)}
               </span>
             )
           })}
@@ -1176,7 +1180,7 @@ function ServiceMap({ project, from, to, onPick }: { project: string; from: numb
                   </span>
                 </span>
                 <span className="mono sm-line">
-                  {perSecond(n.rate)} <span className="t-muted">{share(n.errors)} errors</span>
+                  {rate(n.rate)} <span className="t-muted">{n.kind === 'database' ? 'queries' : n.kind === 'external' ? 'calls' : 'requests'}, {share(n.errors)} failed</span>
                 </span>
                 <span className="mono sm-line t-muted">p95 {dur(n.p95_ms)}</span>
               </button>
