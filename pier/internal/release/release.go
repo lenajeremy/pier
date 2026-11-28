@@ -305,22 +305,30 @@ func Same(a, b string) bool {
 }
 
 // Checker asks GitHub for the latest release now and then, and keeps the
-// answer. A failed check keeps the last answer and is only logged.
+// answer, and asks again when someone looks and the answer is old. A failed
+// check keeps the last answer and is only logged.
 type Checker struct {
 	API    string        // LatestAPI unless testing
-	Every  time.Duration // how often to ask; 6 hours if zero
+	Every  time.Duration // how often to ask on its own; an hour if zero
 	Client *http.Client
 	Log    *slog.Logger
 
-	mu     sync.Mutex
-	latest string
+	mu      sync.Mutex
+	latest  string
+	checked time.Time  // when it last asked, whether or not that worked
+	asking  sync.Mutex // one question to GitHub at a time
 }
+
+// StaleAfter is how old an answer may be when someone looks at updates
+// before it's asked again, so a release shows up within minutes of being
+// published, and GitHub is asked at most a few times an hour.
+const StaleAfter = 10 * time.Minute
 
 // Run checks soon after it starts, then every Every, until ctx ends.
 func (c *Checker) Run(ctx context.Context) {
 	every := c.Every
 	if every == 0 {
-		every = 6 * time.Hour
+		every = time.Hour
 	}
 	wait := 10 * time.Second
 	for {
@@ -336,6 +344,11 @@ func (c *Checker) Run(ctx context.Context) {
 
 // Check asks once.
 func (c *Checker) Check(ctx context.Context) {
+	c.asking.Lock()
+	defer c.asking.Unlock()
+	c.mu.Lock()
+	c.checked = time.Now()
+	c.mu.Unlock()
 	api, client := c.API, c.Client
 	if api == "" {
 		api = LatestAPI
@@ -353,6 +366,24 @@ func (c *Checker) Check(ctx context.Context) {
 	c.mu.Lock()
 	c.latest = v
 	c.mu.Unlock()
+}
+
+// Fresh is the newest release, asking GitHub first if the last answer is
+// older than StaleAfter. It waits a few seconds at most, then answers with
+// what it has.
+func (c *Checker) Fresh(ctx context.Context) string {
+	if c == nil {
+		return ""
+	}
+	c.mu.Lock()
+	stale := time.Since(c.checked) > StaleAfter
+	c.mu.Unlock()
+	if stale {
+		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		c.Check(ctx)
+	}
+	return c.Latest()
 }
 
 // Latest is the newest release the last good check found, or "".

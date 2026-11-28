@@ -5,12 +5,14 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestVersions(t *testing.T) {
@@ -119,5 +121,28 @@ func TestReplace(t *testing.T) {
 	entries, _ := os.ReadDir(dir)
 	if string(b) != "new" || fi.Mode().Perm() != 0o755 || len(entries) != 1 {
 		t.Fatalf("got %q, %v, %d files", b, fi.Mode(), len(entries))
+	}
+}
+
+func TestFreshAsksAgainOnlyWhenTheAnswerIsOld(t *testing.T) {
+	tag, asked := "v0.8.0", 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		asked++
+		fmt.Fprintf(w, `{"tag_name":%q}`, tag)
+	}))
+	defer srv.Close()
+	c := &Checker{API: srv.URL}
+	if got := c.Fresh(context.Background()); got != "v0.8.0" || asked != 1 {
+		t.Fatalf("first look: %q after %d questions", got, asked)
+	}
+	tag = "v0.8.1"
+	if got := c.Fresh(context.Background()); got != "v0.8.0" || asked != 1 {
+		t.Fatalf("a fresh answer was asked again: %q after %d", got, asked)
+	}
+	c.mu.Lock()
+	c.checked = time.Now().Add(-StaleAfter - time.Second)
+	c.mu.Unlock()
+	if got := c.Fresh(context.Background()); got != "v0.8.1" || asked != 2 {
+		t.Fatalf("an old answer wasn't asked again: %q after %d", got, asked)
 	}
 }

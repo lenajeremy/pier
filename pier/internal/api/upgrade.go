@@ -30,7 +30,7 @@ func (a *API) helperInstalled() bool {
 // release running, the newest one, whether this server can update itself,
 // and how the last update went.
 func (a *API) upgradeInfo(w http.ResponseWriter, r *http.Request) {
-	running, latest := version.String(), a.Releases.Latest()
+	running, latest := version.String(), a.Releases.Fresh(r.Context())
 	out := map[string]any{
 		"running": running, "latest": latest, "newer": release.Newer(latest, running),
 		"helper": a.helperInstalled(), "command": installCommand,

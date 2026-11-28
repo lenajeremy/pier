@@ -151,15 +151,17 @@ func upgradeServer() error {
 	if !info.Helper {
 		return fmt.Errorf("Run the installer once more on the server to turn on updates from here:\n  %s", info.Command)
 	}
+	// pierd's answer can be minutes or, before v0.8.2, hours old, so ask
+	// GitHub too and take the newer.
 	target := info.Latest
-	if target == "" {
-		// pierd asks GitHub every few hours; this asks now.
-		stop := spin("Checking for a new release")
-		target, err = release.Latest(ctx, release.Client(30*time.Second), latestAPI)
-		stop()
-		if err != nil {
-			return err
-		}
+	stop := spin("Checking for a new release")
+	asked, err := release.Latest(ctx, release.Client(30*time.Second), latestAPI)
+	stop()
+	switch {
+	case err == nil && release.Newer(asked, target):
+		target = asked
+	case err != nil && target == "":
+		return err
 	}
 	if !release.Newer(target, info.Running) {
 		fmt.Printf("%s pierd %s is up to date.\n", tick(), info.Running)
