@@ -66,9 +66,12 @@ type Deployer struct {
 	// Alerts hears about every build that fails, and the next one of the
 	// same address that works, and decides what to send. Nil sends nothing.
 	Alerts Alerter
-	// Databases gives a project's deployments DATABASE_URL when it has a
-	// Postgres database. Nil gives none.
+	// Databases gives a project's deployments the variables of its
+	// databases, like DATABASE_URL. Nil gives none.
 	Databases Databases
+	// Storage gives a project's deployments the variables of its buckets.
+	// Nil gives none.
+	Storage Storage
 
 	mu         sync.Mutex
 	locks      map[string]*sync.Mutex
@@ -353,7 +356,7 @@ func (d *Deployer) run(ctx context.Context, project string, src Source, out io.W
 	if len(varNames) > 0 {
 		say(out, "build", "with %s for %s: %s", plural(len(varNames), "variable"), src.Target, strings.Join(varNames, ", "))
 	}
-	env, networks, dbNote, err := d.withDatabase(ctx, project, src.Target, src.Branch, env)
+	env, networks, dbNote, err := d.withDatabase(ctx, project, src.Target, env)
 	if err != nil {
 		dep.Status, dep.Error, dep.BuildMS = store.Failed, "the project's database: "+err.Error(), time.Since(start).Milliseconds()
 		if ferr := d.Store.FinishDeployment(context.WithoutCancel(ctx), dep); ferr != nil {
@@ -364,6 +367,18 @@ func (d *Deployer) run(ctx context.Context, project string, src Source, out io.W
 	}
 	if dbNote != "" {
 		say(out, "build", "%s", dbNote)
+	}
+	env, storageNote, err := d.withStorage(ctx, project, src.Target, env)
+	if err != nil {
+		dep.Status, dep.Error, dep.BuildMS = store.Failed, "the project's storage: "+err.Error(), time.Since(start).Milliseconds()
+		if ferr := d.Store.FinishDeployment(context.WithoutCancel(ctx), dep); ferr != nil {
+			d.Log.Error("record failed build", "err", ferr)
+		}
+		say(out, "pier", "can't give this build its buckets: %s", err)
+		return err
+	}
+	if storageNote != "" {
+		say(out, "build", "%s", storageNote)
 	}
 	res, err := d.build(buildCtx, dep, src, p.Build, p.Runtime, env, networks, out)
 	elapsed := time.Since(start)

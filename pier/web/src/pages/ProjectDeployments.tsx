@@ -71,7 +71,7 @@ export function ProjectDeployments({ project, session, now, reload }: {
             <span className="t-caption t-muted" style={{ maxWidth: 480 }}>
               A pull request from a fork can't build until you approve it, because building runs its code on this server.
             </span>
-            <Link className="btn primary" to="/integrations">
+            <Link className="btn primary" to="/integrations/github">
               Review it in Integrations
             </Link>
           </Empty>

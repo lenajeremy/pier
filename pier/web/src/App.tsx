@@ -4,7 +4,8 @@ import { Server } from './pages/Server'
 import { Alerts } from './pages/Alerts'
 import { Settings } from './pages/Settings'
 import { GitHubImport } from './pages/GitHub'
-import { Integrations } from './pages/Integrations'
+import { GitHubIntegration, Integrations } from './pages/Integrations'
+import { CloudflareIntegration } from './pages/Cloudflare'
 import { useCallback, useEffect, useState } from 'react'
 import { api, ApiError, type Project, type ProjectSummary, type Session } from './lib/api'
 import { useData, useNow } from './lib/data'
@@ -26,6 +27,7 @@ import { Invite } from './pages/Invite'
 import { RoleProvider } from './lib/role'
 import { Jobs } from './pages/Jobs'
 import { Database } from './pages/Database'
+import { Storage } from './pages/Storage'
 import { JobPage, JobRunPage } from './pages/JobPage'
 
 type Auth = { state: 'loading' } | { state: 'out'; address: string } | { state: 'in'; session: Session }
@@ -116,6 +118,8 @@ function Signed({ session, path, now }: { session: Session; path: string; now: n
             <JobPage key={job.id} project={name} id={job.id} now={now} />
           ) : tab?.tab === 'database' ? (
             <Database key={name} project={name} now={now} />
+          ) : tab?.tab === 'storage' ? (
+            <Storage key={name} project={name} now={now} />
           ) : tab?.tab === 'jobs' ? (
             <Jobs project={name} now={now} />
           ) : tab?.tab === 'logs' ? (
@@ -148,6 +152,10 @@ function Signed({ session, path, now }: { session: Session; path: string; now: n
     )
   } else if (path === '/integrations') {
     page = <Integrations />
+  } else if (path === '/integrations/github') {
+    page = <GitHubIntegration />
+  } else if (path === '/integrations/cloudflare') {
+    page = <CloudflareIntegration />
   } else if (importing) {
     page = <GitHubImport id={importing.id} session={session} onCreated={list.reload} />
   } else if (path === '/new') {

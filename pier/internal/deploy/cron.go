@@ -76,6 +76,13 @@ func (d *Deployer) SecretValues(ctx context.Context, project string) ([]string, 
 		}
 		out = append(out, hidden...)
 	}
+	if d.Storage != nil {
+		hidden, err := d.Storage.Secrets(ctx, project)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, hidden...)
+	}
 	sealed, _, err := d.Store.CronSecret(ctx, project)
 	if err != nil {
 		return nil, err

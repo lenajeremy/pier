@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"os"
 	"path"
 	"strings"
 )
@@ -48,8 +49,14 @@ func Handler() http.Handler {
 		defer index.Close()
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-cache")
-		w.Header().Set("Content-Security-Policy",
-			"default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; connect-src 'self'; frame-src http: https:; frame-ancestors 'none'; base-uri 'none'; form-action 'self' https://github.com/settings/apps/new")
+		w.Header().Set("Content-Security-Policy", policy)
 		io.Copy(w, index)
 	})
 }
+
+// files is where the Storage tab's thumbnails and previews come from:
+// short-lived links straight to R2, and a stand-in for R2 in tests.
+var files = strings.TrimSpace("https://*.r2.cloudflarestorage.com " + os.Getenv("PIER_TEST_R2_ENDPOINT"))
+
+var policy = "default-src 'self'; img-src 'self' data: " + files + "; media-src " + files +
+	"; style-src 'self' 'unsafe-inline'; connect-src 'self'; frame-src http: https:; frame-ancestors 'none'; base-uri 'none'; form-action 'self' https://github.com/settings/apps/new"

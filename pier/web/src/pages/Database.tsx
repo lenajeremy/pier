@@ -1,15 +1,17 @@
 import { useState, type FormEvent } from 'react'
-import { api, type DatabaseBackup, type DatabaseStatus, type DatabaseView, type PreviewDatabase } from '../lib/api'
+import { api, type DatabaseBackup, type DatabaseStatus, type DatabaseView, type Environment, type ExternalURL, type ProjectDatabase } from '../lib/api'
 import { failed } from '../lib/actions'
 import { useData } from '../lib/data'
 import { size } from '../lib/format'
 import { navigate } from '../lib/router'
-import { Copy, Info, RollBack, Trash } from '../components/Icons'
+import { Copy, Info, Pencil, RollBack, Trash, Visit } from '../components/Icons'
+import { EnvPicker } from '../components/EnvPicker'
+import { Sheet } from '../components/Sheet'
 import { confirm, Dialog } from '../components/Dialog'
 import { Menu, type MenuItem } from '../components/Menu'
 import { Spinner, useBusy } from '../components/Spinner'
 import { copy, toast } from '../components/Toast'
-import { Empty, Paging, Problem, Skeleton, usePaged, When } from '../components/ui'
+import { Badge, Empty, Paging, Problem, Skeleton, usePaged, When } from '../components/ui'
 import { Gate, useRole, viewerCant } from '../lib/role'
 import { DataView } from './DatabaseData'
 import { QueryView } from './DatabaseQuery'
@@ -58,7 +60,7 @@ export function Database({ project, now }: { project: string; now: number }) {
   )
   const [adding, setAdding] = useState(false)
   const [view, setView] = useState<View>('overview')
-  const [db, setDb] = useState('app')
+  const [db, setDb] = useState('')
   const [draft, setDraft] = useState<string>()
   const { change } = useRole()
 
@@ -83,7 +85,7 @@ export function Database({ project, now }: { project: string; now: number }) {
     return (
       <main className="main">
         <Empty title="No database yet">
-          <span className="t-caption t-muted">Postgres for {project} alone. It idles at about 15 MB of memory.</span>
+          <span className="t-caption t-muted">Postgres for {project} alone, with a database for production and one for previews.</span>
           <Gate allow={change} reason={viewerCant('add databases')}>
             <button className="btn primary" onClick={() => setAdding(true)}>
               Add Postgres
@@ -111,8 +113,9 @@ export function Database({ project, now }: { project: string; now: number }) {
     )
   }
 
-  const databases = [{ name: 'app', label: 'Production', swatch: 'live' }, ...d.previews.map((p) => ({ name: p.name, label: p.branch || 'pier deploy previews', swatch: 'building' }))]
-  const chosen = databases.find((x) => x.name === db) ?? databases[0]
+  const swatchOf = (x: ProjectDatabase) => (x.environments.includes('production') ? 'live' : x.environments.includes('preview') ? 'building' : '')
+  const databases = d.databases.map((x) => ({ name: x.name, swatch: swatchOf(x), production: x.environments.includes('production') }))
+  const chosen = databases.find((x) => x.name === db) ?? databases.find((x) => x.production) ?? databases[0] ?? { name: '', swatch: '', production: false }
   const views: [View, string][] = [
     ['overview', 'Overview'],
     ['data', 'Data'],
@@ -141,16 +144,15 @@ export function Database({ project, now }: { project: string; now: number }) {
             label="Choose a database"
             align="end"
             className="db-picker"
-            items={databases.map((x) => ({ label: `${x.label}  ${x.name}`, onSelect: () => setDb(x.name) }))}
+            items={databases.map((x) => ({ label: x.name, onSelect: () => setDb(x.name) }))}
           >
             <i className={'swatch ' + chosen.swatch} aria-hidden />
-            <span>{chosen.label}</span>
-            <span className="mono t-note">{chosen.name}</span>
+            <span className="mono">{chosen.name}</span>
           </Menu>
         )}
       </div>
       {view === 'overview' ? (
-        <Overview project={project} data={data} d={d} now={now} reload={reload} />
+        <Overview project={project} data={data} d={d} now={now} reload={reload} onBrowse={(name) => (setDb(name), setView('data'))} />
       ) : view === 'data' ? (
         <DataView project={project} db={chosen.name} onQuery={(sql) => (setDraft(sql), setView('query'))} />
       ) : (
@@ -160,7 +162,14 @@ export function Database({ project, now }: { project: string; now: number }) {
   )
 }
 
-function Overview({ project, data, d, now, reload }: { project: string; data: DatabaseView; d: DatabaseStatus; now: number; reload: () => void }) {
+function Overview({ project, data, d, now, reload, onBrowse }: {
+  project: string
+  data: DatabaseView
+  d: DatabaseStatus
+  now: number
+  reload: () => void
+  onBrowse: (name: string) => void
+}) {
   const [resizing, setResizing] = useState(false)
   const [busy, run] = useBusy<'backup'>()
   const { change } = useRole()
@@ -169,7 +178,7 @@ function Overview({ project, data, d, now, reload }: { project: string; data: Da
   const redeploy = () =>
     confirm({
       title: 'Redeploy production?',
-      body: <p>The new build gets DATABASE_URL. It goes live once it works.</p>,
+      body: <p>The new build gets its database. It goes live once it works.</p>,
       action: 'Redeploy',
       working: 'Starting the build…',
       run: async () => {
@@ -190,22 +199,22 @@ function Overview({ project, data, d, now, reload }: { project: string; data: Da
     }).then((ok) => ok && toast('Restarted the database'))
   const remove = () =>
     confirm({
-      title: `Delete ${project}'s database?`,
-      body: <p>Its data and every preview database are deleted. A last backup is kept.</p>,
-      action: 'Delete database',
+      title: `Delete ${project}'s Postgres?`,
+      body: <p>Every database on it is deleted. A last backup of each is kept.</p>,
+      action: 'Delete Postgres',
       working: 'Backing up and deleting…',
       danger: true,
       run: async () => {
         await api(databasePath(project), { method: 'DELETE' })
         reload()
       },
-    }).then((ok) => ok && toast('Deleted the database'))
+    }).then((ok) => ok && toast("Deleted the project's Postgres"))
   const backUp = () =>
     run('backup', async () => {
       try {
-        const b = await api<DatabaseBackup>(`${databasePath(project)}/backups`, { method: 'POST' })
+        const b = await api<{ backups: DatabaseBackup[]; bytes: number }>(`${databasePath(project)}/backups`, { method: 'POST' })
         reload()
-        toast(`Backed up the database, ${size(b.bytes)}`)
+        toast(b.backups.length === 1 ? `Backed up ${b.backups[0].database}, ${size(b.bytes)}` : `Backed up ${b.backups.length} databases, ${size(b.bytes)}`)
       } catch (e) {
         failed(e)
         reload()
@@ -215,7 +224,7 @@ function Overview({ project, data, d, now, reload }: { project: string; data: Da
     { label: 'Change memory', onSelect: () => setResizing(true) },
     { label: 'Restart', icon: <RollBack />, onSelect: restart },
     'separator',
-    { label: 'Delete database', icon: <Trash />, danger: true, onSelect: remove },
+    { label: 'Delete Postgres', icon: <Trash />, danger: true, onSelect: remove },
   ]
   const used = d.container.memory_bytes ?? 0
   return (
@@ -224,7 +233,7 @@ function Overview({ project, data, d, now, reload }: { project: string; data: Da
         <div className="alert info">
           <Info />
           <div>
-            <span className="t-small t-strong">Production doesn't have DATABASE_URL yet</span>
+            <span className="t-small t-strong">Production doesn't have its database yet</span>
             <span className="t-caption t-muted">Redeploy it to connect it.</span>
           </div>
           <Gate allow={change} reason={viewerCant('redeploy')}>
@@ -244,7 +253,7 @@ function Overview({ project, data, d, now, reload }: { project: string; data: Da
                 {busy === 'backup' || running ? 'Backing up…' : 'Back up now'}
               </button>
             </Gate>
-            {change && <Menu label="More for the database" items={items} />}
+            {change && <Menu label="More for Postgres" items={items} />}
           </div>
         </div>
         <div className="details database-details">
@@ -266,7 +275,7 @@ function Overview({ project, data, d, now, reload }: { project: string; data: Da
             </Field>
             <Field label="Disk">
               <span>{d.disk_bytes ? size(d.disk_bytes) : '–'}</span>
-              {d.disk_bytes > 0 && <span className="t-note">Production's data is {size(d.data_bytes)}</span>}
+              {d.disk_bytes > 0 && <span className="t-note">Data is {size(d.data_bytes)}</span>}
             </Field>
             <Field label="Connections">
               <span>
@@ -274,22 +283,11 @@ function Overview({ project, data, d, now, reload }: { project: string; data: Da
               </span>
             </Field>
           </div>
-          <div className="details-row database-reach">
-            <Field label="DATABASE_URL">
-              <span className="line">
-                <span className="mono">
-                  postgres://app:••••••@{d.host}:{d.port}/app
-                </span>
-                {change && <CopyURL project={project} />}
-              </span>
-              <span className="t-note">Only {project}'s apps can reach it.</span>
-            </Field>
-          </div>
           {d.problem && <span className="t-caption run-why">{d.problem}</span>}
         </div>
       </section>
+      <Databases project={project} data={data} d={d} now={now} reload={reload} onBrowse={onBrowse} />
       <Backups project={project} data={data} now={now} reload={reload} restorable />
-      <Previews project={project} previews={d.previews} now={now} reload={reload} />
       {resizing && (
         <MemoryDialog
           title="Change the database's memory"
@@ -307,31 +305,6 @@ function Overview({ project, data, d, now, reload }: { project: string; data: Da
         />
       )}
     </>
-  )
-}
-
-// CopyURL copies production's DATABASE_URL, password and all.
-function CopyURL({ project }: { project: string }) {
-  const [busy, run] = useBusy<'copy'>()
-  return (
-    <button
-      className="icon-btn bare"
-      aria-label="Copy DATABASE_URL"
-      data-tip="Copy, with the password"
-      disabled={busy === 'copy'}
-      onClick={() =>
-        run('copy', async () => {
-          try {
-            const r = await api<{ url: string }>(`${databasePath(project)}/url`)
-            await copy(r.url, 'DATABASE_URL')
-          } catch (e) {
-            failed(e)
-          }
-        })
-      }
-    >
-      {busy === 'copy' ? <Spinner /> : <Copy />}
-    </button>
   )
 }
 
@@ -355,7 +328,7 @@ function Backups({ project, data, now, reload, restorable }: {
       {data.backups.length === 0 ? (
         <Empty title="No backups yet">
           <span className="t-caption t-muted">
-            The first is made tonight at {hour}:00 {data.timezone}.
+            The first are made tonight at {hour}:00 {data.timezone}.
           </span>
         </Empty>
       ) : (
@@ -363,6 +336,7 @@ function Backups({ project, data, now, reload, restorable }: {
           <div className="table backups">
             <div className="t-head">
               <span>Made</span>
+              <span>Database</span>
               <span>Why</span>
               <span>Size</span>
               <span />
@@ -373,7 +347,7 @@ function Backups({ project, data, now, reload, restorable }: {
           </div>
           <Paging paged={paged} noun="backup" />
           <span className="t-note">
-            Nightly at {hour}:00 {data.timezone}. The last 7 are kept.
+            Each database nightly at {hour}:00 {data.timezone}. The last 7 of each are kept.
           </span>
         </>
       )}
@@ -395,7 +369,7 @@ function BackupRow({ b, project, now, reload, restorable }: {
       title: 'Restore this backup?',
       body: (
         <p>
-          Production's database goes back to {new Date(b.started_at).toLocaleString('en-GB', { dateStyle: 'long', timeStyle: 'short' })}. What's there now is
+          <span className="mono">{b.database}</span> goes back to {new Date(b.started_at).toLocaleString('en-GB', { dateStyle: 'long', timeStyle: 'short' })}. What's there now is
           backed up first.
         </p>
       ),
@@ -405,7 +379,7 @@ function BackupRow({ b, project, now, reload, restorable }: {
         await api(`${base}/restore`, { method: 'POST' })
         reload()
       },
-    }).then((ok) => ok && toast('Restored the database'))
+    }).then((ok) => ok && toast(`Restored ${b.database}`))
   const done = b.state === 'done'
   const items: MenuItem[] = [
     { label: 'Download', onSelect: () => (window.location.href = `${base}/file`) },
@@ -417,6 +391,7 @@ function BackupRow({ b, project, now, reload, restorable }: {
         <When at={b.started_at} now={now} />
         {b.made_by && <span className="t-note">{b.made_by}</span>}
       </span>
+      <span className="mono t-muted">{b.database}</span>
       <span className="t-muted">
         {b.state === 'running' ? (
           <span className="run-status">
@@ -438,57 +413,421 @@ function BackupRow({ b, project, now, reload, restorable }: {
   )
 }
 
-function Previews({ project, previews, now, reload }: { project: string; previews: PreviewDatabase[]; now: number; reload: () => void }) {
+// clash finds another database that already gives one of these
+// environments the same variable.
+const clash = (all: ProjectDatabase[], name: string, variable: string, envs: Environment[]) =>
+  all.find((o) => o.name !== name && o.variable === variable && o.environments.some((e) => envs.includes(e)))
+
+// Databases lists the server's databases: what each serves, the variable
+// it's given as, and its size.
+function Databases({ project, data, d, now, reload, onBrowse }: {
+  project: string
+  data: DatabaseView
+  d: DatabaseStatus
+  now: number
+  reload: () => void
+  onBrowse: (name: string) => void
+}) {
   const { change } = useRole()
-  const paged = usePaged(previews, PAGE, previews.length)
-  const label = (p: PreviewDatabase) => p.branch || 'pier deploy previews'
-  const remove = (p: PreviewDatabase) =>
+  const [editing, setEditing] = useState<ProjectDatabase | 'new'>()
+  const [made, setMade] = useState<{ database: string; url: string }>()
+  const [open, setOpen] = useState<string>()
+  const base = `${databasePath(project)}/databases`
+  const copyURL = async (x: ProjectDatabase) => {
+    try {
+      const r = await api<{ url: string }>(`${databasePath(project)}/url?db=${encodeURIComponent(x.name)}`)
+      await copy(r.url, `${x.name}'s URL`)
+    } catch (e) {
+      failed(e)
+    }
+  }
+  const external = async (x: ProjectDatabase) => {
+    try {
+      const r = await api<{ url: string }>(`${base}/${encodeURIComponent(x.name)}/externals`, { method: 'POST' })
+      setMade({ database: x.name, url: r.url })
+      reload()
+    } catch (e) {
+      failed(e)
+    }
+  }
+  const remove = (x: ProjectDatabase) =>
     confirm({
-      title: `Delete the database of ${label(p)}?`,
-      body: <p>Its next preview gets a new, empty one.</p>,
-      action: 'Delete',
-      working: 'Deleting…',
+      title: `Delete ${x.name}?`,
+      body: <p>Its data is deleted. A last backup is kept.</p>,
+      action: 'Delete database',
+      working: 'Backing up and deleting…',
       danger: true,
       run: async () => {
-        await api(`${databasePath(project)}/previews/${encodeURIComponent(p.name)}`, { method: 'DELETE' })
+        await api(`${base}/${encodeURIComponent(x.name)}`, { method: 'DELETE' })
         reload()
       },
-    }).then((ok) => ok && toast(`Deleted the database of ${label(p)}`))
-  if (previews.length === 0) return null
+    }).then((ok) => {
+      if (ok) toast(`Deleted ${x.name}`)
+      return ok
+    })
   return (
     <div className="stack">
       <div className="toolbar">
         <div className="title">
-          <h2 className="t-small t-strong">Preview databases</h2>
-          <span className="count">{previews.length.toLocaleString('en-GB')}</span>
+          <h2 className="t-small t-strong">Databases</h2>
+          <span className="count">{d.databases.length.toLocaleString('en-GB')}</span>
         </div>
+        <Gate allow={change} reason={viewerCant('add databases')}>
+          <button className="btn quiet" onClick={() => setEditing('new')}>
+            Add database
+          </button>
+        </Gate>
       </div>
-      <div className="table preview-dbs">
+      <div className="table project-dbs">
         <div className="t-head">
-          <span>Branch</span>
           <span>Database</span>
-          <span>Size</span>
-          <span>Made</span>
+          <span>Serves</span>
+          <span>Variable</span>
+          <span className="num">Size</span>
           <span />
         </div>
-        {paged.shown.map((p) => (
-          <div className="t-row" key={p.name}>
-            <span className="line">
-              <i className="swatch building" aria-hidden />
-              <span className={p.branch ? 'mono' : ''}>{label(p)}</span>
+        {d.databases.map((x) => {
+          const items: MenuItem[] = [
+            { label: 'Open', onSelect: () => setOpen(x.name) },
+            { label: 'Browse data', onSelect: () => onBrowse(x.name) },
+            { label: 'Copy URL', icon: <Copy />, onSelect: () => copyURL(x) },
+            { label: 'Make an external URL', icon: <Visit />, onSelect: () => external(x), disabled: !data.external },
+            { label: 'Change', icon: <Pencil />, onSelect: () => setEditing(x) },
+            'separator',
+            { label: 'Delete database', icon: <Trash />, danger: true, onSelect: () => remove(x) },
+          ]
+          return (
+            <div key={x.name} className="t-row clickable" onClick={(e) => !(e.target as HTMLElement).closest('button, a, [role="menu"]') && setOpen(x.name)}>
+              <span className="mono t-strong" data-tip-cut>
+                {x.name}
+              </span>
+              <span className="scopes">
+                {x.environments.length ? x.environments.map((e) => <Badge key={e} role={e} />) : <span className="t-muted">Nothing</span>}
+              </span>
+              <span className="mono t-muted" data-tip-cut>
+                {x.environments.length ? x.variable : ''}
+              </span>
+              <span className="num t-muted">{x.bytes ? size(x.bytes) : '–'}</span>
+              <span className="row-more">{change && <Menu label={`Actions for ${x.name}`} items={items} className="icon-btn bare" />}</span>
+            </div>
+          )
+        })}
+      </div>
+      <span className="t-note">Only {project}'s apps reach them. A change reaches a deploy when it starts.</span>
+      {open && d.databases.some((x) => x.name === open) && (
+        <DatabaseSheet
+          project={project}
+          data={data}
+          x={d.databases.find((x) => x.name === open)!}
+          index={d.databases.findIndex((x) => x.name === open)}
+          count={d.databases.length}
+          now={now}
+          onMove={(step) => {
+            const i = d.databases.findIndex((x) => x.name === open) + step
+            if (i >= 0 && i < d.databases.length) setOpen(d.databases[i].name)
+          }}
+          onClose={() => setOpen(undefined)}
+          onBrowse={() => (setOpen(undefined), onBrowse(open))}
+          onChange={() => setEditing(d.databases.find((x) => x.name === open))}
+          onDelete={() => remove(d.databases.find((x) => x.name === open)!).then((ok) => ok && setOpen(undefined))}
+          onExternal={() => external(d.databases.find((x) => x.name === open)!)}
+          reload={reload}
+        />
+      )}
+      {editing && (
+        <DatabaseDialog
+          project={project}
+          all={d.databases}
+          editing={editing === 'new' ? undefined : editing}
+          onClose={() => setEditing(undefined)}
+          onDone={(msg) => {
+            setEditing(undefined)
+            reload()
+            toast(msg)
+          }}
+        />
+      )}
+      {made && (
+        <Dialog
+          wide
+          title={
+            <>
+              An external URL for <span className="mono">{made.database}</span>
+            </>
+          }
+          onClose={() => setMade(undefined)}
+          footer={
+            <>
+              <button className="btn quiet medium" type="button" onClick={() => copy(made.url, 'the external URL')}>
+                Copy
+              </button>
+              <button className="btn primary medium" type="button" onClick={() => setMade(undefined)}>
+                Done
+              </button>
+            </>
+          }
+        >
+          <pre className="external-url mono">{made.url}</pre>
+          <span className="t-note">It reaches {made.database} from anywhere, over TLS. Revoke it any time.</span>
+        </Dialog>
+      )}
+    </div>
+  )
+}
+
+function DatabaseDialog({ project, all, editing, onClose, onDone }: {
+  project: string
+  all: ProjectDatabase[]
+  editing?: ProjectDatabase
+  onClose: () => void
+  onDone: (msg: string) => void
+}) {
+  const [name, setName] = useState(editing?.name ?? '')
+  const [envs, setEnvs] = useState<Environment[]>(editing?.environments ?? [])
+  const [variable, setVariable] = useState(editing?.variable ?? 'DATABASE_URL')
+  const [busy, setBusy] = useState(false)
+  const [problem, setProblem] = useState<{ field?: string; message: string }>()
+  const clashing = clash(all, name, variable, envs)
+  const taken = !editing && all.some((o) => o.name === name)
+  const submit = async (e: FormEvent) => {
+    e.preventDefault()
+    setBusy(true)
+    setProblem(undefined)
+    try {
+      const base = `${databasePath(project)}/databases`
+      if (editing) {
+        await api(`${base}/${encodeURIComponent(editing.name)}`, { method: 'PUT', body: JSON.stringify({ environments: envs, variable }) })
+        onDone(`Saved ${editing.name}. Redeploy to pass it on`)
+      } else {
+        await api(base, { method: 'POST', body: JSON.stringify({ name, environments: envs, variable }) })
+        onDone(`Added ${name}`)
+      }
+    } catch (err) {
+      const body = (err as { body?: { field?: string; error?: string } }).body
+      setProblem({ field: body?.field, message: body?.error ?? (err instanceof Error ? err.message : "Can't reach pierd.") })
+      setBusy(false)
+    }
+  }
+  return (
+    <Dialog
+      wide
+      title={
+        editing ? (
+          <>
+            Change <span className="mono">{editing.name}</span>
+          </>
+        ) : (
+          'Add a database'
+        )
+      }
+      busy={busy}
+      onClose={onClose}
+      onSubmit={submit}
+      footer={
+        <>
+          {problem && !problem.field && (
+            <span className="field-message grow" role="alert">
+              {problem.message}
             </span>
-            <span className="mono t-muted">{p.name}</span>
-            <span className="t-muted">{p.bytes ? size(p.bytes) : ''}</span>
-            <When at={p.created_at} now={now} className="t-muted" />
-            <span className="row-more">
-              {change && <Menu label={`Actions for ${p.name}`} items={[{ label: 'Delete', icon: <Trash />, danger: true, onSelect: () => remove(p) }]} className="icon-btn bare" />}
+          )}
+          <button className="btn quiet medium" type="button" disabled={busy} onClick={onClose}>
+            Cancel
+          </button>
+          <button className="btn primary medium" type="submit" disabled={busy || !name || !variable || !!clashing || taken}>
+            {busy && <Spinner />}
+            {busy ? (editing ? 'Saving…' : 'Adding…') : editing ? 'Save' : 'Add database'}
+          </button>
+        </>
+      }
+    >
+      {!editing && (
+        <label className={'field' + (problem?.field === 'name' || taken ? ' error' : '')}>
+          <span className="field-label">Name</span>
+          <input
+            className="input mono"
+            value={name}
+            onChange={(e) => (setName(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '')), setProblem(undefined))}
+            placeholder="analytics"
+            maxLength={40}
+            spellCheck={false}
+            autoCapitalize="off"
+          />
+          {(problem?.field === 'name' || taken) && (
+            <span className="field-message" role="alert">
+              {taken ? `There's one called ${name} already.` : problem?.message}
+            </span>
+          )}
+        </label>
+      )}
+      <div className="field">
+        <span className="field-label">Serves</span>
+        <EnvPicker value={envs} onChange={setEnvs} />
+      </div>
+      <label className={'field' + (clashing || problem?.field === 'variable' ? ' error' : '')}>
+        <span className="field-label">Variable</span>
+        <input
+          className="input mono"
+          value={variable}
+          onChange={(e) => (setVariable(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, '')), setProblem(undefined))}
+          maxLength={64}
+          spellCheck={false}
+          autoCapitalize="off"
+        />
+        {(clashing || problem?.field === 'variable') && (
+          <span className="field-message" role="alert">
+            {clashing ? `${clashing.name} gives ${clashing.environments.join(' and ')} ${variable} already.` : problem?.message}
+          </span>
+        )}
+      </label>
+    </Dialog>
+  )
+}
+
+// DatabaseSheet is one database, opened: what it serves, how apps reach
+// it, and the URLs services outside Pier reach it by.
+function DatabaseSheet({ project, data, x, index, count, now, onMove, onClose, onBrowse, onChange, onDelete, onExternal, reload }: {
+  project: string
+  data: DatabaseView
+  x: ProjectDatabase
+  index: number
+  count: number
+  now: number
+  onMove: (d: number) => void
+  onClose: () => void
+  onBrowse: () => void
+  onChange: () => void
+  onDelete: () => void
+  onExternal: () => void
+  reload: () => void
+}) {
+  const { change } = useRole()
+  const ext = data.externals.find((e) => e.database === x.name)
+  const path = (e: ExternalURL) => `${databasePath(project)}/externals/${encodeURIComponent(e.role)}`
+  const copyURL = async (u: string, what: string) => {
+    try {
+      const r = await api<{ url: string }>(u)
+      await copy(r.url, what)
+    } catch (err) {
+      failed(err)
+    }
+  }
+  const revoke = (e: ExternalURL) =>
+    confirm({
+      title: 'Revoke this external URL?',
+      body: (
+        <p>
+          Services using <span className="mono">{e.role}</span> are disconnected now.
+        </p>
+      ),
+      action: 'Revoke',
+      working: 'Revoking…',
+      danger: true,
+      run: async () => {
+        await api(path(e), { method: 'DELETE' })
+        reload()
+      },
+    }).then((ok) => ok && toast('Revoked the external URL'))
+  return (
+    <Sheet
+      label="Database"
+      onClose={onClose}
+      onMove={onMove}
+      first={index === 0}
+      last={index === count - 1}
+      title={
+        <>
+          <span className="t-note">Database</span>
+          <span className="t-small t-strong db-sheet-id mono">{x.name}</span>
+        </>
+      }
+      foot={
+        <>
+          <button className="btn quiet" onClick={onBrowse} disabled={!change}>
+            Browse data
+          </button>
+          {change && (
+            <button className="btn quiet" onClick={onChange}>
+              Change
+            </button>
+          )}
+          {change && (
+            <button className="btn quiet danger push" onClick={onDelete}>
+              Delete
+            </button>
+          )}
+        </>
+      }
+    >
+      <div className="db-sheet-fields sheet-sans">
+        <div className="db-fields">
+          <div className="db-field">
+            <span className="t-quiet">Serves</span>
+            <span className="scopes">{x.environments.length ? x.environments.map((e) => <Badge key={e} role={e} />) : 'Nothing'}</span>
+          </div>
+          <div className="db-field">
+            <span className="t-quiet">Variable</span>
+            <span className="mono">{x.environments.length ? x.variable : '–'}</span>
+          </div>
+          <div className="db-field">
+            <span className="t-quiet">Size</span>
+            <span>{x.bytes ? size(x.bytes) : '–'}</span>
+          </div>
+          <div className="db-field">
+            <span className="t-quiet">Made</span>
+            <span>
+              <When at={x.created_at} now={now} />
+              {x.created_by && <span className="t-note"> by {x.created_by}</span>}
             </span>
           </div>
-        ))}
+          <div className="db-field">
+            <span className="t-quiet">URL</span>
+            <span className="line file-url">
+              <span className="mono" data-tip-cut>
+                postgres://{x.name}:••••@postgres:5432/{x.name}
+              </span>
+              {change && (
+                <button className="icon-btn bare small" aria-label="Copy the URL" data-tip="Copy, with the password" onClick={() => copyURL(`${databasePath(project)}/url?db=${encodeURIComponent(x.name)}`, `${x.name}'s URL`)}>
+                  <Copy />
+                </button>
+              )}
+            </span>
+          </div>
+          <div className="db-field">
+            <span className="t-quiet">External URL</span>
+            {ext ? (
+              <span className="line file-url">
+                <span className="mono" data-tip-cut>
+                  postgres://{ext.role}:••••@{data.external}/{x.name}
+                </span>
+                {change && (
+                  <>
+                    <button className="icon-btn bare small" aria-label="Copy the external URL" data-tip="Copy, with the password" onClick={() => copyURL(path(ext), 'the external URL')}>
+                      <Copy />
+                    </button>
+                    <Menu
+                      label="More for the external URL"
+                      className="icon-btn bare small"
+                      items={[{ label: 'Revoke', icon: <Trash />, danger: true, onSelect: () => revoke(ext) }]}
+                    />
+                  </>
+                )}
+              </span>
+            ) : !data.external ? (
+              <span className="t-muted">This server doesn't make them</span>
+            ) : (
+              <span className="line file-url">
+                <span className="t-muted">Off</span>
+                {change && (
+                  <button className="btn quiet small" onClick={onExternal}>
+                    Make one
+                  </button>
+                )}
+              </span>
+            )}
+          </div>
+        </div>
       </div>
-      <Paging paged={paged} noun="preview database" />
-      <span className="t-note">Each branch gets its own, deleted with the branch.</span>
-    </div>
+    </Sheet>
   )
 }
 

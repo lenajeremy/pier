@@ -30,6 +30,7 @@ const tabs = [
   ['Domains', '/domains'],
   ['Variables', '/variables'],
   ['Database', '/database'],
+  ['Storage', '/storage'],
   ['Logs', '/logs'],
   ['Jobs', '/jobs'],
   ['Settings', '/settings'],

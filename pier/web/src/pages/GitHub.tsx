@@ -41,7 +41,7 @@ export function GitHubRepos() {
         </div>
         {repos.length > PAGE && <SearchField value={query} onChange={setQuery} placeholder="Search repos" hotkey="/" />}
         {connected && repos.length > 0 && (
-          <Link className="btn quiet visit" to="/integrations">
+          <Link className="btn quiet visit" to="/integrations/github">
             Choose repos
             <Visit />
           </Link>
@@ -60,7 +60,7 @@ export function GitHubRepos() {
             Connect it once, pick the repos Pier can read, and every push to them deploys. Pull requests get their own preview
             address.
           </span>
-          <Link className="btn primary" to="/integrations">
+          <Link className="btn primary" to="/integrations/github">
             Connect GitHub
           </Link>
         </div>
@@ -70,7 +70,7 @@ export function GitHubRepos() {
           <span className="t-caption t-muted" style={{ maxWidth: 480 }}>
             On GitHub, install the App and choose which repos it can read. They show up here, ready to import.
           </span>
-          <Link className="btn primary" to="/integrations">
+          <Link className="btn primary" to="/integrations/github">
             Choose repos
           </Link>
         </div>

@@ -86,7 +86,12 @@ func (a *API) deleteProject(w http.ResponseWriter, r *http.Request) {
 	}
 	_, dbErr := a.Store.Database(r.Context(), name)
 	hadDatabase := dbErr == nil
-	err := a.Store.DeleteProject(r.Context(), name)
+	buckets, err := a.Store.Buckets(r.Context(), name)
+	if err != nil {
+		a.fail(w, err)
+		return
+	}
+	err = a.Store.DeleteProject(r.Context(), name)
 	if errors.Is(err, store.ErrNotFound) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "there's no project called " + name})
 		return
@@ -107,6 +112,14 @@ func (a *API) deleteProject(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := work(r)
 		if err := a.Databases.Purge(ctx, name); err != nil {
 			a.Log.Warn("remove a deleted project's database", "project", name, "err", err)
+		}
+		cancel()
+	}
+	if len(buckets) > 0 && a.Storage != nil {
+		// Every file goes with the project.
+		ctx, cancel := work(r)
+		if err := a.Storage.Purge(ctx, buckets); err != nil {
+			a.Log.Warn("remove a deleted project's buckets", "project", name, "err", err)
 		}
 		cancel()
 	}

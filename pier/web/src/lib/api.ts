@@ -261,10 +261,11 @@ export interface LoginRequest {
   status: 'pending' | 'approved' | 'denied'
 }
 
-// A project's Postgres database, its previews' databases and its backups.
+// A project's Postgres server, its databases, its external URLs and backups.
 export type DatabaseBackup = {
   id: number
   project: string
+  database: string
   reason: 'nightly' | 'manual' | 'before-restore' | 'before-delete'
   made_by?: string
   state: 'running' | 'done' | 'failed'
@@ -275,7 +276,16 @@ export type DatabaseBackup = {
   offsite?: string
 }
 
-export type PreviewDatabase = { branch: string; name: string; created_at: string; bytes: number }
+export type ProjectDatabase = {
+  id: number
+  name: string
+  environments: Environment[]
+  variable: string
+  created_at: string
+  created_by?: string
+  bytes: number
+}
+export type ExternalURL = { role: string; project: string; database: string; created_at: string; created_by?: string; host: string }
 
 export type DatabaseStatus = {
   project: string
@@ -297,7 +307,7 @@ export type DatabaseStatus = {
   disk_bytes: number
   connections: number
   max_connections: number
-  previews: PreviewDatabase[]
+  databases: ProjectDatabase[]
   problem?: string
   host: string
   port: string
@@ -310,6 +320,8 @@ export type DatabaseView = {
   default_memory_mb: number
   image: string
   production: { deployment: string; connected: boolean } | null
+  externals: ExternalURL[]
+  external: string
   nightly_at: number
   timezone: string
 }
@@ -335,3 +347,28 @@ export type DbPage = {
 export type DbResult = { columns: DbColumn[] | null; rows: (string | null)[][]; truncated?: boolean; tag: string }
 export type DbQueryError = { message: string; detail?: string; hint?: string; position?: number }
 export type DbOutcome = { results: DbResult[]; error?: DbQueryError; ms: number }
+
+export type Environment = 'production' | 'preview'
+export type Bucket = {
+  id: number
+  project: string
+  name: string
+  bucket: string
+  public: boolean
+  public_url: string
+  environments: Environment[]
+  prefix: string
+  created_at: string
+  created_by?: string
+  files: number
+  bytes: number
+  more: boolean
+  count_error?: string
+  variables: string[]
+  address_ready: boolean
+}
+export type CloudflareView = { connected: boolean; account?: string; domain?: string; prefix?: string; buckets?: Bucket[] }
+export type StorageView = { cloudflare: CloudflareView; buckets: Bucket[]; count_up_to: number }
+export type StoredFile = { key: string; size: number; modified: string; etag?: string; type: string; view: string; download: string; url?: string }
+export type FileListing = { folders: string[]; files: StoredFile[]; next?: string }
+export type BucketVariable = { name: string; value: string; secret?: boolean }

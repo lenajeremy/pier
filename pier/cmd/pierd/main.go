@@ -11,6 +11,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/hex"
 	"errors"
 	"flag"
@@ -41,10 +42,12 @@ import (
 	"pier/internal/gitssh"
 	"pier/internal/hook"
 	"pier/internal/jobs"
+	"pier/internal/pgproxy"
 	"pier/internal/release"
 	"pier/internal/requests"
 	"pier/internal/router"
 	"pier/internal/secrets"
+	"pier/internal/storage"
 	"pier/internal/store"
 	"pier/internal/upgrade"
 	"pier/internal/version"
@@ -107,6 +110,7 @@ func serve(args []string) int {
 	caddyAdmin := fs.String("caddy-admin", env("PIER_CADDY_ADMIN", ""), "use an external Caddy admin API instead of the embedded router")
 	httpAddr := fs.String("http", env("PIER_HTTP", ":8088"), "where Caddy serves the sites")
 	https := fs.Bool("https", env("PIER_HTTPS", "") == "1", "serve sites over HTTPS with certificates (production)")
+	pgAddr := fs.String("postgres", env("PIER_POSTGRES", ":5432"), "where services outside Pier reach databases by their external URLs, over TLS (empty to disable)")
 	dnsAddr := fs.String("dns", env("PIER_DNS", ":53"), "where to answer ACME DNS-01 challenges for wildcard HTTPS (empty to disable)")
 	builder := fs.String("builder", env("PIER_BUILDER", "railpack-preview"), "railpack-preview, docker, or local (host builds without isolation)")
 	image := fs.String("image", env("PIER_IMAGE", build.DefaultNodeImage), "the image builds run in")
@@ -257,6 +261,12 @@ func serve(args []string) int {
 	// backups, kept in the data folder.
 	dbs := &database.Manager{Store: st, Box: box, Host: dep.Apps, Backups: filepath.Join(*data, "backups"), Log: log, Alerts: notifier}
 	dep.Databases = dbs
+	// Each project's buckets, on the owner's Cloudflare R2 once it's
+	// connected in Integrations.
+	buckets := &storage.Manager{Store: st, Box: box, Log: log, Domain: *domain,
+		// Stand-ins for Cloudflare's API and R2, for tests only.
+		Base: os.Getenv("PIER_TEST_CLOUDFLARE_API"), Endpoint: os.Getenv("PIER_TEST_R2_ENDPOINT")}
+	dep.Storage = buckets
 
 	self, err := os.Executable()
 	if err != nil {
@@ -333,7 +343,7 @@ func serve(args []string) int {
 		Commands: dep.Apps, Sites: dialable(*httpAddr), HTTPS: *https,
 	}
 	a := &api.API{StartedAt: time.Now(), Store: st, Deployer: dep, Token: tok, Log: log, Web: web.Handler(), Requests: reqs, SiteListener: dialable(*httpAddr), Alerts: notifier, Jobs: scheduler,
-		Databases: dbs, Releases: releases, Data: abs, UpgradeUnit: *upgradeUnit}
+		Databases: dbs, Storage: buckets, Releases: releases, Data: abs, UpgradeUnit: *upgradeUnit}
 	if err := a.ResumeCleanup(ctx); err != nil {
 		log.Warn("resume preview cleanup", "err", err)
 	}
@@ -356,6 +366,21 @@ func serve(args []string) int {
 	defer func() { stop(); <-jobsDone }()
 	go a.SampleServer(ctx)
 	go dbs.Run(ctx)
+	// External URLs are on for a server with HTTPS on a real domain, or
+	// when -postgres is given.
+	realDomain := *https && *caddyAdmin == "" && *domain != "" && *domain != "localhost" && !strings.HasSuffix(*domain, ".localhost")
+	if *pgAddr != "" && (realDomain || flagSet(fs, "postgres")) {
+		if ln, err := net.Listen("tcp", *pgAddr); err != nil {
+			log.Warn("external database URLs are off: can't listen", "addr", *pgAddr, "err", err)
+		} else {
+			defer ln.Close()
+			host := "db." + *domain
+			dbs.External = host + ":" + portOf(*pgAddr)
+			proxy := &pgproxy.Proxy{TLS: &tls.Config{GetCertificate: certificates(caddyCfg, host, log)}, Route: dbs.Route, Log: log}
+			go proxy.Serve(ln)
+			log.Info("external database URLs", "host", dbs.External)
+		}
+	}
 	domainsDone := make(chan struct{})
 	go func() { defer close(domainsDone); a.RunDomainChecks(ctx) }()
 	defer func() { stop(); <-domainsDone }()
@@ -692,4 +717,30 @@ func challengeAddrs(local []net.Addr, port string) []string {
 		out = append(out, net.JoinHostPort(ip.String(), port))
 	}
 	return out
+}
+
+// certificates hands the public Postgres port the certificate embedded
+// Caddy keeps for host, or the base domain's wildcard, read from its
+// storage at most every ten minutes, so a renewal is picked up.
+func certificates(c router.Caddy, host string, log *slog.Logger) func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+	var mu sync.Mutex
+	var cert *tls.Certificate
+	var at time.Time
+	return func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if cert != nil && time.Since(at) < 10*time.Minute {
+			return cert, nil
+		}
+		next, err := c.Certificate(host)
+		if err != nil {
+			if cert != nil {
+				return cert, nil
+			}
+			log.Warn("no certificate for external database URLs yet", "host", host, "err", err)
+			return nil, err
+		}
+		cert, at = next, time.Now()
+		return cert, nil
+	}
 }

@@ -123,7 +123,7 @@ func (a *API) ghManifest(w http.ResponseWriter, r *http.Request) {
 	}
 	base := origin.String()
 	writeJSON(w, 200, map[string]any{"action": "https://github.com/settings/apps/new?state=" + state, "manifest": map[string]any{
-		"url": base, "public": false, "redirect_url": base + "/github/callback", "setup_url": base + "/integrations",
+		"url": base, "public": false, "redirect_url": base + "/github/callback", "setup_url": base + "/integrations/github",
 		"hook_attributes": map[string]any{"url": hook.String(), "active": true}, "default_events": []string{"push", "pull_request"},
 		"default_permissions": map[string]string{"contents": "read", "pull_requests": "write", "statuses": "write"},
 	}})

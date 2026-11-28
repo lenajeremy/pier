@@ -435,6 +435,62 @@ var migrations = []string{
 		offsite     TEXT NOT NULL DEFAULT ''
 	);
 	CREATE INDEX database_backups_by_project ON database_backups(project, id);`,
+
+	// 23: a project's buckets on Cloudflare R2. A project has any number;
+	// each serves the environments it's linked to (production, preview),
+	// with its variables named from its prefix, and has a key that reaches
+	// it alone, its secret sealed. The Cloudflare account is in settings.
+	`CREATE TABLE storage_buckets (
+		id           INTEGER PRIMARY KEY,
+		project      TEXT NOT NULL REFERENCES projects(name),
+		name         TEXT NOT NULL,
+		bucket       TEXT NOT NULL UNIQUE,
+		public       INTEGER NOT NULL DEFAULT 0,
+		public_url   TEXT NOT NULL DEFAULT '',
+		environments TEXT NOT NULL DEFAULT '',
+		prefix       TEXT NOT NULL,
+		key_id       TEXT NOT NULL,
+		secret       TEXT NOT NULL,
+		created_at   INTEGER NOT NULL,
+		created_by   TEXT NOT NULL DEFAULT '',
+		UNIQUE (project, name)
+	);`,
+
+	// 24: a project's Postgres server holds any number of databases, each
+	// linked to the environments it serves and the variable it's given
+	// as, instead of production's "app" and one per preview branch. "app"
+	// keeps serving production; the branches' databases are kept, linked
+	// to nothing, and pierd makes previews one shared database the first
+	// time it starts. Backups say which database they're of, and a
+	// database's external URL, at most one, is a role of its own that
+	// reaches it from outside.
+	`CREATE TABLE project_databases (
+		id           INTEGER PRIMARY KEY,
+		project      TEXT NOT NULL REFERENCES databases(project),
+		name         TEXT NOT NULL,
+		environments TEXT NOT NULL DEFAULT '',
+		variable     TEXT NOT NULL DEFAULT 'DATABASE_URL',
+		password     TEXT NOT NULL,
+		created_at   INTEGER NOT NULL,
+		created_by   TEXT NOT NULL DEFAULT '',
+		UNIQUE (project, name)
+	);
+	INSERT INTO project_databases(project, name, environments, variable, password, created_at, created_by)
+		SELECT project, 'app', 'production', 'DATABASE_URL', password, created_at, created_by FROM databases;
+	INSERT INTO project_databases(project, name, environments, variable, password, created_at)
+		SELECT project, name, '', 'DATABASE_URL', password, created_at FROM preview_databases;
+	INSERT INTO settings(key, value) SELECT 'database_preview_pending:' || project, '1' FROM databases;
+	DROP TABLE preview_databases;
+	ALTER TABLE database_backups ADD COLUMN database TEXT NOT NULL DEFAULT 'app';
+	CREATE TABLE database_externals (
+		role       TEXT PRIMARY KEY,
+		project    TEXT NOT NULL,
+		database   TEXT NOT NULL,
+		password   TEXT NOT NULL,
+		created_at INTEGER NOT NULL,
+		created_by TEXT NOT NULL DEFAULT '',
+		UNIQUE (project, database)
+	);`,
 }
 
 // Open opens (and if needed creates) the database at path.

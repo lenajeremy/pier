@@ -193,11 +193,19 @@ needed. `make pier-e2e` does all of this with throwaway data and ports.
 
 ## Postgres databases
 
-Give a project its own Postgres server from the dashboard's Database tab or with `pier db create`. Pier runs Postgres 18 (Alpine) in a container with its data on a Docker volume, on a network only that project's apps and jobs join. Production gets `DATABASE_URL` from its next deploy (a variable named `DATABASE_URL` that you set yourself wins), and each branch's previews get an empty database of their own on the same server, removed with the branch. Previews sent with `pier deploy` share one.
+Give a project its own Postgres server from the dashboard's Database tab or with `pier db create`. Pier runs Postgres 18 (Alpine) in a container with its data on a Docker volume, on a network only that project's apps and jobs join. The server holds any number of databases, each linked to the environments it serves (production, previews, both or neither) and given to them as a variable, `DATABASE_URL` unless you say otherwise. A new server starts with `production` for production and `preview` for previews, so a preview's migrations never touch production's data; link previews to `production` if you want them to share it. Add more with `pier db add NAME --env production --var ANALYTICS_URL`. A variable of the same name that you set yourself wins. Deployments get a change when they next start.
 
-A server is sized from its memory limit (256 MB unless changed; 128 MB to 4 GB): a quarter for Postgres's cache, few background workers, JIT off, compressed WAL capped at 256 MB, and lz4 for large values. An idle one uses about 15 to 30 MB and 40 MB of disk. Backups are `pg_dump` files compressed with zstd, made nightly at 03:00 server time, by hand, before a restore and before a delete; the last 7 nightly and 10 by hand are kept in `backups/`. A restore loads into a new database and swaps it in, so a failed one changes nothing. Deleting the project keeps its last backup for 30 days.
+A server is sized from its memory limit (256 MB unless changed; 128 MB to 4 GB): a quarter for Postgres's cache, few background workers, JIT off, compressed WAL capped at 256 MB, and lz4 for large values. An idle one uses about 15 to 30 MB and 40 MB of disk. Backups are a `pg_dump` of each database, compressed with zstd, made nightly at 03:00 server time, by hand, before a restore and before a delete; the last 7 nightly and 10 by hand of each are kept in `backups/`. A restore loads into a new database and swaps it in, so a failed one changes nothing. Deleting the project keeps its last backups for 30 days.
 
-The Database tab's Data browses tables, sorted, filtered with a `WHERE` clause and paged, in a read-only transaction; Query runs SQL as the database's owner. From your computer, `pier db tunnel` reaches the database on `localhost:5433` and prints the `DATABASE_URL` for it (`--env .env.local` writes it there), and `pier db psql` opens psql through one. Viewers see the server's state, not its data or passwords.
+The Database tab's Data browses tables, sorted, filtered with a `WHERE` clause and paged, in a read-only transaction; Query runs SQL as the database's owner. Opening a database shows its URL and its external URL. From your computer, `pier db tunnel` reaches a database on `localhost:5433` and prints the URL for it (`--env .env.local` writes it there), and `pier db psql` opens psql through one. Viewers see the server's state, not its data or passwords.
+
+A database can have one external URL, made when you ask (`pier db external`, or the database's panel): a role of its own that acts as the database's owner, reached at `db.<base domain>:5432` over TLS with the base domain's wildcard certificate, so services outside Pier can use it. pierd sends each connection to the right project's server by its user name; it never sees the password. Revoking it closes its connections. Port 5432 has to be open on the server's firewall; `-postgres` changes it, and an empty one turns external URLs off.
+
+## File storage
+
+Pier gives projects buckets on your own Cloudflare R2. Connect Cloudflare once in Integrations with your account ID and an account API token that can edit Workers R2 Storage and Account API Tokens (and read zones and edit DNS, to serve public buckets from your domain). Then add buckets from a project's Storage tab: private or public, each linked to the environments it serves and with its own key, which reaches that bucket alone. A project's first bucket serves production and previews; add a `test` bucket and link previews to it to keep their files apart.
+
+A deployment gets each linked bucket as `<PREFIX>_BUCKET`, `_ENDPOINT`, `_ACCESS_KEY_ID`, `_SECRET_ACCESS_KEY`, `_REGION` and, for a public one, `_PUBLIC_URL`; the prefix is `STORAGE` for the first, which also sets `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ENDPOINT_URL_S3` and `AWS_REGION`, so S3 clients work with no setup. Apps talk to R2 directly. A public bucket is served at `files-<project>-<name>.<base domain>` through Cloudflare's network when the base domain is on Cloudflare in the same account, and at an `r2.dev` address otherwise, which Cloudflare rate-limits. The Storage tab's Files browses a bucket by folder, uploads, previews images, video, audio and PDFs from short-lived links straight to R2, and deletes files and folders. Deleting a bucket or its project empties and deletes it.
 
 ## pierd's data folder
 
@@ -210,7 +218,7 @@ authorized_keys          keys that can push (pierd keys add)
 api.token                the CLI's token (pierd token)
 ssh_host_ed25519_key     the SSH host key
 pierd.sock               the git hook's socket
-backups/<project>/       each database's pg_dump backups; deleted/ keeps a deleted project's last for 30 days
+backups/<project>/       each database's pg_dump backups; deleted/ keeps a deleted project's last ones for 30 days
 ```
 
 ## Public rollout

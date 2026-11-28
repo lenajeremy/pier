@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { type DbPage, type DbTable } from '../lib/api'
 import { useData } from '../lib/data'
 import { pretty, Value, isNumeric, json } from '../lib/sql'
-import { ChevronLeft, ChevronRight, Close, Copy } from '../components/Icons'
+import { ChevronLeft, ChevronRight, Copy } from '../components/Icons'
+import { Sheet } from '../components/Sheet'
 import { copy } from '../components/Toast'
 import { Problem, SearchField, Skeleton } from '../components/ui'
 import { databasePath } from './Database'
@@ -269,21 +270,8 @@ function FilterFromLink({ onFilter }: { onFilter: (f: string) => void }) {
   return null
 }
 
-// The row panel's width, kept in this browser.
-const SHEET_KEY = 'pier.rowPanelWidth'
-const SHEET_MIN = 360
-const sheetMax = () => Math.max(SHEET_MIN, Math.round(window.innerWidth * 0.85))
-const sheetWidth = () => {
-  try {
-    const w = Number(localStorage.getItem(SHEET_KEY))
-    return w >= SHEET_MIN ? Math.min(w, sheetMax()) : 480
-  } catch {
-    return 480
-  }
-}
-
 // RowSheet shows one row with every value in full, over the right of the
-// page. Its left edge drags to make it wider or narrower.
+// page.
 function RowSheet({ page, index, name, onMove, onClose, onFollow }: {
   page: DbPage
   index: number
@@ -293,99 +281,50 @@ function RowSheet({ page, index, name, onMove, onClose, onFollow }: {
   onFollow: (ref: DbPage['refs'][string], column: string, value: string) => void
 }) {
   const row = page.rows[index]
-  const [width, setWidth] = useState(sheetWidth)
-  const panel = useRef<HTMLElement>(null)
-  // While it's open the page behind is dimmed and out of reach; a click
-  // there closes it, and the page doesn't scroll under it.
-  useEffect(() => {
-    const before = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-    return () => {
-      document.body.style.overflow = before
-    }
-  }, [])
   const id = useMemo(() => {
     const k = page.key?.[0]
     const at = k ? page.columns.findIndex((c) => c.name === k) : -1
     return at >= 0 ? row[at] : null
   }, [page, row])
-  useEffect(() => {
-    const key = (e: KeyboardEvent) => {
-      if ((e.target as HTMLElement)?.closest?.('input, textarea, [role="separator"]')) return
-      if (e.key === 'Escape') onClose()
-      if (e.key === 'ArrowDown') (e.preventDefault(), onMove(1))
-      if (e.key === 'ArrowUp') (e.preventDefault(), onMove(-1))
-    }
-    window.addEventListener('keydown', key)
-    return () => window.removeEventListener('keydown', key)
-  }, [onClose, onMove])
-  const keep = (w: number) => {
-    const next = Math.min(sheetMax(), Math.max(SHEET_MIN, Math.round(w)))
-    setWidth(next)
-    try {
-      localStorage.setItem(SHEET_KEY, String(next))
-    } catch {
-      // A private window forgets the width.
-    }
-  }
-  const drag = (e: React.PointerEvent<HTMLDivElement>) => {
-    e.preventDefault()
-    const handle = e.currentTarget
-    handle.setPointerCapture(e.pointerId)
-    document.body.classList.add('resizing')
-    const move = (m: PointerEvent) => keep(window.innerWidth - m.clientX)
-    const up = () => {
-      handle.removeEventListener('pointermove', move)
-      handle.removeEventListener('pointerup', up)
-      handle.removeEventListener('pointercancel', up)
-      document.body.classList.remove('resizing')
-    }
-    handle.addEventListener('pointermove', move)
-    handle.addEventListener('pointerup', up)
-    handle.addEventListener('pointercancel', up)
-  }
   const long = (v: string | null, type: string) => v !== null && type !== 'bytea' && (v.length > 60 || type === 'json' || type === 'jsonb' || v.includes('\n'))
   const object = Object.fromEntries(page.columns.map((c, i) => [c.name, row[i]]))
   const firstRef = page.columns.findIndex((c) => page.refs[c.name] && row[page.columns.indexOf(c)] !== null)
   const ref = firstRef >= 0 ? page.refs[page.columns[firstRef].name] : null
   const title = id ?? String(page.offset + index + 1)
   return (
-    <>
-    <div className="db-sheet-backdrop" onPointerDown={onClose} aria-hidden />
-    <aside ref={panel} className="db-sheet" role="dialog" aria-modal="true" aria-label="Row" style={{ width }}>
-      <div
-        className="db-sheet-resize"
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="Resize the row panel"
-        aria-valuenow={width}
-        aria-valuemin={SHEET_MIN}
-        aria-valuemax={sheetMax()}
-        tabIndex={0}
-        onPointerDown={drag}
-        onDoubleClick={() => keep(480)}
-        onKeyDown={(e) => {
-          if (e.key === 'ArrowLeft') (e.preventDefault(), keep(width + 32))
-          if (e.key === 'ArrowRight') (e.preventDefault(), keep(width - 32))
-        }}
-      />
-      <div className="db-sheet-head">
-        <div className="db-sheet-title">
+    <Sheet
+      label="Row"
+      onClose={onClose}
+      onMove={onMove}
+      first={index === 0}
+      last={index === page.rows.length - 1}
+      title={
+        <>
           <span className="mono t-note">{name}</span>
           <span className="t-small t-strong db-sheet-id" data-tip={title.length > 24 ? title : undefined} data-tip-mono>
             Row <span className="mono">{title}</span>
           </span>
-        </div>
-        <button className="icon-btn" aria-label="Row above" disabled={index === 0} onClick={() => onMove(-1)}>
-          <ChevronLeft />
-        </button>
-        <button className="icon-btn" aria-label="Row below" disabled={index === page.rows.length - 1} onClick={() => onMove(1)}>
-          <ChevronRight />
-        </button>
-        <button className="icon-btn bare" aria-label="Close" onClick={onClose}>
-          <Close />
-        </button>
-      </div>
+        </>
+      }
+      foot={
+        <>
+          <button className="btn quiet" onClick={() => copy(JSON.stringify(object, null, 2), 'the row as JSON')}>
+            Copy as JSON
+          </button>
+          {ref && (
+            <button
+              className="btn quiet db-follow"
+              data-tip={`${ref.table} where ${ref.column} = ${row[firstRef]}`}
+              data-tip-mono
+              onClick={() => onFollow(ref, ref.column, row[firstRef]!)}
+            >
+              <span>Open {singular(ref.table)}</span>
+              <span className="mono db-follow-value">{row[firstRef]}</span>
+            </button>
+          )}
+        </>
+      }
+    >
       <div className="db-sheet-fields">
         <div className="db-fields">
           {page.columns.map((c, i) =>
@@ -417,24 +356,7 @@ function RowSheet({ page, index, name, onMove, onClose, onFollow }: {
           ) : null,
         )}
       </div>
-      <div className="db-sheet-foot">
-        <button className="btn quiet" onClick={() => copy(JSON.stringify(object, null, 2), 'the row as JSON')}>
-          Copy as JSON
-        </button>
-        {ref && (
-          <button
-            className="btn quiet db-follow"
-            data-tip={`${ref.table} where ${ref.column} = ${row[firstRef]}`}
-            data-tip-mono
-            onClick={() => onFollow(ref, ref.column, row[firstRef]!)}
-          >
-            <span>Open {singular(ref.table)}</span>
-            <span className="mono db-follow-value">{row[firstRef]}</span>
-          </button>
-        )}
-      </div>
-    </aside>
-    </>
+    </Sheet>
   )
 }
 

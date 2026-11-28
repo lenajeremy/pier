@@ -35,12 +35,44 @@
   .table.jobs {
     --cols: minmax(0, 1.3fr) minmax(0, 1fr) 168px 32px;
   }
-  /* Previews give up their database's name; Data and Query stack. */
-  .table.preview-dbs {
-    --cols: minmax(0, 1fr) 96px 124px 32px;
+  /* Databases give up their variable, backups their reason; Data and
+     Query stack. */
+  .table.project-dbs {
+    --cols: minmax(0, 1fr) minmax(0, 1fr) 88px 32px;
   }
-  .table.preview-dbs :is(.t-head, .t-row) > :nth-child(2) {
+  .table.project-dbs :is(.t-head, .t-row) > :nth-child(3) {
     display: none;
+  }
+  .table.backups {
+    --cols: minmax(0, 1.2fr) minmax(0, 1fr) 96px 32px;
+  }
+  .table.backups :is(.t-head, .t-row) > :nth-child(3) {
+    display: none;
+  }
+  /* Buckets give up their variables; files their type. */
+  .table.buckets {
+    --cols: minmax(0, 1.4fr) minmax(0, 1fr) 80px 88px 32px;
+  }
+  .table.buckets :is(.t-head, .t-row) > :nth-child(3) {
+    display: none;
+  }
+  .table.all-buckets {
+    --cols: minmax(0, 1fr) minmax(0, 1fr) 80px 88px;
+  }
+  .table.all-buckets :is(.t-head, .t-row) > :nth-child(3) {
+    display: none;
+  }
+  .table.file-list {
+    --cols: minmax(0, 1fr) 80px 112px 32px;
+  }
+  .table.file-list :is(.t-head, .t-row) > :nth-child(3) {
+    display: none;
+  }
+  .files-head {
+    flex-wrap: wrap;
+  }
+  .form-row {
+    grid-template-columns: minmax(0, 1fr);
   }
   .db-browser {
     grid-template-columns: minmax(0, 1fr);

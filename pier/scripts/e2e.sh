@@ -18,6 +18,7 @@ PIERD_PID=
 
 cleanup() {
 	if [[ -n $PIERD_PID ]]; then kill "$PIERD_PID" 2>/dev/null || true; fi
+	if [[ -n ${CF_PID:-} ]]; then kill "$CF_PID" 2>/dev/null || true; fi
 	wait 2>/dev/null || true
 	if [[ ${BUILDER:-} == railpack-preview ]]; then
 		owner=pier-$(printf '%s' "$DATA" | shasum -a 256 | cut -c1-16)
@@ -28,6 +29,7 @@ cleanup() {
 		for n in $(docker network ls -q --filter "label=io.pier.instance=$owner"); do docker network rm "$n" >/dev/null 2>&1 || true; done
 		for v in $(docker volume ls -q --filter "label=io.pier.instance=$owner"); do docker volume rm "$v" >/dev/null 2>&1 || true; done
 	fi
+	if [[ -n ${R2:-} ]]; then docker rm -f "$R2" >/dev/null 2>&1 || true; fi
 	if [[ ${KEEP:-} == 1 ]]; then echo "kept $WORK"; else rm -rf "$WORK"; fi
 }
 trap cleanup EXIT
@@ -51,6 +53,20 @@ start_pierd() {
 	tail -20 "$WORK/pierd.log"
 	fail "pierd did not bring up the dashboard through embedded Caddy"
 }
+
+if [[ $BUILDER == railpack-preview ]]; then
+	# Storage talks to a stand-in for Cloudflare's API, and to an S3 server
+	# that checks every signature against the keys the stand-in hands out.
+	step "start a stand-in for Cloudflare and R2"
+	CF_PORT=17801 R2_PORT=17802 R2=pier-e2e-r2-$$
+	mkdir -p "$WORK/r2"
+	keys=(--auth-key "adminkey,$(printf admin-token | shasum -a 256 | cut -d' ' -f1)")
+	for i in $(seq 1 40); do keys+=(--auth-key "key$i,$(printf "value-$i" | shasum -a 256 | cut -d' ' -f1)"); done
+	docker run -d --name "$R2" -p "127.0.0.1:$R2_PORT:9000" -v "$WORK/r2:/data" rclone/rclone:1.69.1 serve s3 --addr :9000 --dir-cache-time 1s "${keys[@]}" /data >/dev/null
+	python3 "$ROOT/scripts/e2e-cloudflare.py" "$WORK/r2" "$CF_PORT" > "$WORK/cloudflare.log" 2>&1 &
+	CF_PID=$!
+	export PIER_TEST_CLOUDFLARE_API=http://127.0.0.1:$CF_PORT PIER_TEST_R2_ENDPOINT=http://127.0.0.1:$R2_PORT
+fi
 
 step "start pierd with embedded Caddy (builder: $BUILDER)"
 start_pierd
@@ -267,7 +283,7 @@ curl -fsS -b "$JAR" "$API/api/projects/greet/variables" | grep -q '"production":
 cd "$WORK"
 echo "variables are scoped, kept out of the log, and a redeploy picks up a change"
 
-if [[ $BUILDER == railpack-preview ]]; then source "$ROOT/scripts/e2e-apps.sh"; source "$ROOT/scripts/e2e-db.sh"; fi
+if [[ $BUILDER == railpack-preview ]]; then source "$ROOT/scripts/e2e-apps.sh"; source "$ROOT/scripts/e2e-db.sh"; source "$ROOT/scripts/e2e-storage.sh"; fi
 
 step "every request a site answers is in its Logs"
 for p in / /missing-page; do curl -s -o /dev/null --resolve "greet.$DOMAIN:$HTTP_PORT:127.0.0.1" "http://greet.$DOMAIN:$HTTP_PORT$p"; done

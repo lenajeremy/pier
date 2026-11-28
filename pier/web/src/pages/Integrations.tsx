@@ -1,10 +1,10 @@
-import { useMemo, useState, type FormEvent } from 'react'
-import { api } from '../lib/api'
+import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { api, type CloudflareView } from '../lib/api'
 import { failed } from '../lib/actions'
 import { useData, useNow } from '../lib/data'
 import { plural } from '../lib/format'
-import { Link } from '../lib/router'
-import { Check, Docs, GitHubMark, Trash, Visit, Warning } from '../components/Icons'
+import { Link, navigate } from '../lib/router'
+import { Check, ChevronRight, CloudflareMark, Docs, GitHubMark, Trash, Visit, Warning } from '../components/Icons'
 import { confirm } from '../components/Dialog'
 import { Menu } from '../components/Menu'
 import { Spinner, useBusy } from '../components/Spinner'
@@ -33,9 +33,77 @@ const permissions = [
 const message = (err: unknown) => (err instanceof Error ? err.message : "Can't reach pierd.")
 const PAGE = 20
 
-// Integrations is C1 to C3: connecting GitHub with the owner's own App, what
-// the connection looks like once it works, and builds waiting on the owner.
+// Integrations lists the outside services Pier works with, each with its
+// state; each opens its own page.
 export function Integrations() {
+  const gh = useData<Info>('/api/github', () => true, 30_000)
+  const catalog = useData<Catalog>(gh.data?.slug ? '/api/github/repositories' : null)
+  const cf = useData<CloudflareView>('/api/cloudflare', () => true, 60_000)
+  // GitHub sends the owner back here after installing an App made before
+  // GitHub got a page of its own.
+  useEffect(() => {
+    if (new URLSearchParams(location.search).has('installation_id')) navigate('/integrations/github' + location.search, true)
+  }, [])
+  const installs = catalog.data?.installations ?? []
+  const repos = catalog.data?.repositories ?? []
+  const waiting = gh.data?.jobs.length ?? 0
+  const buckets = cf.data?.buckets ?? []
+  const projects = new Set(buckets.map((b) => b.project)).size
+  const rows: { to: string; mark: React.ReactNode; name: string; note: string; summary: string; state: string; swatch: string }[] = [
+    {
+      to: '/integrations/github',
+      mark: <GitHubMark size={20} />,
+      name: 'GitHub',
+      note: 'Deploy every push and pull request.',
+      summary: !gh.data?.slug
+        ? ''
+        : installs.length
+          ? `${installs.map((i) => i.account.login).join(', ')}, ${plural(repos.length, 'repo')}` + (waiting ? `, ${waiting} waiting` : '')
+          : catalog.data
+            ? 'Not installed yet'
+            : '',
+      state: !gh.data ? '' : !gh.data.slug ? 'Not connected' : catalog.error ? "Can't reach GitHub" : installs.length ? 'Connected' : catalog.data ? 'Waiting for you' : 'Checking…',
+      swatch: gh.data?.slug && catalog.error ? 'failed' : installs.length ? (waiting ? 'warning' : 'ready') : '',
+    },
+    {
+      to: '/integrations/cloudflare',
+      mark: <CloudflareMark size={20} />,
+      name: 'Cloudflare R2',
+      note: 'File storage for your projects.',
+      summary: cf.data?.connected ? (buckets.length ? `${plural(buckets.length, 'bucket')} in ${plural(projects, 'project')}` : 'No buckets yet') : '',
+      state: !cf.data ? '' : cf.data.connected ? 'Connected' : 'Not connected',
+      swatch: cf.data?.connected ? 'ready' : '',
+    },
+  ]
+  return (
+    <main className="main global">
+      <PageHeading title="Integrations" note="The outside services Pier works with." />
+      {gh.error && <Problem>{gh.error.message}</Problem>}
+      <div className="table integrations">
+        {rows.map((r) => (
+          <Link key={r.to} to={r.to} className="t-row clickable integration-row">
+            <span className="integration-mark">{r.mark}</span>
+            <span className="integration-identity">
+              <span className="t-small t-strong">{r.name}</span>
+              <span className="t-caption t-muted">{r.note}</span>
+            </span>
+            <span className="t-caption t-muted integration-summary">{r.summary}</span>
+            <span className="integration-state t-caption">
+              {r.state === 'Checking…' ? <Spinner /> : r.state && <i className={'swatch ' + r.swatch} />}
+              {r.state}
+            </span>
+            <ChevronRight />
+          </Link>
+        ))}
+      </div>
+    </main>
+  )
+}
+
+// GitHubIntegration is GitHub's page (C1 to C3): connecting the owner's own
+// App, what the connection looks like once it works, builds waiting on the
+// owner, and the repos Pier can see.
+export function GitHubIntegration() {
   const { data, error, reload } = useData<Info>('/api/github', () => true, 10000)
   const catalog = useData<Catalog>(data?.slug ? '/api/github/repositories' : null)
   const activity = useData<Activity>(data?.slug ? '/api/github/activity' : null, () => true, 60000)
@@ -137,23 +205,9 @@ export function Integrations() {
 
   return (
     <main className="main global">
-      <PageHeading title="Integrations" note="The outside services Pier works with." />
-      {error && <Problem>{error.message}</Problem>}
-      {!data && !error && (
-        <div className="panel">
-          <Skeleton rows={3} tall />
-        </div>
-      )}
-      {data && (
-        <section className="panel" aria-label="GitHub">
-          <header className="integration-head">
-            <span className="integration-mark">
-              <GitHubMark size={22} />
-            </span>
-            <div className="integration-identity">
-              <h2 className="t-small t-strong">GitHub</h2>
-              <p className="t-caption t-muted">Import repos, and deploy every push and pull request.</p>
-            </div>
+      <IntegrationHeading name="GitHub" mark={<GitHubMark size={24} />} note="Import repos, and deploy every push and pull request.">
+        {data && (
+          <>
             <span className="integration-state t-caption">
               {data.slug && !catalog.data && !catalog.error ? (
                 <Spinner />
@@ -176,7 +230,17 @@ export function Integrations() {
                 items={[{ label: 'Disconnect', icon: <Trash />, danger: true, onSelect: disconnect }]}
               />
             )}
-          </header>
+          </>
+        )}
+      </IntegrationHeading>
+      {error && <Problem>{error.message}</Problem>}
+      {!data && !error && (
+        <div className="panel">
+          <Skeleton rows={3} tall />
+        </div>
+      )}
+      {data && (
+        <section className="panel" aria-label="GitHub">
           {data.slug && hook ? (
             <div className="strip" style={{ ['--cells' as string]: 4 }}>
               <div>
@@ -487,5 +551,27 @@ function Connect() {
         </Gate>
       </div>
     </form>
+  )
+}
+
+// IntegrationHeading is the top of an integration's page: the way back to
+// the list, its mark, name and what it does, and its state and actions.
+export function IntegrationHeading({ name, mark, note, children }: { name: string; mark: React.ReactNode; note: string; children?: React.ReactNode }) {
+  return (
+    <div className="stack">
+      <nav className="breadcrumb" aria-label="Breadcrumb">
+        <Link to="/integrations">Integrations</Link>
+        <ChevronRight />
+        <span style={{ color: 'var(--d-text)' }}>{name}</span>
+      </nav>
+      <header className="page-heading integration-heading">
+        <span className="integration-mark large">{mark}</span>
+        <div>
+          <h1 className="t-title">{name}</h1>
+          <p className="t-caption t-muted">{note}</p>
+        </div>
+        {children && <div className="page-actions">{children}</div>}
+      </header>
+    </div>
   )
 }

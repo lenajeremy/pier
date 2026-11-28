@@ -47,9 +47,24 @@ func (m *Manager) check(ctx context.Context) {
 	}
 	for _, d := range all {
 		m.keepUp(ctx, d)
-		if m.nightlyDue(ctx, d.Project) {
-			b, err := m.Backup(ctx, d.Project, store.BackupNightly, "")
-			m.reportBackup(ctx, d.Project, b, err)
+		m.upgrade(ctx, d.Project)
+		dbs, err := m.Store.ProjectDatabases(ctx, d.Project)
+		if err != nil {
+			continue
+		}
+		var failed error
+		did := false
+		for _, db := range dbs {
+			if !m.nightlyDue(ctx, d.Project, db.Name) {
+				continue
+			}
+			did = true
+			if _, err := m.Backup(ctx, d.Project, db.Name, store.BackupNightly, ""); err != nil && failed == nil {
+				failed = fmt.Errorf("%s: %w", db.Name, err)
+			}
+		}
+		if did {
+			m.reportBackup(ctx, d.Project, failed)
 		}
 	}
 	m.sweepDeleted()
@@ -134,16 +149,16 @@ func (m *Manager) startExisting(ctx context.Context, d store.Database) error {
 // nightlyDue reports whether a project's nightly backup for today is still
 // to be made: it's past NightlyAt, server time, and the last one was made
 // before then.
-func (m *Manager) nightlyDue(ctx context.Context, project string) bool {
+func (m *Manager) nightlyDue(ctx context.Context, project, database string) bool {
 	now := m.now()
 	at := time.Date(now.Year(), now.Month(), now.Day(), NightlyAt, 0, 0, 0, now.Location())
 	if now.Before(at) {
 		at = at.AddDate(0, 0, -1)
 	}
-	last, err := m.Store.LastBackup(ctx, project, store.BackupNightly)
+	last, err := m.Store.LastBackup(ctx, project, database, store.BackupNightly)
 	if errors.Is(err, store.ErrNotFound) {
 		// A new database's first nightly backup waits for the next night.
-		d, err := m.Store.Database(ctx, project)
+		d, err := m.Store.ProjectDatabase(ctx, project, database)
 		return err == nil && d.CreatedAt.Before(at)
 	}
 	if err != nil {
@@ -154,13 +169,21 @@ func (m *Manager) nightlyDue(ctx context.Context, project string) bool {
 	}
 	// A failed attempt waits an hour before the next.
 	all, err := m.Store.Backups(ctx, project)
-	if err == nil && len(all) > 0 && all[0].Reason == store.BackupNightly && all[0].State == store.BackupFailed && now.Sub(all[0].StartedAt) < time.Hour {
-		return false
+	if err == nil {
+		for _, b := range all { // newest first
+			if b.Database != database || b.Reason != store.BackupNightly {
+				continue
+			}
+			if b.State == store.BackupFailed && now.Sub(b.StartedAt) < time.Hour {
+				return false
+			}
+			break
+		}
 	}
 	return true
 }
 
-func (m *Manager) reportBackup(ctx context.Context, project string, b store.Backup, err error) {
+func (m *Manager) reportBackup(ctx context.Context, project string, err error) {
 	if m.Alerts == nil {
 		return
 	}
@@ -190,4 +213,40 @@ func (m *Manager) sweepDeleted() {
 		}
 		os.RemoveAll(filepath.Join(dir, e.Name()))
 	}
+}
+
+// upgrade finishes moving a server made before servers held several
+// databases: its previews had one database per branch, which are kept but
+// serve nothing now, so previews get one shared database, once.
+func (m *Manager) upgrade(ctx context.Context, project string) {
+	key := "database_preview_pending:" + project
+	if v, err := m.Store.Setting(ctx, key); err != nil || v == "" {
+		return
+	}
+	if st, err := m.Host.PostgresState(ctx, project); err != nil || st.State != "running" {
+		return
+	}
+	err := m.withLock(project, func() error {
+		all, err := m.Store.ProjectDatabases(ctx, project)
+		if err != nil {
+			return err
+		}
+		for _, d := range all {
+			if d.Serves(store.TargetPreview) {
+				return nil
+			}
+		}
+		name := previewName
+		for _, d := range all {
+			if d.Name == name {
+				name = "previews"
+			}
+		}
+		return m.add(ctx, project, store.ProjectDatabase{Name: name, Environments: []string{store.TargetPreview}, Variable: DefaultVariable}, "")
+	})
+	if err != nil {
+		m.Log.Warn("give previews a database", "project", project, "err", err)
+		return
+	}
+	m.Store.SetSetting(ctx, key, "")
 }

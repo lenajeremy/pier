@@ -60,42 +60,45 @@ func TestNightlyIsDueOncePastThreeAndNotYetMade(t *testing.T) {
 	if err := st.CreateDatabase(ctx, store.Database{Project: project, Image: Image, MemoryMB: 256, CreatedAt: created}); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := st.AddProjectDatabase(ctx, store.ProjectDatabase{Project: project, Name: "production", Environments: []string{store.TargetProduction}, Variable: DefaultVariable, CreatedAt: created}); err != nil {
+		t.Fatal(err)
+	}
 	at := func(s string) {
 		t.Helper()
 		now, _ := time.ParseInLocation("2006-01-02 15:04", s, loc)
 		m.Now = func() time.Time { return now }
 	}
 	at("2026-11-20 23:00")
-	if m.nightlyDue(ctx, project) {
+	if m.nightlyDue(ctx, project, "production") {
 		t.Fatal("a database made today was due before its first night")
 	}
 	at("2026-11-21 02:59")
-	if m.nightlyDue(ctx, project) {
+	if m.nightlyDue(ctx, project, "production") {
 		t.Fatal("due before three")
 	}
 	at("2026-11-21 03:01")
-	if !m.nightlyDue(ctx, project) {
+	if !m.nightlyDue(ctx, project, "production") {
 		t.Fatal("not due after three")
 	}
-	id, _ := st.StartBackup(ctx, store.Backup{Project: project, Reason: store.BackupNightly, StartedAt: m.now()})
+	id, _ := st.StartBackup(ctx, store.Backup{Project: project, Database: "production", Reason: store.BackupNightly, StartedAt: m.now()})
 	st.FinishBackup(ctx, store.Backup{ID: id, State: store.BackupDone, File: "x.dump", FinishedAt: m.now()})
 	at("2026-11-21 14:00")
-	if m.nightlyDue(ctx, project) {
+	if m.nightlyDue(ctx, project, "production") {
 		t.Fatal("due again the same day")
 	}
 	at("2026-11-22 03:30")
-	if !m.nightlyDue(ctx, project) {
+	if !m.nightlyDue(ctx, project, "production") {
 		t.Fatal("not due the next night")
 	}
 	// A failure waits an hour.
-	id, _ = st.StartBackup(ctx, store.Backup{Project: project, Reason: store.BackupNightly, StartedAt: m.now()})
+	id, _ = st.StartBackup(ctx, store.Backup{Project: project, Database: "production", Reason: store.BackupNightly, StartedAt: m.now()})
 	st.FinishBackup(ctx, store.Backup{ID: id, State: store.BackupFailed, FinishedAt: m.now()})
 	at("2026-11-22 04:00")
-	if m.nightlyDue(ctx, project) {
+	if m.nightlyDue(ctx, project, "production") {
 		t.Fatal("tried again within the hour")
 	}
 	at("2026-11-22 04:31")
-	if !m.nightlyDue(ctx, project) {
+	if !m.nightlyDue(ctx, project, "production") {
 		t.Fatal("didn't try again after the hour")
 	}
 }
@@ -116,6 +119,20 @@ func newManager(t *testing.T, host *apphost.Host) (*Manager, *store.Store, strin
 		Log: slog.New(slog.NewTextHandler(io.Discard, nil))}, st, dir
 }
 
+// vars reads a deployment's variables into a map.
+func vars(t *testing.T, env []string, err error) map[string]string {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]string{}
+	for _, kv := range env {
+		k, v, _ := strings.Cut(kv, "=")
+		out[k] = v
+	}
+	return out
+}
+
 // TestPostgresLifecycle runs a real server in Docker: PIER_TEST_DOCKER=1.
 func TestPostgresLifecycle(t *testing.T) {
 	if os.Getenv("PIER_TEST_DOCKER") == "" {
@@ -134,11 +151,12 @@ func TestPostgresLifecycle(t *testing.T) {
 		t.Fatal("create:", err)
 	}
 	if err := m.Create(ctx, project, 128, "Ada"); err == nil {
-		t.Fatal("a second database was made")
+		t.Fatal("a second server was made")
 	}
-	prod, network, err := m.For(ctx, project, store.TargetProduction, "")
-	if err != nil || !strings.HasPrefix(prod, "postgres://app:") || !strings.HasSuffix(prod, "@postgres:5432/app?sslmode=disable") {
-		t.Fatalf("production url %q, %v", prod, err)
+	env, network, err := m.For(ctx, project, store.TargetProduction)
+	prod := vars(t, env, err)["DATABASE_URL"]
+	if !strings.HasPrefix(prod, "postgres://production:") || !strings.HasSuffix(prod, "@postgres:5432/production?sslmode=disable") || len(env) != 1 {
+		t.Fatalf("production's variables %v", env)
 	}
 	if network != host.ProjectNetwork(project) {
 		t.Fatalf("network %q", network)
@@ -153,12 +171,13 @@ func TestPostgresLifecycle(t *testing.T) {
 	if out, err := app(prod, `CREATE TABLE orders (id serial PRIMARY KEY, note text); INSERT INTO orders(note) VALUES ('first')`); err != nil {
 		t.Fatal(out)
 	}
-	// The dashboard reads it through pierd's loopback port.
+	// The dashboard reads it through pierd's loopback port; no name is
+	// production's.
 	tables, err := m.Tables(ctx, project, "")
 	if err != nil || len(tables) != 1 || tables[0].Name != "orders" || tables[0].Rows != 1 {
 		t.Fatalf("tables %+v %v", tables, err)
 	}
-	page, err := m.Rows(ctx, project, "", "public", "orders", "note", true, "", 0, 50)
+	page, err := m.Rows(ctx, project, "production", "public", "orders", "note", true, "", 0, 50)
 	if err != nil || len(page.Rows) != 1 || *page.Rows[0][1] != "first" || page.Columns[0].Type != "int4" || len(page.Key) != 1 {
 		t.Fatalf("rows %+v %v", page, err)
 	}
@@ -184,9 +203,6 @@ func TestPostgresLifecycle(t *testing.T) {
 	if _, err := m.Rows(ctx, project, "", "public", "orders", "", false, "true; COMMIT; DROP TABLE orders", 0, 50); err == nil {
 		t.Fatal("a filter ran a second statement")
 	}
-	if _, err := m.Rows(ctx, project, "", "public", "orders", "", false, "true) UNION SELECT 1, (SELECT 'x'", 0, 50); err == nil {
-		t.Log("a filter that closes the bracket only reads, in a read-only transaction")
-	}
 	if page, err := m.Rows(ctx, project, "", "public", "orders", "", false, "note = 'first'", 0, 50); err != nil || page.Count != 1 {
 		t.Fatalf("filter: %+v %v", page, err)
 	}
@@ -202,38 +218,83 @@ func TestPostgresLifecycle(t *testing.T) {
 		t.Fatalf("reached the database from outside its network: %s", out)
 	}
 
-	preview, _, err := m.For(ctx, project, store.TargetPreview, "feature/login")
-	if err != nil || !strings.Contains(preview, "preview_") {
-		t.Fatalf("preview url %q, %v", preview, err)
-	}
-	again, _, _ := m.For(ctx, project, store.TargetPreview, "feature/login")
-	if again != preview {
-		t.Fatal("the same branch got a second preview database")
+	// Previews share one empty database of their own.
+	env, _, err = m.For(ctx, project, store.TargetPreview)
+	preview := vars(t, env, err)["DATABASE_URL"]
+	if !strings.Contains(preview, "/preview?") {
+		t.Fatalf("preview url %q", preview)
 	}
 	if out, err := app(preview, `SELECT count(*) FROM pg_tables WHERE schemaname = 'public'`); err != nil || out != "0" {
 		t.Fatalf("the preview database isn't empty: %s %v", out, err)
 	}
 	// A preview's role can't reach production's data.
-	role := strings.TrimPrefix(strings.SplitN(preview, ":", 3)[1], "//")
-	cross := strings.Replace(preview, "/"+role+"?", "/app?", 1)
+	cross := strings.Replace(preview, "/preview?", "/production?", 1)
 	if out, err := app(cross, `SELECT count(*) FROM orders`); err == nil {
 		t.Fatalf("a preview's role read production: %s", out)
 	}
 
+	forVars := func(target string) map[string]string {
+		t.Helper()
+		e, _, err := m.For(ctx, project, target)
+		return vars(t, e, err)
+	}
+	// A second database, given to production under its own variable.
+	if err := m.AddDatabase(ctx, project, Spec{Name: "analytics", Environments: []string{store.TargetProduction}}, "Ada"); err == nil {
+		t.Fatal("two databases gave production DATABASE_URL")
+	}
+	if err := m.AddDatabase(ctx, project, Spec{Name: "Bad name"}, "Ada"); err == nil {
+		t.Fatal("a bad name was taken")
+	}
+	if err := m.AddDatabase(ctx, project, Spec{Name: "analytics", Environments: []string{store.TargetProduction}, Variable: "analytics_url"}, "Ada"); err != nil {
+		t.Fatal(err)
+	}
+	pv := forVars(store.TargetProduction)
+	if !strings.Contains(pv["ANALYTICS_URL"], "/analytics?") || pv["DATABASE_URL"] != prod {
+		t.Fatalf("production's variables with two databases %v", pv)
+	}
+	// Previews can be moved onto production's database, and back.
+	if err := m.LinkDatabase(ctx, project, "production", []string{store.TargetProduction, store.TargetPreview}, "", "Ada"); err == nil {
+		t.Fatal("two databases gave previews DATABASE_URL")
+	}
+
 	st1, err := m.Status(ctx, project)
-	if err != nil || st1.Container.State != "running" || st1.DataBytes == 0 || st1.DiskBytes == 0 || len(st1.Previews) != 1 {
+	if err != nil || st1.Container.State != "running" || st1.DataBytes == 0 || st1.DiskBytes == 0 || len(st1.Databases) != 3 || st1.Databases[0].Bytes == 0 {
 		t.Fatalf("status %+v %v", st1, err)
 	}
 	t.Logf("memory %d KB of %d MB, data %d KB, disk %d KB", st1.Container.MemoryBytes>>10, st1.Container.LimitBytes>>20, st1.DataBytes>>10, st1.DiskBytes>>10)
 
-	b, err := m.Backup(ctx, project, store.BackupManual, "Ada")
-	if err != nil || b.Bytes == 0 {
-		t.Fatalf("backup %+v %v", b, err)
+	// An external URL reaches production through the TLS port, acts as
+	// production's role, and stops working when it's revoked.
+	m.External = "db.example.test:5432"
+	e, ext, err := m.CreateExternal(ctx, project, "production", "Ada")
+	if err != nil || !strings.HasPrefix(ext, "postgres://ext_") || !strings.HasSuffix(ext, "@db.example.test:5432/production?sslmode=require") {
+		t.Fatalf("external url %q %v", ext, err)
+	}
+	if _, _, err := m.CreateExternal(ctx, project, "production", "Ada"); err == nil {
+		t.Fatal("a database got a second external URL")
+	}
+	proxied := externalThroughProxy(t, m, ext)
+	if out := proxied(`SELECT count(*) FROM orders`); out != "1" {
+		t.Fatalf("through the external url: %q", out)
+	}
+	if out := proxied(`CREATE TABLE from_outside (x int); SELECT tableowner FROM pg_tables WHERE tablename = 'from_outside'`); out != "production" {
+		t.Fatalf("a table made through the external url belongs to %q", out)
+	}
+	if err := m.RevokeExternal(ctx, project, e.Role, "Ada"); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := tryProxied(t, m, ext, `SELECT 1`); err == nil {
+		t.Fatalf("a revoked url still connects: %s", out)
+	}
+
+	all, err := m.BackupAll(ctx, project, store.BackupManual, "Ada")
+	if err != nil || len(all) != 3 || all[0].Database != "production" || all[0].Bytes == 0 {
+		t.Fatalf("backups %+v %v", all, err)
 	}
 	if _, err := app(prod, `INSERT INTO orders(note) VALUES ('after the backup'); CREATE TABLE later (x int)`); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.Restore(ctx, project, b.ID, "Ada"); err != nil {
+	if err := m.Restore(ctx, project, all[0].ID, "Ada"); err != nil {
 		t.Fatal("restore:", err)
 	}
 	if out, err := app(prod, `SELECT string_agg(note, ',') FROM orders`); err != nil || out != "first" {
@@ -242,9 +303,9 @@ func TestPostgresLifecycle(t *testing.T) {
 	if out, _ := app(prod, `SELECT count(*) FROM pg_tables WHERE tablename = 'later'`); out != "0" {
 		t.Fatal("a table made after the backup survived the restore")
 	}
-	all, _ := st.Backups(ctx, project)
-	if len(all) != 2 || all[0].Reason != store.BackupBeforeRestore {
-		t.Fatalf("backups %+v", all)
+	list, _ := st.Backups(ctx, project)
+	if len(list) != 4 || list[0].Reason != store.BackupBeforeRestore || list[0].Database != "production" {
+		t.Fatalf("backups %+v", list)
 	}
 
 	if err := m.SetMemory(ctx, project, 256, "Ada"); err != nil {
@@ -257,11 +318,27 @@ func TestPostgresLifecycle(t *testing.T) {
 		t.Fatal("resizing lost data")
 	}
 
-	if err := m.DropPreview(ctx, project, "feature/login"); err != nil {
+	// Deleting a database keeps a last backup of it.
+	analytics := forVars(store.TargetProduction)["ANALYTICS_URL"]
+	if err := m.DropDatabase(ctx, project, "analytics", "Ada"); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := app(preview, `SELECT 1`); err == nil {
-		t.Fatalf("the dropped preview database still answers: %s", out)
+	if out, err := app(analytics, `SELECT 1`); err == nil {
+		t.Fatalf("the dropped database still answers: %s", out)
+	}
+	if list, _ := st.Backups(ctx, project); list[0].Database != "analytics" || list[0].Reason != store.BackupBeforeDelete {
+		t.Fatalf("no last backup of analytics: %+v", list[0])
+	}
+
+	// A server from before several databases gets previews a database of
+	// their own, once.
+	if err := m.LinkDatabase(ctx, project, "preview", nil, "", "Ada"); err != nil {
+		t.Fatal(err)
+	}
+	st.SetSetting(ctx, "database_preview_pending:"+project, "1")
+	m.upgrade(ctx, project)
+	if pv := forVars(store.TargetPreview); !strings.Contains(pv["DATABASE_URL"], "/previews?") {
+		t.Fatalf("after the upgrade, previews get %v", pv)
 	}
 
 	if err := m.Delete(ctx, project, "Ada"); err != nil {
@@ -270,11 +347,11 @@ func TestPostgresLifecycle(t *testing.T) {
 	if s, _ := host.PostgresState(ctx, project); s.State != "missing" {
 		t.Fatalf("still there: %+v", s)
 	}
-	all, _ = st.Backups(ctx, project)
-	if len(all) == 0 || all[0].Reason != store.BackupBeforeDelete {
-		t.Fatalf("no last backup: %+v", all)
+	list, _ = st.Backups(ctx, project)
+	if len(list) == 0 || list[0].Reason != store.BackupBeforeDelete {
+		t.Fatalf("no last backup: %+v", list)
 	}
-	if _, err := os.Stat(m.BackupPath(all[0])); err != nil {
+	if _, err := os.Stat(m.BackupPath(list[0])); err != nil {
 		t.Fatal(err)
 	}
 }

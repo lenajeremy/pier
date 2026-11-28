@@ -97,13 +97,6 @@ func (a *API) retirePreview(ctx context.Context, j *store.GitHubJob) error {
 		}
 		a.event(ctx, j.Project, "Retired preview", host, "")
 	}
-	// The branch's preview database goes with it; a new branch of the same
-	// name starts from an empty one.
-	if a.Databases != nil {
-		if err := a.Databases.DropPreview(ctx, j.Project, previewBranch(*j)); err != nil {
-			a.Log.Warn("remove a retired preview's database", "project", j.Project, "err", err)
-		}
-	}
 	return a.Store.SaveGitHubJob(ctx, j.ID, "done", "", "")
 }
 

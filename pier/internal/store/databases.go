@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -18,14 +19,39 @@ type Database struct {
 	CreatedBy     string    `json:"created_by,omitempty"`
 }
 
-// PreviewDatabase is the empty database a project's previews of one branch
-// use, on the project's server. Name is the database's and its role's.
-type PreviewDatabase struct {
-	Project   string    `json:"-"`
-	Branch    string    `json:"branch"`
-	Name      string    `json:"name"`
+// ProjectDatabase is one database on a project's server: the environments
+// it serves and the variable they get it as. Name is the database's and its
+// role's. Password is sealed.
+type ProjectDatabase struct {
+	ID           int64     `json:"id"`
+	Project      string    `json:"project"`
+	Name         string    `json:"name"`
+	Environments []string  `json:"environments"`
+	Variable     string    `json:"variable"`
+	Password     string    `json:"-"`
+	CreatedAt    time.Time `json:"created_at"`
+	CreatedBy    string    `json:"created_by,omitempty"`
+}
+
+// Serves reports whether the database is linked to a target.
+func (d ProjectDatabase) Serves(target string) bool {
+	for _, e := range d.Environments {
+		if e == target {
+			return true
+		}
+	}
+	return false
+}
+
+// External is a role that reaches one database from outside Pier, through
+// pierd's TLS port. Password is sealed.
+type External struct {
+	Role      string    `json:"role"`
+	Project   string    `json:"project"`
+	Database  string    `json:"database"`
 	Password  string    `json:"-"`
 	CreatedAt time.Time `json:"created_at"`
+	CreatedBy string    `json:"created_by,omitempty"`
 }
 
 // Why a backup was made.
@@ -43,10 +69,11 @@ const (
 	BackupFailed  = "failed"
 )
 
-// Backup is one pg_dump of a project's production database.
+// Backup is one pg_dump of one of a project's databases.
 type Backup struct {
 	ID         int64     `json:"id"`
 	Project    string    `json:"project"`
+	Database   string    `json:"database"`
 	Reason     string    `json:"reason"`
 	MadeBy     string    `json:"made_by,omitempty"`
 	State      string    `json:"state"`
@@ -124,7 +151,7 @@ func (s *Store) SetDatabaseMemory(ctx context.Context, project string, mb int) e
 	return nil
 }
 
-// DeleteDatabase forgets a project's database and its preview databases.
+// DeleteDatabase forgets a project's server, its databases and its external URLs.
 // Its backups stay listed while the project does.
 func (s *Store) DeleteDatabase(ctx context.Context, project string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -132,8 +159,10 @@ func (s *Store) DeleteDatabase(ctx context.Context, project string) error {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `DELETE FROM preview_databases WHERE project = ?`, project); err != nil {
-		return err
+	for _, q := range []string{`DELETE FROM project_databases WHERE project = ?`, `DELETE FROM database_externals WHERE project = ?`} {
+		if _, err := tx.ExecContext(ctx, q, project); err != nil {
+			return err
+		}
 	}
 	res, err := tx.ExecContext(ctx, `DELETE FROM databases WHERE project = ?`, project)
 	if err != nil {
@@ -145,58 +174,133 @@ func (s *Store) DeleteDatabase(ctx context.Context, project string) error {
 	return tx.Commit()
 }
 
-// PreviewDatabase is the database a branch's previews use, or ErrNotFound.
-func (s *Store) PreviewDatabase(ctx context.Context, project, branch string) (PreviewDatabase, error) {
-	var p PreviewDatabase
+const projectDatabaseCols = `id, project, name, environments, variable, password, created_at, created_by`
+
+func scanProjectDatabase(sc interface{ Scan(...any) error }) (ProjectDatabase, error) {
+	var d ProjectDatabase
 	var created int64
-	err := s.db.QueryRowContext(ctx, `SELECT project, branch, name, password, created_at FROM preview_databases WHERE project = ? AND branch = ?`,
-		project, branch).Scan(&p.Project, &p.Branch, &p.Name, &p.Password, &created)
-	if errors.Is(err, sql.ErrNoRows) {
-		return p, ErrNotFound
-	}
-	p.CreatedAt = time.UnixMilli(created)
-	return p, err
+	var envs string
+	err := sc.Scan(&d.ID, &d.Project, &d.Name, &envs, &d.Variable, &d.Password, &created, &d.CreatedBy)
+	d.CreatedAt = time.UnixMilli(created)
+	d.Environments = splitEnvironments(envs)
+	return d, err
 }
 
-// PreviewDatabases lists a project's preview databases, newest first.
-func (s *Store) PreviewDatabases(ctx context.Context, project string) ([]PreviewDatabase, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT project, branch, name, password, created_at FROM preview_databases WHERE project = ? ORDER BY created_at DESC`, project)
+// AddProjectDatabase records a database on a project's server.
+func (s *Store) AddProjectDatabase(ctx context.Context, d ProjectDatabase) (int64, error) {
+	res, err := s.db.ExecContext(ctx, `INSERT INTO project_databases(project, name, environments, variable, password, created_at, created_by) VALUES(?,?,?,?,?,?,?)`,
+		d.Project, d.Name, strings.Join(d.Environments, ","), d.Variable, d.Password, d.CreatedAt.UnixMilli(), d.CreatedBy)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+// ProjectDatabase is one of a project's databases by name, or ErrNotFound.
+func (s *Store) ProjectDatabase(ctx context.Context, project, name string) (ProjectDatabase, error) {
+	d, err := scanProjectDatabase(s.db.QueryRowContext(ctx, `SELECT `+projectDatabaseCols+` FROM project_databases WHERE project = ? AND name = ?`, project, name))
+	if errors.Is(err, sql.ErrNoRows) {
+		return d, ErrNotFound
+	}
+	return d, err
+}
+
+// ProjectDatabases lists the databases on a project's server, oldest first.
+func (s *Store) ProjectDatabases(ctx context.Context, project string) ([]ProjectDatabase, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+projectDatabaseCols+` FROM project_databases WHERE project = ? ORDER BY id`, project)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []PreviewDatabase
+	out := []ProjectDatabase{}
 	for rows.Next() {
-		var p PreviewDatabase
-		var created int64
-		if err := rows.Scan(&p.Project, &p.Branch, &p.Name, &p.Password, &created); err != nil {
+		d, err := scanProjectDatabase(rows)
+		if err != nil {
 			return nil, err
 		}
-		p.CreatedAt = time.UnixMilli(created)
-		out = append(out, p)
+		out = append(out, d)
 	}
 	return out, rows.Err()
 }
 
-// AddPreviewDatabase records a branch's preview database.
-func (s *Store) AddPreviewDatabase(ctx context.Context, p PreviewDatabase) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO preview_databases(project, branch, name, password, created_at) VALUES(?,?,?,?,?)`,
-		p.Project, p.Branch, p.Name, p.Password, p.CreatedAt.UnixMilli())
+// LinkProjectDatabase sets which environments a database serves and the
+// variable they get it as.
+func (s *Store) LinkProjectDatabase(ctx context.Context, project, name string, environments []string, variable string) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE project_databases SET environments = ?, variable = ? WHERE project = ? AND name = ?`,
+		strings.Join(environments, ","), variable, project, name)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// DeleteProjectDatabase forgets one of a project's databases and its
+// external URLs.
+func (s *Store) DeleteProjectDatabase(ctx context.Context, project, name string) error {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM database_externals WHERE project = ? AND database = ?`, project, name); err != nil {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, `DELETE FROM project_databases WHERE project = ? AND name = ?`, project, name)
 	return err
 }
 
-// DeletePreviewDatabase forgets a branch's preview database.
-func (s *Store) DeletePreviewDatabase(ctx context.Context, project, branch string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM preview_databases WHERE project = ? AND branch = ?`, project, branch)
+// AddExternal records an external URL's role.
+func (s *Store) AddExternal(ctx context.Context, e External) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO database_externals(role, project, database, password, created_at, created_by) VALUES(?,?,?,?,?,?)`,
+		e.Role, e.Project, e.Database, e.Password, e.CreatedAt.UnixMilli(), e.CreatedBy)
 	return err
 }
 
-const backupCols = `id, project, reason, made_by, state, file, bytes, error, started_at, finished_at, offsite`
+func scanExternal(sc interface{ Scan(...any) error }) (External, error) {
+	var e External
+	var created int64
+	err := sc.Scan(&e.Role, &e.Project, &e.Database, &e.Password, &created, &e.CreatedBy)
+	e.CreatedAt = time.UnixMilli(created)
+	return e, err
+}
+
+// External is an external URL's role, or ErrNotFound.
+func (s *Store) External(ctx context.Context, role string) (External, error) {
+	e, err := scanExternal(s.db.QueryRowContext(ctx, `SELECT role, project, database, password, created_at, created_by FROM database_externals WHERE role = ?`, role))
+	if errors.Is(err, sql.ErrNoRows) {
+		return e, ErrNotFound
+	}
+	return e, err
+}
+
+// Externals lists a project's external URLs, oldest first.
+func (s *Store) Externals(ctx context.Context, project string) ([]External, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT role, project, database, password, created_at, created_by FROM database_externals WHERE project = ? ORDER BY created_at`, project)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []External{}
+	for rows.Next() {
+		e, err := scanExternal(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// DeleteExternal forgets an external URL's role.
+func (s *Store) DeleteExternal(ctx context.Context, project, role string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM database_externals WHERE project = ? AND role = ?`, project, role)
+	return err
+}
+
+const backupCols = `id, project, database, reason, made_by, state, file, bytes, error, started_at, finished_at, offsite`
 
 func scanBackup(sc interface{ Scan(...any) error }) (Backup, error) {
 	var b Backup
 	var started, finished int64
-	err := sc.Scan(&b.ID, &b.Project, &b.Reason, &b.MadeBy, &b.State, &b.File, &b.Bytes, &b.Error, &started, &finished, &b.Offsite)
+	err := sc.Scan(&b.ID, &b.Project, &b.Database, &b.Reason, &b.MadeBy, &b.State, &b.File, &b.Bytes, &b.Error, &started, &finished, &b.Offsite)
 	b.StartedAt = time.UnixMilli(started)
 	if finished > 0 {
 		b.FinishedAt = time.UnixMilli(finished)
@@ -223,8 +327,8 @@ func (s *Store) queryBackups(ctx context.Context, q string, args ...any) ([]Back
 
 // StartBackup records a backup that has begun.
 func (s *Store) StartBackup(ctx context.Context, b Backup) (int64, error) {
-	res, err := s.db.ExecContext(ctx, `INSERT INTO database_backups(project, reason, made_by, state, started_at) VALUES(?,?,?,?,?)`,
-		b.Project, b.Reason, b.MadeBy, BackupRunning, b.StartedAt.UnixMilli())
+	res, err := s.db.ExecContext(ctx, `INSERT INTO database_backups(project, database, reason, made_by, state, started_at) VALUES(?,?,?,?,?,?)`,
+		b.Project, b.Database, b.Reason, b.MadeBy, BackupRunning, b.StartedAt.UnixMilli())
 	if err != nil {
 		return 0, err
 	}
@@ -258,11 +362,11 @@ func (s *Store) BackupByID(ctx context.Context, project string, id int64) (Backu
 	return b, err
 }
 
-// LastBackup is a project's newest finished backup made for reason, or
-// ErrNotFound.
-func (s *Store) LastBackup(ctx context.Context, project, reason string) (Backup, error) {
+// LastBackup is the newest finished backup of one of a project's
+// databases made for reason, or ErrNotFound.
+func (s *Store) LastBackup(ctx context.Context, project, database, reason string) (Backup, error) {
 	b, err := scanBackup(s.db.QueryRowContext(ctx, `SELECT `+backupCols+` FROM database_backups
-		WHERE project = ? AND reason = ? AND state = ? ORDER BY id DESC LIMIT 1`, project, reason, BackupDone))
+		WHERE project = ? AND database = ? AND reason = ? AND state = ? ORDER BY id DESC LIMIT 1`, project, database, reason, BackupDone))
 	if errors.Is(err, sql.ErrNoRows) {
 		return b, ErrNotFound
 	}

@@ -157,10 +157,12 @@ func commandReferenceGroups() []commandGroup {
 			{"pier logs --once | --follow", "Choose a snapshot or continuous output"},
 		}},
 		{"Database", [][2]string{
-			{"pier db [PROJECT]", "How the project's Postgres database is doing"},
-			{"pier db create [PROJECT]", "Give the project a Postgres database"},
-			{"pier db tunnel [PROJECT]", "Reach it from this computer, with its DATABASE_URL"},
-			{"pier db psql [PROJECT]", "Open psql on it"},
+			{"pier db [PROJECT]", "The project's Postgres and its databases"},
+			{"pier db create [PROJECT]", "Give the project Postgres"},
+			{"pier db add NAME [PROJECT]", "Add a database, linked to the environments you say"},
+			{"pier db external [PROJECT]", "Make a URL for a service outside Pier"},
+			{"pier db tunnel [PROJECT]", "Reach a database from this computer"},
+			{"pier db psql [PROJECT]", "Open psql on a database"},
 		}},
 		{"Jobs", [][2]string{
 			{"pier jobs [PROJECT]", "A project's scheduled jobs and their last runs"},

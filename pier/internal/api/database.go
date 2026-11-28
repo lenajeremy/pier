@@ -29,8 +29,13 @@ type databaseView struct {
 	Image         string           `json:"image"`
 	// Production is what production serves now, if it's a server app.
 	Production *databaseProduction `json:"production"`
-	NightlyAt  int                 `json:"nightly_at"` // the hour, server time
-	Timezone   string              `json:"timezone"`
+	// Externals are the project's external URLs, without their passwords,
+	// and External the address they connect to; empty when this server
+	// makes none.
+	Externals []database.ExternalView `json:"externals"`
+	External  string                  `json:"external"`
+	NightlyAt int                     `json:"nightly_at"` // the hour, server time
+	Timezone  string                  `json:"timezone"`
 }
 
 type databaseProduction struct {
@@ -75,8 +80,12 @@ func (a *API) databaseError(w http.ResponseWriter, err error) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "This project has no database."})
 	case errors.Is(err, store.ErrExists):
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "This project has a database already."})
+	case errors.Is(err, database.ErrNoDatabase):
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "There's no database by that name."})
+	case errors.Is(err, database.ErrNoExternals):
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "This server doesn't make external URLs. Start pierd with -postgres to turn them on."})
 	case errors.Is(err, store.ErrNotFound):
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "There's no such backup."})
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "There's no such backup or URL."})
 	default:
 		a.Log.Warn("database", "err", err)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": sentenceOf(err)})
@@ -108,11 +117,16 @@ func (a *API) getDatabase(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err == nil {
-		if st.Previews == nil {
-			st.Previews = []database.PreviewStatus{}
-		}
 		v.Database = &st
+		if v.Externals, err = a.Databases.Externals(r.Context(), project); err != nil {
+			a.fail(w, err)
+			return
+		}
 	}
+	if v.Externals == nil {
+		v.Externals = []database.ExternalView{}
+	}
+	v.External = a.Databases.External
 	if v.Backups, err = a.Store.Backups(r.Context(), project); err != nil {
 		a.fail(w, err)
 		return
@@ -265,13 +279,17 @@ func (a *API) backUpDatabase(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	by := userFrom(r.Context()).DisplayName()
-	b, err := a.Databases.Backup(ctx, project, store.BackupManual, by)
+	all, err := a.Databases.BackupAll(ctx, project, store.BackupManual, by)
 	if err != nil {
 		a.databaseError(w, err)
 		return
 	}
-	a.event(r.Context(), project, "Backed up the database", size(b.Bytes), "")
-	writeJSON(w, http.StatusCreated, b)
+	var total int64
+	for _, b := range all {
+		total += b.Bytes
+	}
+	a.event(r.Context(), project, "Backed up the databases", size(total), "")
+	writeJSON(w, http.StatusCreated, map[string]any{"backups": all, "bytes": total})
 }
 
 func (a *API) backupFrom(w http.ResponseWriter, r *http.Request) (store.Backup, bool) {
@@ -329,37 +347,118 @@ func (a *API) restoreBackup(w http.ResponseWriter, r *http.Request) {
 	a.getDatabase(w, r)
 }
 
-// deletePreviewDatabase removes one branch's preview database; the branch's
-// next preview gets a new, empty one.
-func (a *API) deletePreviewDatabase(w http.ResponseWriter, r *http.Request) {
+func readSpec(w http.ResponseWriter, r *http.Request) (database.Spec, bool) {
+	var spec database.Spec
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&spec) != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "that isn't JSON"})
+		return spec, false
+	}
+	return spec, true
+}
+
+// specError answers for a database name or variable that can't be used,
+// naming the field.
+func (a *API) specError(w http.ResponseWriter, err error) {
+	msg := err.Error()
+	switch {
+	case errors.Is(err, database.ErrNone), errors.Is(err, database.ErrNoDatabase):
+		a.databaseError(w, err)
+	case strings.Contains(msg, "variable"):
+		fieldError(w, "variable", sentenceOf(err))
+	case strings.Contains(msg, "name") || strings.Contains(msg, "called"):
+		fieldError(w, "name", sentenceOf(err))
+	default:
+		a.databaseError(w, err)
+	}
+}
+
+func (a *API) addProjectDatabase(w http.ResponseWriter, r *http.Request) {
 	project, ok := a.databaseProject(w, r)
 	if !ok {
 		return
 	}
-	previews, err := a.Store.PreviewDatabases(r.Context(), project)
+	spec, ok := readSpec(w, r)
+	if !ok {
+		return
+	}
+	ctx, cancel := work(r)
+	defer cancel()
+	if err := a.Databases.AddDatabase(ctx, project, spec, userFrom(r.Context()).DisplayName()); err != nil {
+		a.specError(w, err)
+		return
+	}
+	a.getDatabase(w, r)
+}
+
+func (a *API) linkProjectDatabase(w http.ResponseWriter, r *http.Request) {
+	project, ok := a.databaseProject(w, r)
+	if !ok {
+		return
+	}
+	spec, ok := readSpec(w, r)
+	if !ok {
+		return
+	}
+	if err := a.Databases.LinkDatabase(r.Context(), project, r.PathValue("name"), spec.Environments, spec.Variable, userFrom(r.Context()).DisplayName()); err != nil {
+		a.specError(w, err)
+		return
+	}
+	a.getDatabase(w, r)
+}
+
+func (a *API) dropProjectDatabase(w http.ResponseWriter, r *http.Request) {
+	project, ok := a.databaseProject(w, r)
+	if !ok {
+		return
+	}
+	ctx, cancel := work(r)
+	defer cancel()
+	if err := a.Databases.DropDatabase(ctx, project, r.PathValue("name"), userFrom(r.Context()).DisplayName()); err != nil {
+		a.databaseError(w, err)
+		return
+	}
+	a.getDatabase(w, r)
+}
+
+// createExternal makes an external URL for a database and shows it, with
+// its password.
+func (a *API) createExternal(w http.ResponseWriter, r *http.Request) {
+	project, ok := a.databaseProject(w, r)
+	if !ok {
+		return
+	}
+	e, u, err := a.Databases.CreateExternal(r.Context(), project, r.PathValue("name"), userFrom(r.Context()).DisplayName())
 	if err != nil {
-		a.fail(w, err)
+		a.databaseError(w, err)
 		return
 	}
-	for _, p := range previews {
-		if p.Name != r.PathValue("name") {
-			continue
-		}
-		ctx, cancel := work(r)
-		defer cancel()
-		if err := a.Databases.DropPreview(ctx, project, p.Branch); err != nil {
-			a.databaseError(w, err)
-			return
-		}
-		what := p.Branch
-		if what == "" {
-			what = "previews sent with pier deploy"
-		}
-		a.event(r.Context(), project, "Deleted a preview database", what, "")
-		a.getDatabase(w, r)
+	writeJSON(w, http.StatusCreated, map[string]any{"external": e, "url": u})
+}
+
+// externalURL shows an external URL again, with its password.
+func (a *API) externalURL(w http.ResponseWriter, r *http.Request) {
+	project, ok := a.databaseProject(w, r)
+	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusNotFound, map[string]string{"error": "There's no such preview database."})
+	u, err := a.Databases.ExternalURL(r.Context(), project, r.PathValue("role"))
+	if err != nil {
+		a.databaseError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"url": u})
+}
+
+func (a *API) revokeExternal(w http.ResponseWriter, r *http.Request) {
+	project, ok := a.databaseProject(w, r)
+	if !ok {
+		return
+	}
+	if err := a.Databases.RevokeExternal(r.Context(), project, r.PathValue("role"), userFrom(r.Context()).DisplayName()); err != nil {
+		a.databaseError(w, err)
+		return
+	}
+	a.getDatabase(w, r)
 }
 
 // size writes a number of bytes the way the dashboard does.

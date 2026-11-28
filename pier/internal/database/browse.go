@@ -97,31 +97,43 @@ type QueryError struct {
 
 func (e *QueryError) Error() string { return e.Message }
 
-// Target names one of a project's databases: "app" for production, or a
-// preview database's name.
+// target names one of a project's databases, by name; empty is the one
+// production uses, or the first.
 func (m *Manager) target(ctx context.Context, project, db string) (role, pass string, err error) {
-	d, err := m.Store.Database(ctx, project)
-	if errors.Is(err, store.ErrNotFound) {
+	if _, err := m.Store.Database(ctx, project); errors.Is(err, store.ErrNotFound) {
 		return "", "", ErrNone
+	} else if err != nil {
+		return "", "", err
 	}
+	d, err := m.pick(ctx, project, db)
 	if err != nil {
 		return "", "", err
 	}
-	if db == "" || db == appName {
-		pass, err = m.Box.Open(d.Password, binding(project, appName))
-		return appName, pass, err
-	}
-	previews, err := m.Store.PreviewDatabases(ctx, project)
+	pass, err = m.Box.Open(d.Password, binding(project, d.Name))
+	return d.Name, pass, err
+}
+
+// pick finds a database by name, or with name empty the one production
+// uses, or the first.
+func (m *Manager) pick(ctx context.Context, project, name string) (store.ProjectDatabase, error) {
+	all, err := m.Store.ProjectDatabases(ctx, project)
 	if err != nil {
-		return "", "", err
+		return store.ProjectDatabase{}, err
 	}
-	for _, p := range previews {
-		if p.Name == db {
-			pass, err = m.Box.Open(p.Password, binding(project, p.Name))
-			return p.Name, pass, err
+	for _, d := range all {
+		if d.Name == name {
+			return d, nil
 		}
 	}
-	return "", "", fmt.Errorf("there's no database called %s", db)
+	if name == "" && len(all) > 0 {
+		for _, d := range all {
+			if d.Serves(store.TargetProduction) {
+				return d, nil
+			}
+		}
+		return all[0], nil
+	}
+	return store.ProjectDatabase{}, fmt.Errorf("there's no database called %s", name)
 }
 
 // LocalURL is a database's address on this machine's loopback port, for a
@@ -513,8 +525,8 @@ func (m *Manager) Query(ctx context.Context, project, db, sql, by string) (Query
 	if out.Error != nil {
 		did = append(did, "stopped by an error")
 	}
-	if db == "" {
-		db = appName
+	if d, err := m.pick(ctx, project, db); err == nil {
+		db = d.Name
 	}
 	m.Store.RecordEvent(context.WithoutCancel(ctx), project, "Ran a query on "+db, strings.Join(did, ", "), "", by)
 	return out, nil

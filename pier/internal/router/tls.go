@@ -2,8 +2,10 @@ package router
 
 import (
 	"context"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -62,6 +64,32 @@ func (c Caddy) HasWildcardCertificate() bool {
 		}
 	}
 	return false
+}
+
+// Certificate loads the certificate embedded Caddy keeps for host, or else
+// the base domain's wildcard, from its storage, for a listener of pierd's
+// own: the public Postgres port.
+func (c Caddy) Certificate(host string) (*tls.Certificate, error) {
+	certs := filepath.Join(c.Storage, "certificates")
+	issuers, _ := os.ReadDir(certs)
+	for _, subject := range []string{host, "*." + c.BaseDomain} {
+		name := certmagic.StorageKeys.Safe(subject)
+		for _, issuer := range issuers {
+			dir := filepath.Join(certs, issuer.Name(), name)
+			cert, err := tls.LoadX509KeyPair(filepath.Join(dir, name+".crt"), filepath.Join(dir, name+".key"))
+			if err != nil {
+				continue
+			}
+			leaf := cert.Leaf
+			if leaf == nil && len(cert.Certificate) > 0 {
+				leaf, _ = x509.ParseCertificate(cert.Certificate[0])
+			}
+			if leaf != nil && time.Now().Before(leaf.NotAfter) {
+				return &cert, nil
+			}
+		}
+	}
+	return nil, fmt.Errorf("there's no certificate for %s yet", host)
 }
 
 // dashboardIP is the dashboard's address when the owner reaches it by bare IP.
