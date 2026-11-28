@@ -110,6 +110,12 @@ func main() {
 		err = jobsCmd(os.Args[2:])
 	case "db":
 		err = dbCmd(os.Args[2:])
+	case "storage":
+		err = storageCmd(os.Args[2:])
+	case "env":
+		err = envCmd(os.Args[2:])
+	case "docs":
+		err = docsCmd(os.Args[2:])
 	case "version":
 		err = showVersion(os.Args[2:])
 	case "upgrade":
@@ -144,6 +150,7 @@ func commandReferenceGroups() []commandGroup {
 		}},
 		{"Deploy", [][2]string{
 			{"pier deploy [FOLDER] [--prod]", "Build a preview or deploy to production"},
+			{"pier deploy --project P --create", "Make the project if it's new, then deploy"},
 			{"pier promote [DEPLOYMENT]", "Move production to a ready deployment"},
 			{"pier rollback [ID] [--undo]", "Roll back production or undo a rollback"},
 			{"pier restart [PROJECT]", "Restart a server container without rebuilding"},
@@ -156,17 +163,32 @@ func commandReferenceGroups() []commandGroup {
 			{"pier logs [PROJECT] --build", "Follow a build (--deployment ID to choose)"},
 			{"pier logs --once | --follow", "Choose a snapshot or continuous output"},
 		}},
+		{"Variables", [][2]string{
+			{"pier env [PROJECT]", "A project's variables and where they reach"},
+			{"pier env set NAME=VALUE...", "Set variables (--env production,preview)"},
+			{"pier env rm NAME...", "Remove variables"},
+		}},
 		{"Database", [][2]string{
 			{"pier db [PROJECT]", "The project's Postgres and its databases"},
 			{"pier db create [PROJECT]", "Give the project Postgres"},
 			{"pier db add NAME [PROJECT]", "Add a database, linked to the environments you say"},
 			{"pier db external [PROJECT]", "Make a URL for a service outside Pier"},
+			{"pier db link NAME [PROJECT]", "Change what a database serves (--env, --var)"},
 			{"pier db tunnel [PROJECT]", "Reach a database from this computer"},
 			{"pier db psql [PROJECT]", "Open psql on a database"},
+		}},
+		{"Storage", [][2]string{
+			{"pier storage [PROJECT]", "The project's buckets on Cloudflare R2"},
+			{"pier storage add NAME [PROJECT]", "Add a bucket (--public, --env, --prefix)"},
+			{"pier storage env NAME [PROJECT]", "Print a bucket's variables for a .env file"},
+			{"pier storage ls | put | get", "List, upload and download files"},
 		}},
 		{"Jobs", [][2]string{
 			{"pier jobs [PROJECT]", "A project's scheduled jobs and their last runs"},
 			{"pier jobs run NAME", "Run a job now and print its output"},
+		}},
+		{"Help", [][2]string{
+			{"pier docs", "How Pier works, for people and coding agents"},
 		}},
 		{"Account", [][2]string{
 			{"pier login [ADDRESS]", "Sign in through your dashboard"},

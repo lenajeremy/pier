@@ -31,6 +31,8 @@ unless you say otherwise. These commands are for you.
                                        1024|2048|4096, in MB)
   pier db add NAME [PROJECT]           add a database (--env production,preview or none,
                                        --var the variable, default DATABASE_URL)
+  pier db link NAME [PROJECT]          change what it serves (--env, --var)
+  pier db rm NAME [PROJECT] --yes      delete a database, after a last backup
   pier db url [PROJECT]                print a database's URL as apps on Pier use it
   pier db external [PROJECT]           make a URL for a service outside Pier, over TLS
   pier db tunnel [PROJECT]             reach a database from this computer on
@@ -89,7 +91,7 @@ func dbCmd(args []string) error {
 	sub := ""
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		switch args[0] {
-		case "create", "add", "url", "external", "tunnel", "psql", "backup", "status":
+		case "create", "add", "link", "rm", "url", "external", "tunnel", "psql", "backup", "status":
 			sub, args = args[0], args[1:]
 		case "help":
 			fmt.Print(dbHelp)
@@ -104,9 +106,10 @@ func dbCmd(args []string) error {
 	envFile := fs.String("env", "", "tunnel: write DATABASE_URL into this .env file")
 	db := fs.String("db", "", "a database, by name (default: the one production uses)")
 	envs := fs.String("envs", "", "add: the environments it serves")
-	variable := fs.String("var", "DATABASE_URL", "add: the variable it's given as")
+	variable := fs.String("var", "", "add, link: the variable it's given as (DATABASE_URL for a new one)")
+	yes := fs.Bool("yes", false, "rm: don't ask")
 	flags := map[string]bool{"project": true, "memory": true, "port": true, "env": true, "db": true, "envs": true, "var": true}
-	if sub == "add" {
+	if sub == "add" || sub == "link" {
 		// pier db add takes --env for environments; tunnel's --env is a file.
 		for i, a := range args {
 			if a == "--env" || a == "-env" {
@@ -118,9 +121,9 @@ func dbCmd(args []string) error {
 	}
 	fs.Parse(reorder(args, flags))
 	name := ""
-	if sub == "add" {
+	if sub == "add" || sub == "link" || sub == "rm" {
 		if fs.NArg() == 0 {
-			return errors.New("name the database: pier db add NAME [PROJECT]")
+			return errors.New("name the database: pier db " + sub + " NAME [PROJECT]")
 		}
 		name = fs.Arg(0)
 		rest := fs.Args()[1:]
@@ -140,6 +143,52 @@ func dbCmd(args []string) error {
 	switch sub {
 	case "create":
 		return dbCreate(c, project, *memory)
+	case "link":
+		var s dbStatus
+		if err := call(c, http.MethodGet, dbPath(project), nil, &s); err != nil {
+			return err
+		}
+		body := map[string]any{}
+		if s.Database != nil {
+			for _, d := range s.Database.Databases {
+				if d.Name == name {
+					body["environments"], body["variable"] = d.Environments, d.Variable
+				}
+			}
+		}
+		if body["variable"] == nil {
+			return fmt.Errorf("%s has no database called %s", project, name)
+		}
+		if *envs != "" {
+			list, err := envList(*envs)
+			if err != nil {
+				return err
+			}
+			body["environments"] = list
+		}
+		if *variable != "" {
+			body["variable"] = *variable
+		}
+		if err := callWith("Changing "+name, c, http.MethodPut, dbPath(project)+"/databases/"+url.PathEscape(name), body, nil); err != nil {
+			return err
+		}
+		fmt.Printf("%s Saved. Deploys get the change when they next start.\n", tick())
+		return nil
+	case "rm":
+		if !*yes {
+			if !term() {
+				return errors.New("deleting a database deletes its data; add --yes")
+			}
+			answer, err := ask(fmt.Sprintf("Delete %s? A last backup is kept. Type its name: ", name))
+			if err != nil || answer != name {
+				return errors.New("not deleted")
+			}
+		}
+		if err := callWith("Backing up and deleting "+name, c, http.MethodDelete, dbPath(project)+"/databases/"+url.PathEscape(name), nil, nil); err != nil {
+			return err
+		}
+		fmt.Printf("%s Deleted %s. Its last backup is on the Database tab.\n", tick(), name)
+		return nil
 	case "add":
 		list := []string{}
 		for _, e := range strings.Split(*envs, ",") {
@@ -150,6 +199,9 @@ func dbCmd(args []string) error {
 			} else if e != "" && e != "none" {
 				return fmt.Errorf("%s isn't an environment: say production, preview, or none", e)
 			}
+		}
+		if *variable == "" {
+			*variable = "DATABASE_URL"
 		}
 		body := map[string]any{"name": name, "environments": list, "variable": *variable}
 		if err := callWith("Adding "+name, c, http.MethodPost, dbPath(project)+"/databases", body, nil); err != nil {

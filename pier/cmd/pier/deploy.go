@@ -54,6 +54,7 @@ func deploy(args []string) error {
 	prod := fs.Bool("prod", false, "deploy to production instead of a preview")
 	plain := fs.Bool("plain", false, "stream plain build output instead of the interactive view")
 	projectFlag := fs.String("project", "", "the project to deploy to (remembered in .pier/project.json)")
+	create := fs.Bool("create", false, "with --project: make the project if there isn't one by that name")
 	fs.Parse(reorder(args, map[string]bool{"project": true}))
 	c, err := signedIn()
 	if err != nil {
@@ -78,7 +79,7 @@ func deploy(args []string) error {
 	// so make a clean checkout look changed.
 	g := gitInfo(dir)
 	useTUI := interactive() && !*plain
-	project, notes, err := chooseProject(c, dir, *projectFlag, useTUI)
+	project, notes, err := chooseProject(c, dir, *projectFlag, useTUI, *create)
 	if err != nil {
 		return err
 	}
@@ -180,10 +181,10 @@ func colourLine(s string) string {
 
 // chooseProject finds the project this folder deploys to: the flag, then
 // .pier/project.json, then it asks interactively and remembers the answer.
-func chooseProject(c config, dir, flagged string, useTUI bool) (string, []string, error) {
+func chooseProject(c config, dir, flagged string, useTUI, create bool) (string, []string, error) {
 	var notes []string
 	if flagged != "" {
-		note, err := ensureProject(c, flagged, false)
+		note, err := ensureProject(c, flagged, create)
 		if err != nil {
 			return "", nil, err
 		}
@@ -284,7 +285,7 @@ func ensureProject(c config, name string, create bool) (string, error) {
 		return "", nil
 	}
 	if !create {
-		return "", fmt.Errorf("there's no project called %s; create it in the dashboard, or run pier deploy without --project", name)
+		return "", fmt.Errorf("there's no project called %s; add --create to make it, or create it in the dashboard", name)
 	}
 	var made struct{ Address string }
 	if err := call(c, http.MethodPost, "/api/projects", map[string]string{"name": name}, &made); err != nil {

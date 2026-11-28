@@ -203,9 +203,20 @@ A database can have one external URL, made when you ask (`pier db external`, or 
 
 ## File storage
 
-Pier gives projects buckets on your own Cloudflare R2. Connect Cloudflare once in Integrations with your account ID and an account API token that can edit Workers R2 Storage and Account API Tokens (and read zones and edit DNS, to serve public buckets from your domain). Then add buckets from a project's Storage tab: private or public, each linked to the environments it serves and with its own key, which reaches that bucket alone. A project's first bucket serves production and previews; add a `test` bucket and link previews to it to keep their files apart.
+Pier gives projects buckets on your own Cloudflare R2. Connect it once:
+
+1. In Cloudflare, open **Storage & databases → R2 Object Storage** once, so R2 is on for the account.
+2. Go to **Manage account → Account API tokens → Create token → Start from scratch**. Give it **Workers R2 Storage: Edit** and **Account API Tokens: Edit** on the entire account. If your base domain is on Cloudflare, add a second policy for **All domains** with **Zone: Read** and **DNS: Edit**, so public buckets are served from it. Create it and copy the token; Cloudflare shows it once.
+3. The **account ID** is under **Account Details** on the R2 overview page, and in the dashboard's address: `dash.cloudflare.com/<account ID>/…`.
+4. In Pier, open **Integrations → Cloudflare R2**, paste both and press **Connect**. Pier checks the token before it keeps it, sealed.
+
+Then add buckets from a project's Storage tab, or with `pier storage add NAME`: private or public, each linked to the environments it serves and with its own key, which reaches that bucket alone. A project's first bucket serves production and previews; add a `test` bucket and link previews to it to keep their files apart.
 
 A deployment gets each linked bucket as `<PREFIX>_BUCKET`, `_ENDPOINT`, `_ACCESS_KEY_ID`, `_SECRET_ACCESS_KEY`, `_REGION` and, for a public one, `_PUBLIC_URL`; the prefix is `STORAGE` for the first, which also sets `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ENDPOINT_URL_S3` and `AWS_REGION`, so S3 clients work with no setup. Apps talk to R2 directly. A public bucket is served at `files-<project>-<name>.<base domain>` through Cloudflare's network when the base domain is on Cloudflare in the same account, and at an `r2.dev` address otherwise, which Cloudflare rate-limits. The Storage tab's Files browses a bucket by folder, uploads, previews images, video, audio and PDFs from short-lived links straight to R2, and deletes files and folders. Deleting a bucket or its project empties and deletes it.
+
+## For coding agents
+
+`pier docs` prints a short guide to everything an agent needs, with no network: deploying (`pier deploy --project NAME --create`), variables (`pier env set`), Postgres (`pier db`), buckets (`pier storage`), the variables apps get, and code for using them. It's `cmd/pier/guide.md`. Every command works without a terminal: output is plain when it isn't one, and deleting needs `--yes`. A machine signs in with `PIER_SERVER` and `PIER_TOKEN`.
 
 ## pierd's data folder
 

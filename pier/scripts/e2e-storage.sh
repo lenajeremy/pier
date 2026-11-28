@@ -39,6 +39,22 @@ curl -fsS "$view" | grep -q 'hello from pier' || fail "the file's link didn't re
 curl -fsS -b "$JAR" "$API/api/projects/media/storage/files/variables" | grep -q '"STORAGE_SECRET_ACCESS_KEY"' || fail "a member can't see the bucket's variables"
 curl -fsS -b "$JAR" -H 'X-Pier: 1' -X DELETE "$API/api/projects/media/storage/files/files?prefix=notes/" | grep -q '"deleted":1' || fail "deleting a folder"
 
+step "the same from the CLI, as an agent would"
+cd "$WORK/media"
+"$PIER" storage add docs --env none | grep -q 'Added docs to media' || fail "pier storage add"
+sleep 2 # the stand-in's S3 server sees a new bucket a moment later
+"$PIER" storage env docs | grep -q '^DOCS_SECRET_ACCESS_KEY=' || fail "pier storage env"
+printf 'from the cli\n' > "$WORK/cli.txt"
+"$PIER" storage put "$WORK/cli.txt" docs/notes/ | grep -q 'docs/notes/cli.txt' || fail "pier storage put"
+"$PIER" storage ls docs/notes | grep -q 'notes/cli.txt' || fail "pier storage ls"
+"$PIER" storage get docs/notes/cli.txt "$WORK/cli-back.txt" >/dev/null && cmp -s "$WORK/cli.txt" "$WORK/cli-back.txt" || fail "pier storage get"
+"$PIER" storage rm docs </dev/null >/dev/null 2>&1 && fail "pier storage rm deleted without --yes"
+"$PIER" storage rm docs --yes | grep -q 'Deleted docs' || fail "pier storage rm"
+"$PIER" env set GREETING=hi --env preview | grep -q 'Set GREETING for preview' || fail "pier env set"
+"$PIER" env | grep -q 'GREETING .*preview' || fail "pier env"
+"$PIER" env rm GREETING --env preview >/dev/null || fail "pier env rm"
+"$PIER" docs | grep -q 'pier storage add' || fail "pier docs"
+
 cd "$WORK"
 curl -fsS -b "$JAR" -H 'X-Pier: 1' -X DELETE "$API/api/projects/media" >/dev/null || fail "couldn't delete the project"
 ls "$WORK/r2" | grep -q media && fail "the deleted project's buckets are still there"
