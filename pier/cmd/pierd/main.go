@@ -388,12 +388,13 @@ func serve(args []string) int {
 	}
 	defer reqs.Close()
 	reqs.Target = func(id string) string { _, t := deployment(id); return t }
-	reqs.Traced = func(lines []requests.Line) {
+	reqs.Written = func(lines []requests.Line) {
 		out := make([]telemetry.Request, len(lines))
 		for i, l := range lines {
 			out[i] = telemetry.Request{Project: l.Project, Env: l.Env, Deployment: l.Deployment, Trace: l.Trace, Span: l.Span,
 				Method: l.Method, Path: l.Path, Host: l.Host, Status: l.Status, Bytes: l.Bytes,
-				Start: l.Began, Duration: time.Duration(l.MS * float64(time.Millisecond))}
+				Start: l.Began, Duration: time.Duration(l.MS * float64(time.Millisecond)),
+				Browser: l.Browser, Device: l.Device, Country: l.Country, Referrer: l.Referrer, Bot: l.Bot}
 		}
 		go tel.SendRequests(ctx, out)
 	}

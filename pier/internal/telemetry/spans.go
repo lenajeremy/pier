@@ -21,20 +21,23 @@ import (
 // every request, the root the app's own spans hang from.
 const RouterService = "pier"
 
-// Request is one request Caddy traced, from the access log.
+// Request is one request from the access log.
 type Request struct {
 	Project, Env, Deployment string
-	Trace, Span              string // hex
+	Trace, Span              string // hex, when Caddy traced it
 	Method, Path, Host       string
 	Status                   int
 	Start                    time.Time
 	Duration                 time.Duration
 	Bytes                    int64
+	// What Analytics read from its headers.
+	Browser, Device, Country, Referrer, Bot string
 }
 
-// SendRequests writes each request's span to Tempo, under its project. It
-// gives up quietly when the stack is off or Tempo is away: a request's
-// span is worth less than not holding up the request log.
+// SendRequests writes each request to Loki as a log line of Pier's router,
+// and the traced ones to Tempo as spans, under their project. It gives up
+// quietly when the stack is off or a server is away: they're worth less
+// than not holding up the request log.
 func (m *Manager) SendRequests(ctx context.Context, reqs []Request) {
 	if len(reqs) == 0 || !m.On(ctx) {
 		return
@@ -44,6 +47,9 @@ func (m *Manager) SendRequests(ctx context.Context, reqs []Request) {
 		byProject[r.Project] = append(byProject[r.Project], r)
 	}
 	for project, rs := range byProject {
+		if err := m.sendRequestLogs(ctx, project, rs); err != nil {
+			m.Log.Debug("telemetry: request logs", "project", project, "err", err)
+		}
 		if err := m.sendRequests(ctx, project, rs); err != nil {
 			m.Log.Debug("telemetry: request spans", "project", project, "err", err)
 		}
@@ -56,6 +62,9 @@ func (m *Manager) sendRequests(ctx context.Context, project string, rs []Request
 	groups := map[key][]*trace.Span{}
 	var order []key
 	for _, r := range rs {
+		if r.Trace == "" {
+			continue
+		}
 		traceID, err1 := hex.DecodeString(r.Trace)
 		spanID, err2 := hex.DecodeString(r.Span)
 		if err1 != nil || err2 != nil || len(traceID) != 16 || len(spanID) != 8 {

@@ -209,10 +209,15 @@ func (m *Manager) sendLogs(ctx context.Context, app App, records []*logs.LogReco
 	if app.Env != "" {
 		res.Attributes = append(res.Attributes, str("deployment.environment", app.Env))
 	}
-	body, err := proto.Marshal(&coll.ExportLogsServiceRequest{ResourceLogs: []*logs.ResourceLogs{{
+	return m.postLogs(ctx, app.Project, []*logs.ResourceLogs{{
 		Resource:  res,
 		ScopeLogs: []*logs.ScopeLogs{{Scope: &common.InstrumentationScope{Name: "pier.stdout"}, LogRecords: records}},
-	}}})
+	}})
+}
+
+// postLogs hands log records to Loki, as the project.
+func (m *Manager) postLogs(ctx context.Context, project string, batch []*logs.ResourceLogs) error {
+	body, err := proto.Marshal(&coll.ExportLogsServiceRequest{ResourceLogs: batch})
 	if err != nil {
 		return err
 	}
@@ -227,7 +232,7 @@ func (m *Manager) sendLogs(ctx context.Context, app App, records []*logs.LogReco
 		return err
 	}
 	req.Header.Set("Content-Type", "application/x-protobuf")
-	req.Header.Set("X-Scope-OrgID", app.Project)
+	req.Header.Set("X-Scope-OrgID", project)
 	resp, err := m.client().Do(req)
 	if err != nil {
 		m.forget()

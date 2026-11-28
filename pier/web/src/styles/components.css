@@ -5655,3 +5655,78 @@ button.m-chip {
 .m-query-head .seg {
   margin-left: auto;
 }
+
+/* Logs on Loki. */
+.le-count {
+  margin-left: 4px;
+  font-size: 12.5px;
+  color: var(--d-note);
+}
+.lg-lines .t-row {
+  font-size: 13px;
+}
+.lg-level,
+.lg-svc {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.lg-svc {
+  font-size: 12px;
+  color: var(--d-muted);
+}
+.lg-trace {
+  font-size: 12px;
+  color: #8db2f8;
+}
+.lg-find {
+  width: 300px;
+  margin-right: auto;
+}
+.le-record-head > .lg-find:first-child {
+  margin-right: auto;
+}
+.lg-json {
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid var(--d-line-faint);
+  font-size: 12.5px;
+  line-height: 19px;
+  overflow-wrap: anywhere;
+}
+.lg-kv {
+  padding-left: 16px;
+}
+.lg-k {
+  color: var(--d-muted);
+}
+.lg-s,
+.lg-n {
+  font: inherit;
+  text-align: left;
+}
+.lg-s {
+  color: #8db2f8;
+}
+.lg-n {
+  color: #bcaef8;
+}
+button.lg-s:hover,
+button.lg-n:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.lg-lines .t-row {
+  cursor: pointer;
+}
+.lg-trace {
+  justify-self: start;
+  font: inherit;
+  font-family: var(--d-mono);
+  font-size: 12px;
+}
+.lg-trace:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}

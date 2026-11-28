@@ -9,6 +9,7 @@ import { LogExplorer } from './LogExplorer'
 import { Events } from './Events'
 import { TraceView, Traces } from './Traces'
 import { Metrics } from './Metrics'
+import { LokiLogs } from './LokiLogs'
 
 // Analytics is the project's traffic and logs. Overview counts visitors,
 // pages and errors from the request log Pier already keeps; Logs is every
@@ -27,6 +28,7 @@ export const viewNames = views.map(([v]) => v)
 export function Analytics({ project, initial }: { project: string; initial: View }) {
   const [view, setView] = useState<View>(initial)
   const [trace, setTrace] = useState<string | null>(() => new URLSearchParams(location.search).get('trace'))
+  const telemetry = useData<{ status?: { on: boolean } }>('/api/server/telemetry')
   useEffect(() => setView(initial), [initial])
   useEffect(() => {
     const sync = () => {
@@ -66,7 +68,13 @@ export function Analytics({ project, initial }: { project: string; initial: View
       {right && <div className="a-head-right">{right}</div>}
     </div>
   )
-  if (view === 'logs') return <LogExplorer project={project} head={tabs()} onTrace={(id) => (setView('traces'), openTrace(id))} />
+  if (view === 'logs') {
+    const toTrace = (id: string) => (setView('traces'), openTrace(id))
+    // With app logs on, Logs reads Loki: requests and app output together.
+    if (!telemetry.data && !telemetry.error) return <main className="main">{tabs()}</main>
+    if (telemetry.data?.status?.on) return <LokiLogs project={project} head={tabs()} onTrace={toTrace} />
+    return <LogExplorer project={project} head={tabs()} onTrace={toTrace} />
+  }
   if (view === 'traces' && trace) {
     return (
       <main className="main" style={{ gap: 24 }}>

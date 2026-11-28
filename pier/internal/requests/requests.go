@@ -107,9 +107,9 @@ type Log struct {
 	// Target says whether a deployment was built for production or a
 	// preview; nil leaves a request's environment empty.
 	Target func(deployment string) string
-	// Traced gets every written batch's requests that have a trace, to
-	// send as spans. It runs on the writer, so it mustn't wait.
-	Traced func([]Line)
+	// Written gets every batch of requests once it's written, to send on
+	// as logs and spans. It runs on the writer, so it mustn't wait.
+	Written func([]Line)
 
 	mu            sync.Mutex
 	pending       []Line
@@ -225,10 +225,10 @@ func (l *Log) parse(raw []byte) (Line, bool) {
 		Path: path, Status: e.Status, MS: e.Duration * 1000, Bytes: e.Size,
 		Host: hostOnly(e.Request.Host), Page: v.Page, Bot: v.Bot, Browser: v.Browser, Device: v.Device, Referrer: v.Referrer, Country: v.Country,
 	}
+	// Caddy logs when the request finished.
+	line.Began = time.UnixMicro(int64((e.TS - e.Duration) * 1e6))
 	if isHex(e.TraceID, 32) && isHex(e.SpanID, 16) {
 		line.Trace, line.Span = e.TraceID, e.SpanID
-		// Caddy logs when the request finished.
-		line.Began = time.UnixMicro(int64((e.TS - e.Duration) * 1e6))
 	}
 	if v.Bot == "" && l.salts != nil {
 		line.Visitor = visitor(l.salts.get(time.UnixMilli(at)), ip, agent)
@@ -383,16 +383,8 @@ func (l *Log) Flush(ctx context.Context) error {
 		requeue()
 		return err
 	}
-	if l.Traced != nil {
-		var traced []Line
-		for _, r := range batch {
-			if r.Trace != "" {
-				traced = append(traced, r)
-			}
-		}
-		if len(traced) > 0 {
-			l.Traced(traced)
-		}
+	if l.Written != nil && len(batch) > 0 {
+		l.Written(batch)
 	}
 	l.mu.Lock()
 	close(l.changed)
