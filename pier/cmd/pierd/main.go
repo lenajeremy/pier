@@ -308,12 +308,14 @@ func serve(args []string) int {
 		}()
 	}
 
-	reqs, err := requests.Open(paths.requestsDB, projectOf(st), log)
+	deployment := deploymentOf(st)
+	reqs, err := requests.Open(paths.requestsDB, func(id string) string { p, _ := deployment(id); return p }, log)
 	if err != nil {
 		log.Error("open the requests database", "err", err)
 		return 1
 	}
 	defer reqs.Close()
+	reqs.Target = func(id string) string { _, t := deployment(id); return t }
 	dep.Visited = reqs.LastSeen
 	waker := &http.Server{Handler: dep.WakeHandler(), ReadHeaderTimeout: 5 * time.Second}
 	go waker.Serve(wakeLn)
@@ -510,24 +512,27 @@ func layout(data string) paths {
 
 // projectOf finds which project a deployment belongs to, remembering the
 // answers: the request log asks for every request.
-func projectOf(st *store.Store) func(string) string {
+// deploymentOf looks up a deployment's project and target once and
+// remembers them: the request log asks for every request.
+func deploymentOf(st *store.Store) func(string) (string, string) {
+	type known struct{ project, target string }
 	var mu sync.Mutex
-	known := map[string]string{}
-	return func(id string) string {
+	seen := map[string]known{}
+	return func(id string) (string, string) {
 		mu.Lock()
-		p, ok := known[id]
+		k, ok := seen[id]
 		mu.Unlock()
 		if ok {
-			return p
+			return k.project, k.target
 		}
 		d, err := st.Deployment(context.Background(), id)
 		if err != nil {
-			return ""
+			return "", ""
 		}
 		mu.Lock()
-		known[id] = d.Project
+		seen[id] = known{d.Project, d.Target}
 		mu.Unlock()
-		return d.Project
+		return d.Project, d.Target
 	}
 }
 

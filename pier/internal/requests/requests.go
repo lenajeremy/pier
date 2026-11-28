@@ -63,6 +63,32 @@ type Line struct {
 	Status     int     `json:"status"`
 	MS         float64 `json:"ms"`
 	Bytes      int64   `json:"bytes"`
+	// What Analytics reads from the request's headers; see visitors.go.
+	Host     string `json:"host,omitempty"`
+	Env      string `json:"env,omitempty"` // production or preview
+	Visitor  int64  `json:"-"`
+	Page     bool   `json:"page,omitempty"` // a browser asked for a page
+	Bot      string `json:"bot,omitempty"`
+	Browser  string `json:"browser,omitempty"`
+	Device   string `json:"device,omitempty"`
+	Referrer string `json:"referrer,omitempty"`
+	Country  string `json:"country,omitempty"`
+}
+
+// columns added after the first release; Open adds any an older database
+// lacks.
+var columns = []struct{ name, def string }{
+	{"host", "TEXT NOT NULL DEFAULT ''"}, {"env", "TEXT NOT NULL DEFAULT ''"}, {"visitor", "INTEGER NOT NULL DEFAULT 0"},
+	{"page", "INTEGER NOT NULL DEFAULT 0"}, {"bot", "TEXT NOT NULL DEFAULT ''"}, {"browser", "TEXT NOT NULL DEFAULT ''"},
+	{"device", "TEXT NOT NULL DEFAULT ''"}, {"referrer", "TEXT NOT NULL DEFAULT ''"}, {"country", "TEXT NOT NULL DEFAULT ''"},
+}
+
+const lineCols = `id, deployment, ts, method, path, status, ms, bytes, host, env, page, bot, browser, device, referrer, country`
+
+func scanLine(row interface{ Scan(...any) error }) (Line, error) {
+	var r Line
+	err := row.Scan(&r.ID, &r.Deployment, &r.At, &r.Method, &r.Path, &r.Status, &r.MS, &r.Bytes, &r.Host, &r.Env, &r.Page, &r.Bot, &r.Browser, &r.Device, &r.Referrer, &r.Country)
+	return r, err
 }
 
 // Log holds the requests.
@@ -70,6 +96,10 @@ type Log struct {
 	db      *sql.DB
 	project func(deployment string) string // which project a deployment belongs to
 	log     *slog.Logger
+	salts   *salts
+	// Target says whether a deployment was built for production or a
+	// preview; nil leaves a request's environment empty.
+	Target func(deployment string) string
 
 	mu      sync.Mutex
 	pending []Line
@@ -85,11 +115,42 @@ func Open(path string, project func(string) string, log *slog.Logger) (*Log, err
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(schema); err != nil {
+	if _, err := db.Exec(schema + saltSchema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("requests schema: %w", err)
 	}
-	return &Log{db: db, project: project, log: log, changed: make(chan struct{})}, nil
+	if err := migrate(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("requests schema: %w", err)
+	}
+	return &Log{db: db, project: project, log: log, salts: &salts{db: db}, changed: make(chan struct{})}, nil
+}
+
+func migrate(db *sql.DB) error {
+	have := map[string]bool{}
+	rows, err := db.Query(`PRAGMA table_info(requests)`)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var cid, notnull, pk int
+		var name, typ string
+		var def any
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &def, &pk); err != nil {
+			rows.Close()
+			return err
+		}
+		have[name] = true
+	}
+	rows.Close()
+	for _, c := range columns {
+		if !have[c.name] {
+			if _, err := db.Exec(`ALTER TABLE requests ADD COLUMN ` + c.name + ` ` + c.def); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (l *Log) Close() error { return l.db.Close() }
@@ -98,8 +159,12 @@ func (l *Log) Close() error { return l.db.Close() }
 type entry struct {
 	TS      float64 `json:"ts"`
 	Request struct {
-		Method string `json:"method"`
-		URI    string `json:"uri"`
+		Method   string              `json:"method"`
+		URI      string              `json:"uri"`
+		Host     string              `json:"host"`
+		ClientIP string              `json:"client_ip"`
+		RemoteIP string              `json:"remote_ip"`
+		Headers  map[string][]string `json:"headers"`
 	} `json:"request"`
 	Duration    float64             `json:"duration"` // seconds
 	Size        int64               `json:"size"`
@@ -129,10 +194,31 @@ func (l *Log) parse(raw []byte) (Line, bool) {
 	if len(path) > 2048 {
 		path = path[:2048]
 	}
-	return Line{
-		Project: project, Deployment: dep, At: int64(e.TS * 1000), Method: e.Request.Method,
+	header := func(name string) string {
+		if v := e.Request.Headers[name]; len(v) > 0 {
+			return v[0]
+		}
+		return ""
+	}
+	at := int64(e.TS * 1000)
+	agent := header("User-Agent")
+	v := classify(e.Request.Method, path, e.Request.Host, e.Status, agent, header("Referer"), header("Accept"), header("Cf-Ipcountry"))
+	ip := e.Request.ClientIP
+	if ip == "" {
+		ip = e.Request.RemoteIP
+	}
+	line := Line{
+		Project: project, Deployment: dep, At: at, Method: e.Request.Method,
 		Path: path, Status: e.Status, MS: e.Duration * 1000, Bytes: e.Size,
-	}, true
+		Host: hostOnly(e.Request.Host), Page: v.Page, Bot: v.Bot, Browser: v.Browser, Device: v.Device, Referrer: v.Referrer, Country: v.Country,
+	}
+	if v.Bot == "" && l.salts != nil {
+		line.Visitor = visitor(l.salts.get(time.UnixMilli(at)), ip, agent)
+	}
+	if l.Target != nil {
+		line.Env = l.Target(dep)
+	}
+	return line, true
 }
 
 // Listen accepts Caddy's access log on a unix socket until ctx ends, and
@@ -249,8 +335,9 @@ func (l *Log) Flush(ctx context.Context) error {
 	defer tx.Rollback()
 	for _, r := range batch {
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO requests(project, deployment, ts, method, path, status, ms, bytes) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
-			r.Project, r.Deployment, r.At, r.Method, r.Path, r.Status, r.MS, r.Bytes); err != nil {
+			`INSERT INTO requests(project, deployment, ts, method, path, status, ms, bytes, host, env, visitor, page, bot, browser, device, referrer, country)
+			VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			r.Project, r.Deployment, r.At, r.Method, r.Path, r.Status, r.MS, r.Bytes, r.Host, r.Env, r.Visitor, r.Page, r.Bot, r.Browser, r.Device, r.Referrer, r.Country); err != nil {
 			requeue()
 			return err
 		}
@@ -350,7 +437,7 @@ func (l *Log) Lines(ctx context.Context, project string, f Filter) ([]Line, erro
 	if f.Forward {
 		order = " ASC"
 	}
-	rows, err := l.db.QueryContext(ctx, `SELECT id, deployment, ts, method, path, status, ms, bytes FROM requests WHERE `+where+
+	rows, err := l.db.QueryContext(ctx, `SELECT `+lineCols+` FROM requests WHERE `+where+
 		` ORDER BY id`+order+` LIMIT ?`, append(args, f.Limit)...)
 	if err != nil {
 		return nil, err
@@ -358,8 +445,8 @@ func (l *Log) Lines(ctx context.Context, project string, f Filter) ([]Line, erro
 	defer rows.Close()
 	var out []Line
 	for rows.Next() {
-		var r Line
-		if err := rows.Scan(&r.ID, &r.Deployment, &r.At, &r.Method, &r.Path, &r.Status, &r.MS, &r.Bytes); err != nil {
+		r, err := scanLine(rows)
+		if err != nil {
 			return nil, err
 		}
 		out = append(out, r)

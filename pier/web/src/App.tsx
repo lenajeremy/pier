@@ -22,7 +22,7 @@ import { Members } from './pages/Members'
 import { ProjectSettings } from './pages/ProjectSettings'
 import { Variables } from './pages/Variables'
 import { Domains } from './pages/Domains'
-import { Logs } from './pages/Logs'
+import { Analytics } from './pages/Analytics'
 import { Invite } from './pages/Invite'
 import { RoleProvider } from './lib/role'
 import { Jobs } from './pages/Jobs'
@@ -122,8 +122,13 @@ function Signed({ session, path, now }: { session: Session; path: string; now: n
             <Storage key={name} project={name} now={now} />
           ) : tab?.tab === 'jobs' ? (
             <Jobs project={name} now={now} />
-          ) : tab?.tab === 'logs' ? (
-            <Logs project={name} address={project.address} />
+          ) : tab?.tab === 'analytics' || tab?.tab === 'logs' ? (
+            <Analytics
+              key={name}
+              project={name}
+              address={project.address}
+              initial={tab.tab === 'logs' || new URLSearchParams(location.search).get('view') === 'logs' ? 'logs' : 'overview'}
+            />
           ) : tab?.tab === 'variables' ? (
             <Variables project={name} now={now} />
           ) : tab?.tab === 'settings' ? (

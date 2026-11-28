@@ -31,7 +31,7 @@ const tabs = [
   ['Variables', '/variables'],
   ['Database', '/database'],
   ['Storage', '/storage'],
-  ['Logs', '/logs'],
+  ['Analytics', '/analytics'],
   ['Jobs', '/jobs'],
   ['Settings', '/settings'],
 ]

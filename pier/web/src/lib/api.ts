@@ -372,3 +372,43 @@ export type StorageView = { cloudflare: CloudflareView; buckets: Bucket[]; count
 export type StoredFile = { key: string; size: number; modified: string; etag?: string; type: string; view: string; download: string; url?: string }
 export type FileListing = { folders: string[]; files: StoredFile[]; next?: string }
 export type BucketVariable = { name: string; value: string; secret?: boolean }
+
+// Analytics: the Overview, read from the request log.
+export interface AnalyticsCount {
+  name: string
+  count: number
+}
+export interface AnalyticsList {
+  top: AnalyticsCount[]
+  rest: number // counted outside the top
+  others: number // how many names the rest spans
+}
+export interface AnalyticsHeadline {
+  requests: number
+  errors: number
+  visitors: number
+  page_views: number
+  p95_ms: number
+}
+export interface AnalyticsPoint {
+  at: number
+  requests: number
+  errors: number
+  visitors: number
+  page_views: number
+  p95_ms: number | null
+}
+export interface AnalyticsOverview extends AnalyticsHeadline {
+  from: number
+  to: number
+  step: number
+  before: AnalyticsHeadline
+  trend: AnalyticsPoint[]
+  pages: AnalyticsList
+  referrers: AnalyticsList
+  countries: AnalyticsList
+  browsers: AnalyticsList
+  devices: AnalyticsList
+  bots: AnalyticsList
+  slowest: { route: string; requests: number; errors: number; p95_ms: number }[]
+}

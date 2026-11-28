@@ -91,6 +91,7 @@ func (a *API) routes() []route {
 		{"GET /api/projects/{project}/variables", viewer, "", a.variables},
 		{"GET /api/projects/{project}/requests", viewer, "", a.requestLines},
 		{"GET /api/projects/{project}/requests/chart", viewer, "", a.requestChart},
+		{"GET /api/projects/{project}/analytics", viewer, "", a.analyticsOverview},
 		{"GET /api/projects/{project}/domains", viewer, "", a.domains},
 		{"GET /api/projects/{project}/database", viewer, "", a.getDatabase},
 		{"GET /api/projects/{project}/storage", viewer, "", a.getStorage},

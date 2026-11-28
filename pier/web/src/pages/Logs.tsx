@@ -18,7 +18,7 @@ const ranges = [
 // Logs is H1: filters on top, since they drive both the chart and the list;
 // the requests and errors charts; then the requests themselves, followed
 // live while the range ends now.
-export function Logs({ project, address }: { project: string; address: string }) {
+export function Logs({ project, address, head }: { project: string; address: string; head?: React.ReactNode }) {
   const params = new URLSearchParams(location.search)
   const [range, setRange] = useState(params.get('day') === 'yesterday' ? 'custom' : '24h') // a key from ranges, or 'custom'
   const [custom, setCustom] = useState<Span | null>(() => {
@@ -112,6 +112,7 @@ export function Logs({ project, address }: { project: string; address: string })
   const day = range === '7d' || range === 'custom'
   return (
     <main className="main" style={{ gap: 16 }}>
+      {head}
       <div className="toolbar">
         <label className="search-field" style={{ flex: 1, height: 44 }}>
           <Search size={18} />

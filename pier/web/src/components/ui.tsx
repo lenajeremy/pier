@@ -43,7 +43,7 @@ const tabs = [
   ['Variables', '/variables'],
   ['Database', '/database'],
   ['Storage', '/storage'],
-  ['Logs', '/logs'],
+  ['Analytics', '/analytics'],
   ['Jobs', '/jobs'],
   ['Settings', '/settings'],
 ] as const
@@ -58,7 +58,8 @@ export function ProjectHeader({ name, address, url, live, path }: {
 }) {
   const base = `/projects/${name}`
   const current = path.slice(base.length)
-  const on = (suffix: string) => (suffix === '' ? current === '' || current.startsWith('/deployments') : current.startsWith(suffix))
+  const on = (suffix: string) =>
+    suffix === '' ? current === '' || current.startsWith('/deployments') : current.startsWith(suffix) || (suffix === '/analytics' && current.startsWith('/logs'))
   return (
     <header className="project-header">
       <div className="row">
