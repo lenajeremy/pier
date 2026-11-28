@@ -217,3 +217,42 @@ func (m *Manager) Values(ctx context.Context, project, query, field, parsed stri
 	sort.Slice(out, func(i, j int) bool { return out[i].Count > out[j].Count })
 	return out, nil
 }
+
+// LogMetric runs a LogQL metric query, like count_over_time, and answers
+// as a PromQL range query does.
+func (m *Manager) LogMetric(ctx context.Context, project, query string, from, to time.Time) (Result, error) {
+	step := max(15*time.Second, (to.Sub(from) / 240).Round(time.Second))
+	var res struct {
+		Data struct {
+			ResultType string `json:"resultType"`
+			Result     []struct {
+				Metric map[string]string `json:"metric"`
+				Values [][2]any          `json:"values"`
+			} `json:"result"`
+		} `json:"data"`
+	}
+	q := url.Values{"query": {query}, "start": {nanos(from)}, "end": {nanos(to)}, "step": {strconv.Itoa(int(step.Seconds()))}}
+	if err := m.loki(ctx, project, "/loki/api/v1/query_range", q, &res); err != nil {
+		return Result{}, err
+	}
+	if res.Data.ResultType == "streams" {
+		return Result{}, QueryError{"that's a log query; a chart needs a metric query, like sum(count_over_time({service_name=\"api\"} |= \"error\" [1m]))"}
+	}
+	out := Result{Query: query, Step: step.Milliseconds(), Series: []Series{}}
+	for _, r := range res.Data.Result {
+		s := Series{Labels: r.Metric}
+		for _, p := range r.Values {
+			at, _ := p[0].(float64)
+			ms := at * 1000
+			var v *float64
+			if str, ok := p[1].(string); ok {
+				if f, err := strconv.ParseFloat(str, 64); err == nil {
+					v = &f
+				}
+			}
+			s.Values = append(s.Values, [2]*float64{&ms, v})
+		}
+		out.Series = append(out.Series, s)
+	}
+	return out, nil
+}

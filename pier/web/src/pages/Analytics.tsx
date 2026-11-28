@@ -10,17 +10,19 @@ import { Events } from './Events'
 import { TraceView, Traces } from './Traces'
 import { Metrics } from './Metrics'
 import { LokiLogs } from './LokiLogs'
+import { Dashboards } from './Dashboards'
 
 // Analytics is the project's traffic and logs. Overview counts visitors,
 // pages and errors from the request log Pier already keeps; Logs is every
 // request, line by line.
 
-export type View = 'overview' | 'logs' | 'traces' | 'metrics' | 'events'
+export type View = 'overview' | 'logs' | 'traces' | 'metrics' | 'dashboards' | 'events'
 const views: [View, string][] = [
   ['overview', 'Overview'],
   ['logs', 'Logs'],
   ['traces', 'Traces'],
   ['metrics', 'Metrics'],
+  ['dashboards', 'Dashboards'],
   ['events', 'Events'],
 ]
 export const viewNames = views.map(([v]) => v)
@@ -85,6 +87,7 @@ export function Analytics({ project, initial }: { project: string; initial: View
   }
   if (view === 'traces') return <Traces project={project} tabs={tabs} onOpen={openTrace} />
   if (view === 'metrics') return <Metrics project={project} tabs={tabs} />
+  if (view === 'dashboards') return <Dashboards project={project} tabs={tabs} />
   if (view === 'events') return <Events project={project} tabs={tabs} />
   return <Overview project={project} tabs={tabs} />
 }

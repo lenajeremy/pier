@@ -99,3 +99,18 @@ func (a *API) projectLogValues(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"values": values})
 }
+
+// projectLogMetric is GET /api/projects/{project}/logs/metric?q=: a LogQL
+// metric query, for charts.
+func (a *API) projectLogMetric(w http.ResponseWriter, r *http.Request) {
+	project, q, from, to, ok := a.logQuery(w, r)
+	if !ok {
+		return
+	}
+	res, err := a.Telemetry.LogMetric(r.Context(), project, q, from, to)
+	if err != nil {
+		a.telemetryFail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"result": res, "from": from.UnixMilli(), "to": to.UnixMilli()})
+}

@@ -1,6 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import type { Deployment } from '../lib/api'
+import { api, type Deployment } from '../lib/api'
+import { useRole } from '../lib/role'
+import { toast } from '../components/Toast'
 import { useData } from '../lib/data'
 import { size } from '../lib/format'
 import { Calendar, Check, Close, Play, Plus, SortDown } from '../components/Icons'
@@ -12,9 +14,9 @@ import { TelemetryOff, dur } from './Traces'
 // writes PromQL from a metric, filters and steps; Code is the PromQL
 // itself. Either way pierd limits the query to the project's own series.
 
-type Family = { name: string; type: 'counter' | 'gauge' | 'histogram' | 'summary'; unit?: string }
-type Series = { labels: Record<string, string>; values: [number, number | null][] }
-type Result = { query: string; step: number; series: Series[] }
+export type Family = { name: string; type: 'counter' | 'gauge' | 'histogram' | 'summary'; unit?: string }
+export type Series = { labels: Record<string, string>; values: [number, number | null][] }
+export type Result = { query: string; step: number; series: Series[] }
 
 type Filter = { label: string; op: '=' | '!=' | '=~' | '!~'; value: string }
 type Step =
@@ -23,7 +25,7 @@ type Step =
   | { kind: 'quantile'; q: number }
   | { kind: 'average' }
 
-type Built = { metric: string; filters: Filter[]; steps: Step[] }
+export type Built = { metric: string; filters: Filter[]; steps: Step[] }
 
 const windows: [string, string][] = [
   ['1m', '1 min'],
@@ -40,7 +42,7 @@ const fns: [Fn, string][] = [
 ]
 const quantiles = [0.5, 0.9, 0.95, 0.99]
 
-function defaults(f: Family): Step[] {
+export function defaults(f: Family): Step[] {
   switch (f.type) {
     case 'counter':
       return [{ kind: 'rate', window: '5m' }, { kind: 'agg', fn: 'sum', by: [] }]
@@ -56,7 +58,7 @@ function defaults(f: Family): Step[] {
 const quote = (v: string) => JSON.stringify(v)
 
 // promql writes the builder's query.
-function promql(b: Built, f: Family | undefined): string {
+export function promql(b: Built, f: Family | undefined): string {
   if (!b.metric) return ''
   const rate = b.steps.find((s) => s.kind === 'rate') as (Step & { kind: 'rate' }) | undefined
   const agg = b.steps.find((s) => s.kind === 'agg') as (Step & { kind: 'agg' }) | undefined
@@ -81,14 +83,14 @@ function promql(b: Built, f: Family | undefined): string {
 }
 
 // unitOf says how to read a result: a duration, bytes, a share, a rate.
-function unitOf(b: Built, f: Family | undefined) {
+export function unitOf(b: Built, f: Family | undefined) {
   const quantile = b.steps.some((s) => s.kind === 'quantile' || s.kind === 'average')
   const rate = b.steps.some((s) => s.kind === 'rate')
   if (f && (quantile || !rate)) return f.unit ?? ''
   return rate ? 'per second' : ''
 }
 
-function format(v: number | null | undefined, unit: string) {
+export function format(v: number | null | undefined, unit: string) {
   if (v == null) return '–'
   switch (unit) {
     case 'seconds':
@@ -116,13 +118,13 @@ function number(v: number) {
   if (a >= 1e9) return `${+(v / 1e9).toFixed(1)}G`
   if (a >= 1e6) return `${+(v / 1e6).toFixed(1)}M`
   if (a >= 1e4) return `${+(v / 1e3).toFixed(1)}k`
-  if (a >= 100) return `${Math.round(v)}`
+  if (a >= 100) return Math.round(v).toLocaleString()
   if (a >= 1) return `${+v.toFixed(2)}`
   if (a === 0) return '0'
   return `${+v.toPrecision(2)}`
 }
 
-const colors = ['#3987e5', '#d55181', '#9085e9', '#199e70', '#c98a2e', '#4fa3b8', '#b5577a', '#6f8bd6']
+export const colors = ['#3987e5', '#d55181', '#9085e9', '#199e70', '#c98a2e', '#4fa3b8', '#b5577a', '#6f8bd6']
 
 const ranges = [
   { key: '15m', label: 'Last 15 minutes', ms: 15 * 60_000 },
@@ -174,11 +176,38 @@ export function Metrics({ project, tabs }: { project: string; tabs: (right?: Rea
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  const { change } = useRole()
+  const boards = useData<{ dashboards: { id: number; name: string }[] }>(change ? `/api/projects/${encodeURIComponent(project)}/dashboards` : null)
+  // A panel from the query as it ran, on the end of a dashboard.
+  const addTo = async (id: number, name: string) => {
+    if (!ran) return
+    const url = `/api/projects/${encodeURIComponent(project)}/dashboards/${id}`
+    try {
+      const d = await api<{ name: string; spec: { panels: unknown[]; variables?: unknown[] } }>(url)
+      const panel = {
+        id: Math.random().toString(36).slice(2, 9), title: ran.title === 'Query' ? 'Query' : ran.note ? `${ran.title}, ${ran.note.toLowerCase()}` : ran.title, kind: 'timeseries',
+        queries: [{ id: Math.random().toString(36).slice(2, 9), name: 'A', source: 'metrics', mode: mode, expr: ran.q, ...(mode === 'builder' ? { built } : {}) }],
+        unit: ran.unit, legend: 'list', stats: ['mean', 'max', 'last'], reduce: 'last', deploys: true, span: 2,
+      }
+      await api(url, { method: 'PUT', body: JSON.stringify({ name: d.name, spec: { ...d.spec, panels: [...d.spec.panels, panel] } }) })
+      toast(`Added to ${name}`)
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Couldn’t add it', { tone: 'failed' })
+    }
+  }
   const right = (
-    <Menu label="Time range" align="end" className="btn quiet medium" items={ranges.map((r) => ({ label: r.label, onSelect: () => setRange(r) }))}>
-      <Calendar />
-      {range.label}
-    </Menu>
+    <>
+      {change && ran && (boards.data?.dashboards.length ?? 0) > 0 && (
+        <Menu label="Add to a dashboard" align="end" className="btn quiet medium" items={boards.data!.dashboards.map((b) => ({ label: b.name, onSelect: () => addTo(b.id, b.name) }))}>
+          <Plus size={12} color="currentColor" />
+          Add to a dashboard
+        </Menu>
+      )}
+      <Menu label="Time range" align="end" className="btn quiet medium" items={ranges.map((r) => ({ label: r.label, onSelect: () => setRange(r) }))}>
+        <Calendar />
+        {range.label}
+      </Menu>
+    </>
   )
   if (list.data && !list.data.on) {
     return (
@@ -270,7 +299,7 @@ export function Metrics({ project, tabs }: { project: string; tabs: (right?: Rea
   )
 }
 
-function guessUnit(q: string, families: Family[]) {
+export function guessUnit(q: string, families: Family[]) {
   const f = families.find((x) => q.includes(x.name))
   if (!f) return ''
   if (/histogram_quantile|_sum\b.*\/.*_count/.test(q)) return f.unit ?? ''
@@ -291,7 +320,7 @@ function stepLabel(s: Step) {
   }
 }
 
-function Builder({ project, families, built, setBuilt, family }: { project: string; families: Family[]; built: Built; setBuilt: (b: Built) => void; family?: Family }) {
+export function Builder({ project, families, built, setBuilt, family }: { project: string; families: Family[]; built: Built; setBuilt: (b: Built) => void; family?: Family }) {
   const labels = useData<{ labels: Record<string, string[]> }>(
     built.metric ? `/api/projects/${encodeURIComponent(project)}/metrics/labels?metric=${encodeURIComponent(family?.type === 'histogram' ? built.metric + '_bucket' : family?.type === 'summary' ? built.metric + '_count' : built.metric)}` : null,
   )
@@ -414,7 +443,7 @@ function stepItems(s: Step, labels: string[], set: (s: Step) => void) {
 }
 
 // Picker is a button that opens a searchable list.
-function Picker({ label, items, onPick, onClose, open: startOpen, className, children }: {
+export function Picker({ label, items, onPick, onClose, open: startOpen, className, children }: {
   label: string
   items: { key: string; label: string; hint?: string }[]
   onPick: (key: string) => void
@@ -567,7 +596,18 @@ const clock = (ms: number, withDay: boolean) =>
 
 // Lines is a time series chart: one line per series, deploys marked, and a
 // crosshair that reads every series at a moment.
-function Lines({ series, names, from, to, unit, deploys }: { series: Series[]; names: string[]; from: number; to: number; unit: string; deploys: { id: string; at: number }[] }) {
+export function Lines({ series, names, from, to, unit, deploys, goal, min, bars, height = 220 }: {
+  series: Series[]
+  names: string[]
+  from: number
+  to: number
+  unit: string
+  deploys: { id: string; at: number }[]
+  goal?: number // a dashed line at a target
+  min?: number // where the axis starts, instead of the lowest value or 0
+  bars?: boolean // stacked bars instead of lines
+  height?: number
+}) {
   const box = useRef<HTMLDivElement>(null)
   const [w, setW] = useState(900)
   const [hover, setHover] = useState<number | null>(null)
@@ -579,14 +619,16 @@ function Lines({ series, names, from, to, unit, deploys }: { series: Series[]; n
     setW(el.clientWidth)
     return () => ro.disconnect()
   }, [])
-  const H = 220
+  const H = height
   const shown = series.slice(0, 12)
   const all = shown.flatMap((s) => s.values.map(([, v]) => v).filter((v): v is number => v != null))
-  const lo = Math.min(0, ...all)
-  const hi = nice(Math.max(...all, lo + 1e-9))
-  const x = (t: number) => ((t - from) / (to - from)) * w
-  const y = (v: number) => H - ((v - lo) / (hi - lo || 1)) * H
   const times = shown[0]?.values.map(([t]) => t) ?? []
+  // Stacked bars reach the sum of every series at a moment.
+  const stacked = bars ? times.map((t) => shown.reduce((a, s) => a + (s.values.find(([tt]) => tt === t)?.[1] ?? 0), 0)) : []
+  const lo = min ?? Math.min(0, ...all)
+  const hi = nice(Math.max(...(bars ? stacked : all), goal ?? -Infinity, lo + 1e-9) - lo) + lo
+  const x = (t: number) => ((t - from) / (to - from)) * w
+  const y = (v: number) => H - ((Math.max(v, lo) - lo) / (hi - lo || 1)) * H
   const withDay = to - from > 26 * 3600_000
   const path = (s: Series) => {
     let d = ''
@@ -636,9 +678,20 @@ function Lines({ series, names, from, to, unit, deploys }: { series: Series[]; n
             .map((d) => (
               <line key={d.id} x1={x(d.at)} x2={x(d.at)} y1="-6" y2={H} stroke="rgba(255,255,255,0.28)" strokeDasharray="3 3" />
             ))}
-          {shown.map((s, i) => (
-            <path key={i} d={path(s)} fill="none" stroke={colors[i % colors.length]} strokeWidth="1.75" strokeLinejoin="round" />
-          ))}
+          {bars
+            ? times.map((t, k) => {
+                const bw = Math.max(2, (w / Math.max(1, times.length)) * 0.72)
+                let base = 0
+                return shown.map((s, i) => {
+                  const v = s.values[k]?.[1] ?? 0
+                  const top = y(base + v)
+                  const h = y(base) - top
+                  base += v
+                  return h > 0 ? <rect key={`${k}-${i}`} x={x(t) - bw / 2} y={top} width={bw} height={h} rx={i === shown.length - 1 ? 1.5 : 0} fill={colors[i % colors.length]} /> : null
+                })
+              })
+            : shown.map((s, i) => <path key={i} d={path(s)} fill="none" stroke={colors[i % colors.length]} strokeWidth="1.75" strokeLinejoin="round" />)}
+          {goal != null && <line x1="0" x2={w} y1={y(goal)} y2={y(goal)} stroke="var(--d-amber)" strokeDasharray="6 5" strokeWidth="1.25" />}
           {ht != null && <line x1={x(ht)} x2={x(ht)} y1="0" y2={H} stroke="rgba(255,255,255,0.25)" />}
           {ht != null && readings.map((r) => <circle key={r.i} cx={x(ht)} cy={y(r.v as number)} r="3.5" fill={colors[r.i % colors.length]} stroke="var(--d-panel)" strokeWidth="2" />)}
         </svg>
@@ -671,7 +724,7 @@ function Lines({ series, names, from, to, unit, deploys }: { series: Series[]; n
   )
 }
 
-function nice(v: number) {
+export function nice(v: number) {
   if (v <= 0) return 1
   const p = 10 ** Math.floor(Math.log10(v))
   for (const m of [1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10]) if (m * p >= v) return m * p

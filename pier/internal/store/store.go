@@ -491,6 +491,15 @@ var migrations = []string{
 		created_by TEXT NOT NULL DEFAULT '',
 		UNIQUE (project, database)
 	);`,
+	`CREATE TABLE dashboards (
+		id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		project    TEXT NOT NULL,
+		name       TEXT NOT NULL,
+		spec       TEXT NOT NULL,
+		updated_at INTEGER NOT NULL,
+		updated_by TEXT NOT NULL DEFAULT '',
+		UNIQUE (project, name)
+	);`,
 }
 
 // Open opens (and if needed creates) the database at path.
