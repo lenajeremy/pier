@@ -164,14 +164,14 @@ type Result struct {
 	Series []Series `json:"series"`
 }
 
-// Query runs PromQL over a project's metrics, limited to its series.
-func (m *Manager) Query(ctx context.Context, project, env, query string, from, to time.Time) (Result, error) {
+// Query runs PromQL over a project's metrics, limited to its series, a
+// point every step (0 picks about 240 points).
+func (m *Manager) Query(ctx context.Context, project, env, query string, from, to time.Time, step time.Duration) (Result, error) {
 	scoped, err := promq.Scope(query, project, env)
 	if err != nil {
 		return Result{}, QueryError{err.Error()}
 	}
-	span := to.Sub(from)
-	step := max(15*time.Second, (span / 240).Round(time.Second))
+	step = stepFor(from, to, step)
 	q := url.Values{"query": {scoped}, "start": {strconv.FormatInt(from.Unix(), 10)}, "end": {strconv.FormatInt(to.Unix(), 10)}, "step": {strconv.FormatInt(int64(step.Seconds()), 10)}}
 	var data struct {
 		ResultType string `json:"resultType"`
@@ -360,4 +360,13 @@ func (m *Manager) ServiceMap(ctx context.Context, project, env string, from, to 
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	sort.Slice(edges, func(i, j int) bool { return edges[i].From+edges[i].To < edges[j].From+edges[j].To })
 	return out, edges, nil
+}
+
+// stepFor is the step asked for, or about 240 points over the span, and
+// never under 15 seconds or so small that a query returns too many points.
+func stepFor(from, to time.Time, step time.Duration) time.Duration {
+	if step <= 0 {
+		step = (to.Sub(from) / 240).Round(time.Second)
+	}
+	return max(15*time.Second, step, (to.Sub(from) / 10000).Round(time.Second))
 }

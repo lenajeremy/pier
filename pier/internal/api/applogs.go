@@ -107,7 +107,7 @@ func (a *API) projectLogMetric(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	res, err := a.Telemetry.LogMetric(r.Context(), project, q, from, to)
+	res, err := a.Telemetry.LogMetric(r.Context(), project, q, from, to, stepOf(r))
 	if err != nil {
 		a.telemetryFail(w, err)
 		return

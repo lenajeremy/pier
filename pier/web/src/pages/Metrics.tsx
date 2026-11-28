@@ -320,7 +320,14 @@ function stepLabel(s: Step) {
   }
 }
 
-export function Builder({ project, families, built, setBuilt, family }: { project: string; families: Family[]; built: Built; setBuilt: (b: Built) => void; family?: Family }) {
+export function Builder({ project, families, built, setBuilt, family, noSteps }: {
+  project: string
+  families: Family[]
+  built: Built
+  setBuilt: (b: Built) => void
+  family?: Family
+  noSteps?: boolean // a panel that reads a histogram's buckets as they are
+}) {
   const labels = useData<{ labels: Record<string, string[]> }>(
     built.metric ? `/api/projects/${encodeURIComponent(project)}/metrics/labels?metric=${encodeURIComponent(family?.type === 'histogram' ? built.metric + '_bucket' : family?.type === 'summary' ? built.metric + '_count' : built.metric)}` : null,
   )
@@ -394,6 +401,8 @@ export function Builder({ project, families, built, setBuilt, family }: { projec
           </Picker>
         )}
       </div>
+      {!noSteps && (
+        <>
       <span className="m-row-label">Then</span>
       <div className="m-chips">
         {built.steps.map((s, i) => (
@@ -416,6 +425,8 @@ export function Builder({ project, families, built, setBuilt, family }: { projec
           </Menu>
         )}
       </div>
+        </>
+      )}
     </div>
   )
 }

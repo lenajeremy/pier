@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -72,10 +73,19 @@ func (a *API) projectMetricQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	from, to := traceSpan(r)
-	res, err := a.Telemetry.Query(r.Context(), name, env, q, time.UnixMilli(from), time.UnixMilli(to))
+	res, err := a.Telemetry.Query(r.Context(), name, env, q, time.UnixMilli(from), time.UnixMilli(to), stepOf(r))
 	if err != nil {
 		a.telemetryFail(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"result": res, "from": from, "to": to})
+}
+
+// stepOf is the ?step= a chart asked for, in seconds; 0 lets the server pick.
+func stepOf(r *http.Request) time.Duration {
+	n, err := strconv.Atoi(r.URL.Query().Get("step"))
+	if err != nil || n <= 0 || n > 86400 {
+		return 0
+	}
+	return time.Duration(n) * time.Second
 }

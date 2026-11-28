@@ -6264,3 +6264,138 @@ button.lg-n:hover {
 .sm-node.tight .sm-node-head .t-note {
   display: none;
 }
+
+/* Histogram, heatmap and states panels. */
+.dash-hist,
+.dash-heat,
+.dash-states {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.dash-hist-plot {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  margin-top: 38px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+}
+.dash-hist-bar {
+  flex: 1;
+  min-height: 1px;
+  border-radius: 3px 3px 0 0;
+  background: var(--d-blue);
+}
+.dash-hist-mark {
+  position: absolute;
+  top: -20px;
+  bottom: 0;
+  border-left: 1px dashed rgba(255, 255, 255, 0.35);
+  padding-left: 5px;
+  font-family: var(--d-mono);
+  font-size: 11.5px;
+  color: var(--d-muted);
+  white-space: nowrap;
+  pointer-events: none;
+}
+.dash-hist-mark b {
+  font-weight: 500;
+  color: var(--d-text);
+}
+.dash-hist-x {
+  display: flex;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--d-note);
+}
+.dash-hist-x span {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  justify-content: flex-end;
+  white-space: nowrap;
+}
+.dash-heat-scale {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--d-note);
+}
+.dash-heat-ramp {
+  width: 120px;
+  height: 6px;
+  border-radius: 3px;
+  background: linear-gradient(90deg, rgb(20, 40, 72), rgb(57, 135, 229) 60%, rgb(168, 201, 248));
+}
+.dash-heat-body {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr);
+  gap: 8px;
+}
+.dash-heat-y {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 11px;
+  color: var(--d-note);
+  text-align: right;
+}
+.dash-heat-y span {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  white-space: nowrap;
+}
+.dash-heat-grid {
+  position: relative;
+  display: grid;
+  gap: 2px;
+}
+.dash-heat-grid > span {
+  border-radius: 2px;
+}
+.dash-heat-grid > span.on {
+  outline: 1.5px solid #eceef4;
+  outline-offset: -1px;
+}
+.dash-heat-x {
+  margin-left: 66px;
+}
+.dash-state-row {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  height: 30px;
+  font-size: 12.5px;
+}
+.dash-state-row .mono {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dash-state-band {
+  position: relative;
+  height: 22px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.03);
+  overflow: hidden;
+}
+.dash-state-band span {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  min-width: 2px;
+}
+.dash-states-x {
+  margin-left: 108px;
+}
+.dash-hist-label {
+  position: relative;
+  z-index: 1;
+  padding-right: 4px;
+  background: var(--d-panel);
+}

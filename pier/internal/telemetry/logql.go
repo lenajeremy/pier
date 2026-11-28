@@ -220,8 +220,8 @@ func (m *Manager) Values(ctx context.Context, project, query, field, parsed stri
 
 // LogMetric runs a LogQL metric query, like count_over_time, and answers
 // as a PromQL range query does.
-func (m *Manager) LogMetric(ctx context.Context, project, query string, from, to time.Time) (Result, error) {
-	step := max(15*time.Second, (to.Sub(from) / 240).Round(time.Second))
+func (m *Manager) LogMetric(ctx context.Context, project, query string, from, to time.Time, step time.Duration) (Result, error) {
+	step = stepFor(from, to, step)
 	var res struct {
 		Data struct {
 			ResultType string `json:"resultType"`

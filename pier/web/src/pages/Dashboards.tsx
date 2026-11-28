@@ -16,7 +16,7 @@ import { TelemetryOff } from './Traces'
 // chart, a number, bars or lines of log. $environment and other variables
 // are filled in before a query runs, as are $__range and $__interval.
 
-export type Kind = 'timeseries' | 'bars' | 'stat' | 'bargauge' | 'table' | 'logs'
+export type Kind = 'timeseries' | 'bars' | 'stat' | 'bargauge' | 'table' | 'heatmap' | 'histogram' | 'states' | 'logs'
 type Reduce = 'last' | 'mean' | 'max' | 'min' | 'sum'
 type Query = { id: string; name: string; source: 'metrics' | 'logs'; mode: 'builder' | 'code'; expr: string; built?: Built }
 export type Panel = {
@@ -45,6 +45,9 @@ const kinds: [Kind, string, ReactNode][] = [
   ['stat', 'Stat', <path key="s" d="M5 8h14M5 13h9M5 18h11" />],
   ['bargauge', 'Bar gauge', <path key="g" d="M4 6h12M4 12h16M4 18h8" />],
   ['table', 'Table', <path key="tb" d="M4 5h16v14H4zM4 10h16M10 10v9" />],
+  ['heatmap', 'Heatmap', <path key="h" d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z" />],
+  ['histogram', 'Histogram', <path key="hi" d="M4 20V14M9 20V8M14 20V11M19 20V16M3 20h18" />],
+  ['states', 'States', <path key="st" d="M4 8h9M15 8h5M4 16h4M10 16h10" />],
   ['logs', 'Logs', <path key="l" d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01" />],
 ]
 const units: [string, string][] = [
@@ -469,9 +472,13 @@ function AddVariable({ project, onAdd }: { project: string; onAdd: (v: Variable)
   )
 }
 
+// interval is the step a panel queries at, in seconds: about 120 points,
+// and never under a minute, since apps send metrics every 15 to 60 s.
+const interval = (from: number, to: number) => Math.max(60, Math.round((to - from) / 1000 / 120))
+
 // fill puts the variables' values and the time span into a query.
 function fill(expr: string, vars: Record<string, string>, from: number, to: number) {
-  const step = Math.max(15, Math.round((to - from) / 240 / 1000))
+  const step = interval(from, to)
   return expr
     .replace(/\$__range\b/g, `${Math.max(1, Math.round((to - from) / 1000))}s`)
     .replace(/\$__interval\b/g, `${step}s`)
@@ -493,7 +500,7 @@ function useRun(project: string, p: Panel, from: number, to: number, vars: Recor
       setProblem('')
       return
     }
-    const span = new URLSearchParams({ from: String(Math.floor(from)), to: String(Math.ceil(to)) })
+    const span = new URLSearchParams({ from: String(Math.floor(from)), to: String(Math.ceil(to)), step: String(interval(from, to)) })
     if (p.kind === 'logs') {
       api<{ lines: { at: number; labels: Record<string, string>; line: string }[] }>(`${base}/logs/lines?q=${encodeURIComponent(fill(queries[0].expr, vars, from, to))}&limit=50&${span}`).then(
         (r) => !stopped && (setRan({ lines: r.lines }), setProblem('')),
@@ -650,6 +657,12 @@ function PanelBox({ project, p, from, to, vars, deploys, menu, big }: {
       ) : (
         <Legend names={names} series={series} unit={p.unit} stats={p.stats.length ? p.stats : ['mean', 'max', 'last']} alone />
       )
+  } else if (p.kind === 'histogram') {
+    body = <Histogram series={series} unit={p.unit} height={big ? 240 : 180} />
+  } else if (p.kind === 'heatmap') {
+    body = <Heatmap series={series} unit={p.unit} height={big ? 240 : 180} />
+  } else if (p.kind === 'states') {
+    body = <States series={series} names={names} from={from} to={to} goal={p.goal} unit={p.unit} />
   } else {
     body = (
       <>
@@ -723,14 +736,15 @@ function PanelEditor({ project, dashboard, start, from, to, vars, deploys, onSav
     let changed = false
     const queries = p.queries.map((q) => {
       if (q.source !== 'metrics' || q.mode !== 'builder' || !q.built) return q
-      const expr = promql(q.built, families.find((f) => f.name === q.built!.metric))
+      const family = families.find((f) => f.name === q.built!.metric)
+      const expr = (p.kind === 'heatmap' || p.kind === 'histogram') && family?.type === 'histogram' ? bucketQuery(q.built, p.kind) : promql(q.built, family)
       if (expr === q.expr) return q
       changed = true
       return { ...q, expr }
     })
     if (changed) setP((prev) => ({ ...prev, queries: prev.queries.map((q) => queries.find((x) => x.id === q.id) ?? q) }))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [p.queries, families])
+  }, [p.queries, p.kind, families])
   // A new metrics query starts on the first histogram, with its usual steps.
   useEffect(() => {
     if (!families.length) return
@@ -808,7 +822,7 @@ function PanelEditor({ project, dashboard, start, from, to, vars, deploys, onSav
                     (q.source === 'metrics' && q.mode === 'builder' ? (
                       q.built ? (
                         <>
-                          <Builder project={project} families={families} built={q.built} setBuilt={(b) => setQuery(q.id, { built: b })} family={family} />
+                          <Builder project={project} families={families} built={q.built} setBuilt={(b) => setQuery(q.id, { built: b })} family={family} noSteps={(p.kind === 'heatmap' || p.kind === 'histogram') && family?.type === 'histogram'} />
                           {q.expr && <div className="m-promql mono">{q.expr}</div>}
                         </>
                       ) : (
@@ -940,7 +954,7 @@ function PanelEditor({ project, dashboard, start, from, to, vars, deploys, onSav
               </div>
             </div>
           )}
-          {p.kind !== 'logs' && p.kind !== 'table' && p.kind !== 'bargauge' && (
+          {p.kind !== 'logs' && p.kind !== 'table' && p.kind !== 'bargauge' && p.kind !== 'heatmap' && p.kind !== 'histogram' && (
             <div className="dash-opt">
               <div className="dash-opt-title">Goal line</div>
               <div className="dash-goal">
@@ -982,4 +996,231 @@ function message(line: string) {
   } catch {
     return line
   }
+}
+
+// bucketQuery counts a histogram's requests by bucket: over the whole range
+// for a histogram panel, per step for a heatmap.
+function bucketQuery(b: Built, kind: 'heatmap' | 'histogram') {
+  const matchers = b.filters.map((x) => `${x.label}${x.op}${JSON.stringify(x.value)}`).join(', ')
+  const agg = b.steps.find((s) => s.kind === 'agg') as { by: string[] } | undefined
+  const by = ['le', ...(agg?.by ?? [])].join(', ')
+  return `sum by (${by}) (increase(${b.metric}_bucket${matchers ? `{${matchers}}` : ''}[${kind === 'histogram' ? '$__range' : '$__interval'}]))`
+}
+
+// buckets reads series split by le as each bucket's own count at each
+// moment, from Prometheus's running totals.
+function buckets(series: Series[]) {
+  const withLe = series.filter((s) => s.labels.le != null)
+  const bounds = [...new Set(withLe.map((s) => s.labels.le))].map((le) => ({ le, at: le === '+Inf' ? Infinity : Number(le) })).sort((a, b) => a.at - b.at)
+  const byLe = new Map<string, Series[]>()
+  for (const s of withLe) byLe.set(s.labels.le, [...(byLe.get(s.labels.le) ?? []), s])
+  const times = withLe[0]?.values.map(([t]) => t) ?? []
+  // cumulative[bucket][time], summed over any other labels.
+  const cumulative = bounds.map((b) => times.map((_, i) => (byLe.get(b.le) ?? []).reduce((a, s) => a + (s.values[i]?.[1] ?? 0), 0)))
+  const counts = cumulative.map((row, bi) => row.map((v, ti) => Math.max(0, v - (bi > 0 ? cumulative[bi - 1][ti] : 0))))
+  return { bounds: bounds.map((b) => b.at), times, cumulative, counts }
+}
+
+function quantile(q: number, bounds: number[], cum: number[]) {
+  const total = cum[cum.length - 1] ?? 0
+  if (!total) return null
+  const rank = q * total
+  for (let i = 0; i < bounds.length; i++) {
+    if (cum[i] >= rank) {
+      const lo = i ? bounds[i - 1] : 0
+      if (!isFinite(bounds[i])) return lo
+      const below = i ? cum[i - 1] : 0
+      return lo + (bounds[i] - lo) * ((rank - below) / Math.max(1e-9, cum[i] - below))
+    }
+  }
+  return bounds[bounds.length - 2] ?? null
+}
+
+const needsLe = <div className="dash-problem">This needs a query split by le, like sum by (le) (increase(request_duration_seconds_bucket[$__range]))</div>
+
+function Histogram({ series, unit, height }: { series: Series[]; unit: string; height: number }) {
+  const { bounds, cumulative, counts } = buckets(series)
+  if (!bounds.length) return needsLe
+  // The whole range: each bucket's count at the last moment.
+  const last = (row: number[]) => [...row].reverse().find((v) => v != null) ?? 0
+  const cum = cumulative.map(last)
+  const own = counts.map(last)
+  const total = cum[cum.length - 1] ?? 0
+  const shown = own.map((v, i) => ({ v, at: bounds[i] })).filter((b, i, all) => isFinite(b.at) || b.v > 0 || i < all.length - 1)
+  const max = Math.max(1, ...shown.map((b) => b.v))
+  const marks = [0.5, 0.95, 0.99].map((q) => ({ q, v: quantile(q, bounds, cum) }))
+  const every = Math.ceil(shown.length / 8)
+  // Where a value sits along the bars: its bucket, and how far into it.
+  const along = (v: number) => {
+    const i = shown.findIndex((b) => v <= b.at)
+    if (i < 0) return 100
+    const lo = i ? shown[i - 1].at : 0
+    const f = isFinite(shown[i].at) ? (v - lo) / Math.max(1e-9, shown[i].at - lo) : 0.5
+    return ((i + Math.min(1, Math.max(0, f))) / shown.length) * 100
+  }
+  return (
+    <div className="dash-hist">
+      <div className="t-caption t-muted">{Math.round(total).toLocaleString()} in this range, by how long each took</div>
+      <div className="dash-hist-plot" style={{ height }}>
+        {marks.map((m, i) => {
+          if (m.v == null) return null
+          // A mark close to the one before goes a line higher.
+          const near = i > 0 && marks[i - 1].v != null && Math.abs(along(m.v) - along(marks[i - 1].v!)) < 14
+          return (
+            <span key={m.q} className="dash-hist-mark" style={{ left: `${along(m.v)}%`, top: near ? -36 : -20 }}>
+              <span className="dash-hist-label">
+                <b>p{Math.round(m.q * 100)}</b> {bound(m.v, unit)}
+              </span>
+            </span>
+          )
+        })}
+        {shown.map((b, i) => (
+          <span key={i} className="dash-hist-bar" style={{ height: `${(b.v / max) * 100}%` }} title={`${i ? format(shown[i - 1].at, unit) : '0'} to ${isFinite(b.at) ? format(b.at, unit) : 'more'}: ${Math.round(b.v).toLocaleString()}`} />
+        ))}
+      </div>
+      <div className="dash-hist-x mono">
+        {shown.map((b, i) => (
+          <span key={i}>{i % every === every - 1 || i === shown.length - 1 ? (isFinite(b.at) ? bound(b.at, unit) : '') : ''}</span>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function Heatmap({ series, unit, height }: { series: Series[]; unit: string; height: number }) {
+  const [hover, setHover] = useState<{ r: number; c: number } | null>(null)
+  const { bounds, times, counts } = buckets(series)
+  if (!bounds.length || !times.length) return needsLe
+  // At most 40 columns: neighbouring steps add up.
+  const per = Math.ceil(times.length / 40)
+  const cols = Math.ceil(times.length / per)
+  const grid = counts.map((row) => Array.from({ length: cols }, (_, c) => row.slice(c * per, c * per + per).reduce((a, v) => a + v, 0)))
+  // Drop the top bucket when nothing went past the last bound.
+  const rows = grid.length > 1 && grid[grid.length - 1].every((v) => v === 0) ? grid.slice(0, -1) : grid
+  const max = Math.max(1, ...rows.flat())
+  const color = (v: number) => {
+    if (!v) return 'rgba(255, 255, 255, 0.03)'
+    const t = Math.sqrt(v / max)
+    const mix = (a: number[], b: number[], f: number) => a.map((x, i) => Math.round(x + (b[i] - x) * f))
+    const c = t < 0.6 ? mix([20, 40, 72], [57, 135, 229], t / 0.6) : mix([57, 135, 229], [168, 201, 248], (t - 0.6) / 0.4)
+    return `rgb(${c.join(',')})`
+  }
+  const label = (i: number) => (isFinite(bounds[i]) ? bound(bounds[i], unit) : `over ${bound(bounds[i - 1], unit)}`)
+  const cellH = Math.max(10, Math.min(24, (height - 10) / rows.length))
+  const h = hover ? { from: times[hover.c * per], to: times[Math.min(times.length - 1, hover.c * per + per)], v: rows[hover.r][hover.c] } : null
+  return (
+    <div className="dash-heat">
+      <div className="dash-heat-scale mono">
+        <span>0</span>
+        <span className="dash-heat-ramp" />
+        <span>{Math.round(max).toLocaleString()}</span>
+      </div>
+      <div className="dash-heat-body">
+        <div className="dash-heat-y mono">
+          {[...rows.keys()].reverse().map((r) => (
+            <span key={r} style={{ height: cellH }}>
+              {r % Math.ceil(rows.length / 8) === 0 ? label(r) : ''}
+            </span>
+          ))}
+        </div>
+        <div className="dash-heat-grid" style={{ gridTemplateColumns: `repeat(${cols}, 1fr)` }} onMouseLeave={() => setHover(null)}>
+          {[...rows.keys()].reverse().flatMap((r) =>
+            rows[r].map((v, c) => <span key={`${r}-${c}`} className={hover && hover.r === r && hover.c === c ? 'on' : ''} style={{ height: cellH, background: color(v) }} onMouseEnter={() => setHover({ r, c })} />),
+          )}
+          {h && hover && (
+            <div className={'a-tip' + (hover.c > cols * 0.6 ? ' left' : '')} style={{ left: `${((hover.c + 1) / cols) * 100}%`, top: 0 }}>
+              <div className="a-tip-head">
+                {clock(h.from)} to {clock(h.to)}
+              </div>
+              <div>
+                Range<b>{hover.r ? bound(bounds[hover.r - 1], unit) : '0'} to {label(hover.r)}</b>
+              </div>
+              <div>
+                Count<b>{Math.round(h.v).toLocaleString()}</b>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+      <div className="a-x dash-heat-x">
+        {[0, 0.5, 1].map((f) => (
+          <span key={f}>{clock(times[Math.min(times.length - 1, Math.round(f * (times.length - 1)))])}</span>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// States draws each series as a band over time: up, slow (over the goal)
+// or down (zero), merged into runs.
+function States({ series, names, from, to, goal, unit }: { series: Series[]; names: string[]; from: number; to: number; goal?: number; unit: string }) {
+  const stateOf = (v: number | null) => (v == null ? null : v <= 0 ? 'down' : goal != null && v > goal ? 'slow' : 'up')
+  const colors: Record<string, string> = { up: '#3d7f76', slow: 'var(--d-amber)', down: 'var(--d-red)' }
+  const rows = series.slice(0, 12).map((s, i) => {
+    const runs: { state: string; from: number; to: number }[] = []
+    const step = s.values.length > 1 ? s.values[1][0] - s.values[0][0] : 60_000
+    for (const [t, v] of s.values) {
+      const st = stateOf(v)
+      if (!st) continue
+      const lastRun = runs[runs.length - 1]
+      if (lastRun && lastRun.state === st && t - lastRun.to <= step * 1.5) lastRun.to = t + step
+      else runs.push({ state: st, from: t, to: t + step })
+    }
+    return { name: names[i], runs }
+  })
+  // The longest time down, or else slow, for the line under the title.
+  const longest = (state: string) => rows.flatMap((r) => r.runs.filter((x) => x.state === state).map((x) => ({ name: r.name, ...x }))).sort((a, b) => b.to - b.from - (a.to - a.from))[0]
+  const worst = longest('down')
+  const slow = longest('slow')
+  const x = (t: number) => `${Math.max(0, Math.min(100, ((t - from) / (to - from)) * 100))}%`
+  return (
+    <div className="dash-states">
+      <div className="t-caption t-muted">
+        {worst
+          ? `${worst.name} was down ${dur(worst.to - worst.from)} at ${clock(worst.from)}`
+          : slow && goal != null
+            ? `${slow.name} was over ${bound(goal, unit)} for ${dur(slow.to - slow.from)} at ${clock(slow.from)}`
+            : `Up the whole range${goal != null ? `, ${bound(goal, unit)} or under` : ''}`}
+      </div>
+      <div className="a-legend">
+        {(['up', ...(goal != null ? ['slow'] : []), 'down'] as const).map((k) => (
+          <span key={k}>
+            <span className="a-dot" style={{ background: colors[k] }} />
+            {k === 'up' ? 'Up' : k === 'slow' ? 'Slow' : 'Down'}
+          </span>
+        ))}
+      </div>
+      {rows.map((r) => (
+        <div key={r.name} className="dash-state-row">
+          <span className="mono">{r.name}</span>
+          <span className="dash-state-band">
+            {r.runs.map((run, i) => (
+              <span key={i} style={{ left: x(run.from), width: `calc(${x(run.to)} - ${x(run.from)})`, background: colors[run.state] }} title={`${run.state} from ${clock(run.from)} to ${clock(run.to)}`} />
+            ))}
+          </span>
+        </div>
+      ))}
+      <div className="a-x dash-states-x">
+        {[0, 0.5, 1].map((f) => (
+          <span key={f}>{clock(from + f * (to - from))}</span>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function dur(ms: number) {
+  const n = (v: number, one: string) => `${v} ${one}${v === 1 ? '' : 's'}`
+  if (ms < 60_000) return n(Math.round(ms / 1000), 'second')
+  if (ms < 3_600_000) return n(Math.round(ms / 60_000), 'minute')
+  return n(+(ms / 3_600_000).toFixed(1), 'hour')
+}
+
+// bound names a bucket's edge shortly: 250 ms, 1 s, 10 s.
+function bound(v: number, unit: string) {
+  const ms = unit === 'seconds' ? v * 1000 : unit === 'milliseconds' ? v : unit === 'microseconds' ? v / 1000 : unit === 'nanoseconds' ? v / 1e6 : null
+  if (ms == null) return format(v, unit)
+  if (ms < 1000) return `${+ms.toPrecision(3)} ms`
+  if (ms < 60_000) return `${+(ms / 1000).toPrecision(3)} s`
+  return `${+(ms / 60_000).toPrecision(3)} min`
 }
