@@ -1019,7 +1019,17 @@ export function TelemetryOff({ project, onOn }: { project: string; onOn: () => v
 type MapNode = { name: string; kind: 'router' | 'service' | 'database' | 'external'; rate: number; errors: number; p95_ms: number }
 type MapEdge = { from: string; to: string; kind: '' | 'database' | 'external'; rate: number; errors: number; p95_ms: number }
 
-const health = (n: { errors: number; p95_ms: number }) => (n.errors >= 0.05 ? 'failing' : n.p95_ms >= 1000 ? 'slow' : 'healthy')
+// health judges a box by what's its own. Its p95 includes the calls it
+// makes, so the slowest of those comes off first; Pier's router does no work
+// of its own, so it's never slow, and fails only on errors it made itself,
+// like a 502 when the app is down, not ones it passed on.
+function health(n: MapNode, out: MapEdge[]) {
+  const passedOn = Math.max(0, ...out.map((e) => e.errors))
+  if (n.kind === 'router') return n.errors >= 0.05 && passedOn < n.errors / 2 ? 'failing' : 'healthy'
+  if (n.errors >= 0.05) return 'failing'
+  const calls = Math.max(0, ...out.map((e) => e.p95_ms))
+  return n.p95_ms - calls >= 1000 ? 'slow' : 'healthy'
+}
 const perSecond = (r: number) => (r >= 100 ? `${Math.round(r)}/s` : r >= 0.1 ? `${+r.toFixed(1)}/s` : `${+(r * 60).toFixed(1)}/min`)
 const share = (e: number) => (e === 0 ? '0%' : e < 0.001 ? '<0.1%' : `${+(e * 100).toFixed(1)}%`)
 
@@ -1145,9 +1155,18 @@ function ServiceMap({ project, from, to, onPick }: { project: string; from: numb
           {nodes.map((n) => {
             const p = pos.get(n.name)
             if (!p) return null
-            const h = health(n)
+            const h = health(
+              n,
+              edges.filter((e) => e.from === n.name),
+            )
             return (
-              <button key={n.name} className={'sm-node ' + n.kind + (BW < 200 ? ' tight' : '')} style={{ left: p.x, top: p.y, width: BW, height: BH }} onClick={() => onPick(query(n))} title="Find its traces">
+              <button
+                key={n.name}
+                className={'sm-node ' + n.kind + (BW < 200 ? ' tight' : '')}
+                style={{ left: p.x, top: p.y, width: BW, height: BH }}
+                onClick={() => onPick(query(n))}
+                title={n.kind === 'router' ? 'What visitors waited, the app included. Find its traces.' : 'Find its traces'}
+              >
                 <span className="sm-node-head">
                   <span className="sm-sq" style={{ background: n.kind === 'database' ? '#9085e9' : n.kind === 'external' ? '#199e70' : serviceColor(n.name) }} />
                   <b className="mono">{n.name}</b>
