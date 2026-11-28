@@ -437,3 +437,56 @@ export interface Funnel {
   counts: number[]
   names: string[]
 }
+
+// Traces, from Tempo through pierd.
+export interface TraceRow {
+  id: string
+  service: string // the root span's
+  name: string
+  start: number // ms since the epoch
+  ms: number
+  spans: number
+  errors: number
+  services: Record<string, { spans: number; errors?: number }>
+  status?: number // the request's, when Pier's router started the trace
+  deployment?: string
+  partial?: boolean // the root span hasn't arrived yet
+}
+
+export interface TraceList {
+  on: boolean
+  traces: TraceRow[]
+  from: number
+  to: number
+  limit: number
+}
+
+export interface TraceSpan {
+  id: string
+  parent?: string
+  service: string
+  name: string
+  kind?: string
+  start: number // ms after the trace began
+  ms: number
+  error?: boolean
+  message?: string
+  attrs?: [string, string][]
+  resource?: [string, string][]
+  events?: { name: string; at: number; attrs?: [string, string][] }[]
+}
+
+export interface TraceLog {
+  at: number // ms since the epoch
+  level?: string
+  service?: string
+  span?: string
+  stream?: string
+  text: string
+}
+
+export interface TraceDoc {
+  trace: { id: string; start: number; ms: number; spans: TraceSpan[] }
+  request: { method: string; path: string; status: number; deployment: string; host?: string } | null
+  logs: TraceLog[]
+}

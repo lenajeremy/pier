@@ -336,6 +336,8 @@ func serve(args []string) int {
 			vars = append(vars,
 				"OTEL_EXPORTER_OTLP_ENDPOINT="+base+"/otlp",
 				"OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf",
+				// Node's SDK sends metrics only when told to.
+				"OTEL_METRICS_EXPORTER=otlp",
 				"OTEL_EXPORTER_OTLP_HEADERS=authorization=Bearer%20"+token,
 				"OTEL_SERVICE_NAME="+project,
 				"OTEL_RESOURCE_ATTRIBUTES=deployment.environment="+target,

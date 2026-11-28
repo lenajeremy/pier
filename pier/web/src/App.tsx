@@ -22,7 +22,7 @@ import { Members } from './pages/Members'
 import { ProjectSettings } from './pages/ProjectSettings'
 import { Variables } from './pages/Variables'
 import { Domains } from './pages/Domains'
-import { Analytics } from './pages/Analytics'
+import { Analytics, viewNames } from './pages/Analytics'
 import { Invite } from './pages/Invite'
 import { RoleProvider } from './lib/role'
 import { Jobs } from './pages/Jobs'
@@ -126,7 +126,7 @@ function Signed({ session, path, now }: { session: Session; path: string; now: n
             <Analytics
               key={name}
               project={name}
-              initial={tab.tab === 'logs' ? 'logs' : (['logs', 'events'] as const).find((v) => v === new URLSearchParams(location.search).get('view')) ?? 'overview'}
+              initial={tab.tab === 'logs' ? 'logs' : viewNames.find((v) => v === new URLSearchParams(location.search).get('view')) ?? 'overview'}
             />
           ) : tab?.tab === 'variables' ? (
             <Variables project={name} now={now} />

@@ -96,6 +96,8 @@ func (a *API) routes() []route {
 		{"GET /api/projects/{project}/analytics", viewer, "", a.analyticsOverview},
 		{"GET /api/projects/{project}/requests/values", viewer, "", a.requestValues},
 		{"GET /api/projects/{project}/events", viewer, "", a.projectEvents},
+		{"GET /api/projects/{project}/traces", viewer, "", a.projectTraces},
+		{"GET /api/projects/{project}/traces/{id}", viewer, "", a.projectTrace},
 		{"GET /api/projects/{project}/events/detail", viewer, "", a.projectEvent},
 		{"GET /api/projects/{project}/events/funnel", viewer, "", a.projectFunnel},
 		{"PUT /api/projects/{project}/events/funnel", member, "change the funnel", a.setFunnel},

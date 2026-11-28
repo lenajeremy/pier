@@ -776,3 +776,37 @@ func isHex(s string, n int) bool {
 	}
 	return true
 }
+
+// ByTrace finds the requests that started these traces, between from and
+// to (ms since the epoch).
+func (l *Log) ByTrace(ctx context.Context, project string, traces []string, from, to int64) (map[string]Line, error) {
+	out := map[string]Line{}
+	for len(traces) > 0 {
+		n := min(len(traces), 400)
+		chunk := traces[:n]
+		traces = traces[n:]
+		args := []any{project, from, to}
+		marks := make([]string, len(chunk))
+		for i, t := range chunk {
+			marks[i] = "?"
+			args = append(args, t)
+		}
+		rows, err := l.db.QueryContext(ctx, `SELECT `+lineCols+` FROM requests WHERE project = ? AND ts BETWEEN ? AND ? AND trace IN (`+strings.Join(marks, ",")+`)`, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			r, err := scanLine(rows)
+			if err != nil {
+				rows.Close()
+				return nil, err
+			}
+			out[r.Trace] = r
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}

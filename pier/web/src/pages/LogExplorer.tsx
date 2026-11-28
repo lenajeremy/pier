@@ -28,6 +28,7 @@ type Line = {
   device?: string
   referrer?: string
   country?: string
+  trace?: string // the trace Pier's router started, when traces are on
 }
 type Bucket = { at: number; requests: number; errors: number; e4xx: number; e5xx: number }
 type Chart = { buckets: Bucket[]; bucket_ms: number }
@@ -47,7 +48,7 @@ const groups: [string, [string, string][]][] = [
 ]
 const fieldLabel = Object.fromEntries(groups.flatMap(([, fs]) => fs))
 
-export function LogExplorer({ project, head }: { project: string; head: ReactNode }) {
+export function LogExplorer({ project, head, onTrace }: { project: string; head: ReactNode; onTrace?: (id: string) => void }) {
   const [range, setRange] = useState(ranges[1])
   const [zoom, setZoom] = useState<{ from: number; to: number } | null>(null)
   const [matches, setMatches] = useState<Match[]>(() => {
@@ -212,7 +213,7 @@ export function LogExplorer({ project, head }: { project: string; head: ReactNod
                 </div>
                 <Bars chart={chart} onPick={(b) => setZoom({ from: b.at, to: b.at + chart.bucket_ms })} />
               </div>
-              <Lines lines={lines} open={open} setOpen={setOpen} onFilter={add} live={live} />
+              <Lines lines={lines} open={open} setOpen={setOpen} onFilter={add} live={live} onTrace={onTrace} />
             </>
           )}
         </div>
@@ -283,12 +284,13 @@ function Bars({ chart, onPick }: { chart: Chart; onPick: (b: Bucket) => void }) 
   )
 }
 
-function Lines({ lines, open, setOpen, onFilter, live }: {
+function Lines({ lines, open, setOpen, onFilter, live, onTrace }: {
   lines: Line[]
   open: number | null
   setOpen: (id: number | null) => void
   onFilter: (m: Match) => void
   live: boolean
+  onTrace?: (id: string) => void
 }) {
   const box = useRef<HTMLDivElement>(null)
   if (!lines.length) {
@@ -327,6 +329,7 @@ function Lines({ lines, open, setOpen, onFilter, live }: {
           ['referrer', l.referrer ?? '', 'referrer'],
           ['country', l.country ?? '', 'country'],
           ['bot', l.bot ?? '', 'bot'],
+          ['trace', l.trace ?? ''],
         ]
         return (
           <div key={l.id} className={'le-line ' + kind + (isOpen ? ' open' : '')}>
@@ -347,6 +350,11 @@ function Lines({ lines, open, setOpen, onFilter, live }: {
               <div className="le-record">
                 <div className="le-record-head">
                   <span className="t-caption t-muted">Click a value to filter by it</span>
+                  {l.trace && onTrace && (
+                    <button className="btn quiet medium" onClick={() => onTrace(l.trace!)}>
+                      Open its trace
+                    </button>
+                  )}
                   <button
                     className="btn quiet medium"
                     onClick={() => copy(JSON.stringify(Object.fromEntries(record.filter(([, v]) => v).map(([k, v]) => [k, v])), null, 2), 'the request')}

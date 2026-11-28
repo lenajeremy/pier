@@ -7,24 +7,50 @@ import { Menu } from '../components/Menu'
 import { Problem, Skeleton } from '../components/ui'
 import { LogExplorer } from './LogExplorer'
 import { Events } from './Events'
+import { TraceView, Traces } from './Traces'
 
 // Analytics is the project's traffic and logs. Overview counts visitors,
 // pages and errors from the request log Pier already keeps; Logs is every
 // request, line by line.
 
-type View = 'overview' | 'logs' | 'events'
+export type View = 'overview' | 'logs' | 'traces' | 'events'
 const views: [View, string][] = [
   ['overview', 'Overview'],
   ['logs', 'Logs'],
+  ['traces', 'Traces'],
   ['events', 'Events'],
 ]
+export const viewNames = views.map(([v]) => v)
 
 export function Analytics({ project, initial }: { project: string; initial: View }) {
   const [view, setView] = useState<View>(initial)
+  const [trace, setTrace] = useState<string | null>(() => new URLSearchParams(location.search).get('trace'))
   useEffect(() => setView(initial), [initial])
+  useEffect(() => {
+    const sync = () => {
+      const q = new URLSearchParams(location.search)
+      setTrace(q.get('trace'))
+      const v = q.get('view') as View | null
+      setView(v && viewNames.includes(v) ? v : 'overview')
+    }
+    window.addEventListener('popstate', sync)
+    return () => window.removeEventListener('popstate', sync)
+  }, [])
+  const url = (v: View, t?: string) =>
+    `/projects/${encodeURIComponent(project)}/analytics${v === 'overview' ? '' : '?view=' + v}${t ? '&trace=' + encodeURIComponent(t) : ''}`
   const pick = (v: View) => {
     setView(v)
-    history.replaceState(null, '', `/projects/${encodeURIComponent(project)}/analytics${v === 'overview' ? '' : '?view=' + v}`)
+    setTrace(null)
+    history.replaceState(null, '', url(v))
+  }
+  const openTrace = (id: string) => {
+    setTrace(id)
+    history.pushState(null, '', url('traces', id))
+    window.scrollTo(0, 0)
+  }
+  const closeTrace = () => {
+    setTrace(null)
+    history.pushState(null, '', url('traces'))
   }
   const tabs = (right?: ReactNode) => (
     <div className="a-head">
@@ -38,7 +64,16 @@ export function Analytics({ project, initial }: { project: string; initial: View
       {right && <div className="a-head-right">{right}</div>}
     </div>
   )
-  if (view === 'logs') return <LogExplorer project={project} head={tabs()} />
+  if (view === 'logs') return <LogExplorer project={project} head={tabs()} onTrace={(id) => (setView('traces'), openTrace(id))} />
+  if (view === 'traces' && trace) {
+    return (
+      <main className="main" style={{ gap: 24 }}>
+        {tabs()}
+        <TraceView key={trace} project={project} id={trace} onBack={closeTrace} />
+      </main>
+    )
+  }
+  if (view === 'traces') return <Traces project={project} tabs={tabs} onOpen={openTrace} />
   if (view === 'events') return <Events project={project} tabs={tabs} />
   return <Overview project={project} tabs={tabs} />
 }
