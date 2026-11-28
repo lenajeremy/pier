@@ -281,3 +281,199 @@
     flex-direction: column;
   }
 }
+
+/* ---- Analytics ------------------------------------------------------------
+   Side panels go under what they explain; tables drop their least needed
+   columns first. */
+@container (max-width: 940px) {
+  .a-head {
+    flex-wrap: wrap;
+  }
+  .a-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .a-strip > :nth-child(n + 3) {
+    border-top: 1px solid var(--d-line-soft);
+  }
+  .a-strip > :nth-child(odd) {
+    border-left: 0;
+  }
+  .a-grid2,
+  .tr-off,
+  .ev-detail,
+  .dash-editor {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .le {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .le-fields {
+    max-height: 280px;
+    overflow-y: auto;
+  }
+  .tr-body.with-detail {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .tr-detail {
+    border-left: 0;
+    border-top: 1px solid var(--d-line-soft);
+  }
+  .tr-detail-in {
+    position: static;
+  }
+  .dash-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .dash-panel.span-2 {
+    grid-column: 1 / -1;
+  }
+  .dash-bar,
+  .dash-head {
+    flex-wrap: wrap;
+  }
+}
+@container (max-width: 700px) {
+  .a-section-head {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .a-section-head h2 {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .le-fields {
+    display: none;
+  }
+  .le-toolbar,
+  .tr-query {
+    flex-wrap: wrap;
+  }
+  .le-toolbar .le-input.grow {
+    order: 3;
+    flex-basis: 100%;
+  }
+  .tr-table :is(.t-head, .t-row) {
+    grid-template-columns: 96px minmax(0, 1fr) 74px 78px;
+  }
+  .tr-table :is(.t-head, .t-row) > :nth-child(3),
+  .tr-table :is(.t-head, .t-row) > :nth-child(4),
+  .tr-dur .a-bar {
+    display: none;
+  }
+  .tr-dur {
+    grid-template-columns: 1fr;
+  }
+  .tr-water .tr-row {
+    grid-template-columns: minmax(0, 60%) 1fr;
+  }
+  .tr-grid {
+    left: 60%;
+  }
+  .tr-svc,
+  .tr-axis .tr-tick:not(:first-child):not(:last-child) {
+    display: none;
+  }
+  .tr-title {
+    flex-direction: column;
+  }
+  .tr-log {
+    grid-template-columns: 64px minmax(0, 1fr);
+  }
+  .tr-log > :nth-child(2),
+  .tr-log > :nth-child(3) {
+    display: none;
+  }
+  .tr-var {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+    padding: 8px 16px;
+  }
+  .le-lines :is(.t-head, .t-row) {
+    grid-template-columns: 14px 84px 48px minmax(0, 1fr) 56px;
+  }
+  .le-lines:not(.lg-lines) :is(.t-head, .t-row) > :nth-child(4) {
+    display: none;
+  }
+  .lg-lines :is(.t-head, .t-row) {
+    grid-template-columns: 14px 84px 64px minmax(0, 1fr);
+  }
+  .lg-lines :is(.t-head, .t-row) > :nth-child(4),
+  .lg-lines :is(.t-head, .t-row) > :nth-child(6) {
+    display: none;
+  }
+  .lg-find {
+    width: 100%;
+  }
+  .le-record-head {
+    flex-wrap: wrap;
+  }
+  .m-builder {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+  }
+  .m-row-label {
+    margin-top: 6px;
+  }
+  .m-metric {
+    min-width: 0;
+    width: 100%;
+  }
+  .m-legend-row,
+  .dash-legend .m-legend-row {
+    grid-template-columns: minmax(0, 1fr) 84px;
+  }
+  .m-legend-row > :nth-child(2),
+  .m-legend-row > :nth-child(3),
+  .dash-legend .m-legend-row > :not(:first-child):not(:last-child) {
+    display: none;
+  }
+  .m-query-head {
+    flex-wrap: wrap;
+  }
+  .dash-panel-head {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+  .dash-panel-head h3 {
+    flex-basis: calc(100% - 40px);
+  }
+  .dash-panel-head .a-legend {
+    order: 3;
+    flex-basis: 100%;
+    flex-wrap: wrap;
+  }
+  .dash-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .dash-panel.span-1,
+  .dash-panel.span-2 {
+    grid-column: 1 / -1;
+  }
+  .dash-name-input {
+    width: 100%;
+  }
+  .ev-table :is(.t-head, .t-row) {
+    grid-template-columns: minmax(0, 1fr) 64px minmax(0, 0.8fr);
+  }
+  .ev-table :is(.t-head, .t-row) > :nth-child(3),
+  .ev-table :is(.t-head, .t-row) > :nth-child(4) {
+    display: none;
+  }
+}
+@container (max-width: 520px) {
+  .a-strip {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .a-strip > :nth-child(n + 2) {
+    border-top: 1px solid var(--d-line-soft);
+  }
+  .a-strip > * {
+    border-left: 0;
+  }
+  .a-breakdown :is(.t-head, .t-row) {
+    grid-template-columns: minmax(0, 1fr) 64px;
+  }
+  .a-breakdown :is(.t-head, .t-row) > :nth-child(3) {
+    display: none;
+  }
+}

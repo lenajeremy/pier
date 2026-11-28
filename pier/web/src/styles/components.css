@@ -6168,3 +6168,10 @@ button.lg-n:hover {
 .dash-query .m-query-head .seg {
   margin-left: 0;
 }
+.tl-off {
+  margin: 0;
+  max-width: 720px;
+  padding: 16px 20px 18px;
+  font-size: 13px;
+  line-height: 20px;
+}

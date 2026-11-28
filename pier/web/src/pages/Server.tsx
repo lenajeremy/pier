@@ -336,13 +336,9 @@ function Telemetry({ owner }: { owner: boolean }) {
         </span>
       </div>
       {!on && doing !== 'starting' ? (
-        <div className="service-row">
-          <div className="what">
-            <span className="t-note">
-              Pier runs Grafana's Tempo, Loki and Prometheus on this server and every deploy sends its OpenTelemetry to them, each project kept apart. They use up to 1.3 GB of memory and keep {d.status.retention_days} days.
-            </span>
-          </div>
-        </div>
+        <p className="tl-off t-note">
+          Pier runs Grafana's Tempo, Loki and Prometheus on this server, and every deploy sends its OpenTelemetry to them, each project kept apart. They use up to 1.3 GB of memory and keep {d.status.retention_days} days.
+        </p>
       ) : (
         d.status.servers.map((s) => (
           <div className="service-row" key={s.name}>
