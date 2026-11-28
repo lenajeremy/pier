@@ -30,6 +30,7 @@ func (f *fakeContainers) StopService(context.Context, string) error             
 func (f *fakeContainers) ServiceAddress(context.Context, string, int) (string, error) {
 	return f.addr, nil
 }
+func (f *fakeContainers) CopyFile(context.Context, string, string, []byte) error { return nil }
 func (f *fakeContainers) ServiceStatus(context.Context, string) (apphost.ServiceState, error) {
 	return apphost.ServiceState{State: "running"}, nil
 }

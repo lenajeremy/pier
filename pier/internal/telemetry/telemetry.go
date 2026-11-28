@@ -20,7 +20,6 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -75,6 +74,7 @@ type Containers interface {
 	StopService(ctx context.Context, name string) error
 	ServiceAddress(ctx context.Context, name string, port int) (string, error)
 	ServiceStatus(ctx context.Context, name string) (apphost.ServiceState, error)
+	CopyFile(ctx context.Context, name, at string, content []byte) error
 }
 
 // Manager turns the stack on and off and takes what apps send.
@@ -242,33 +242,19 @@ storage:
     out_of_order_time_window: 30m
 `,
 	}
-	write := func(name string) (string, string, error) {
-		path := filepath.Join(m.Dir, name+".yaml")
-		if err := os.WriteFile(path, []byte(files[name]), 0o644); err != nil {
-			return "", "", err
-		}
-		// On the stack's network since Grafana came.
-		sum := sha256.Sum256([]byte(images[name] + files[name] + "shared"))
-		return path, hex.EncodeToString(sum[:8]), nil
+	// A new hash makes a new container. The word at the end marks a change
+	// in how it's made: its settings are now copied in, not mounted.
+	hash := func(name string) string {
+		sum := sha256.Sum256([]byte(images[name] + files[name] + "shared, copied"))
+		return hex.EncodeToString(sum[:8])
 	}
-	tp, th, err := write(Tempo)
-	if err != nil {
-		return nil, err
-	}
-	lp, lh, err := write(Loki)
-	if err != nil {
-		return nil, err
-	}
-	pp, ph, err := write(Prometheus)
-	if err != nil {
-		return nil, err
-	}
+	in := func(at, name string) map[string][]byte { return map[string][]byte{at: []byte(files[name])} }
 	return []apphost.ServiceSpec{
 		{Name: Tempo, Image: images[Tempo], Cmd: []string{"-config.file=/etc/tempo.yaml"}, Ports: []int{tempoAPI, tempoOTLP},
-			Files: map[string]string{tp: "/etc/tempo.yaml"}, Data: "/var/tempo", MemoryMB: 512, Config: th, Shared: true},
+			Files: in("/etc/tempo.yaml", Tempo), Data: "/var/tempo", MemoryMB: 512, Config: hash(Tempo), Shared: true},
 		{Name: Loki, Image: images[Loki], Cmd: []string{"-config.file=/etc/loki/pier.yaml"}, Ports: []int{lokiAPI},
-			Files: map[string]string{lp: "/etc/loki/pier.yaml"}, Data: "/loki", MemoryMB: 384, Config: lh, Shared: true},
-		{Name: Prometheus, Image: images[Prometheus], Ports: []int{promAPI}, Files: map[string]string{pp: "/etc/prometheus/prometheus.yml"}, Data: "/prometheus", MemoryMB: 384, Config: ph, Shared: true,
+			Files: in("/etc/loki/pier.yaml", Loki), Data: "/loki", MemoryMB: 384, Config: hash(Loki), Shared: true},
+		{Name: Prometheus, Image: images[Prometheus], Ports: []int{promAPI}, Files: in("/etc/prometheus/prometheus.yml", Prometheus), Data: "/prometheus", MemoryMB: 384, Config: hash(Prometheus), Shared: true,
 			Cmd: []string{"--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus", "--storage.tsdb.retention.time=" + hours, "--web.enable-otlp-receiver"}},
 	}, nil
 }
@@ -285,7 +271,7 @@ func (m *Manager) address(ctx context.Context, name string, port int) (string, e
 	}
 	a, err := m.Containers.ServiceAddress(ctx, name, port)
 	if err != nil {
-		return "", err
+		return "", Down{name}
 	}
 	m.mu.Lock()
 	if m.addrs == nil {
@@ -418,7 +404,7 @@ func (m *Manager) Forward(ctx context.Context, signal, project, env, contentType
 	}
 	addr, err := m.address(ctx, target, port)
 	if err != nil {
-		return http.StatusServiceUnavailable, fmt.Errorf("%s isn't running: %w", target, err)
+		return http.StatusServiceUnavailable, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+addr+path, bytes.NewReader(out))
 	if err != nil {
@@ -503,4 +489,11 @@ func hexIDs(body []byte) ([]byte, error) {
 	}
 	walk(v)
 	return json.Marshal(v)
+}
+
+// Down means one of the stack's servers isn't running.
+type Down struct{ Server string }
+
+func (d Down) Error() string {
+	return strings.ToUpper(d.Server[:1]) + d.Server[1:] + " isn't running. The Server page says why."
 }

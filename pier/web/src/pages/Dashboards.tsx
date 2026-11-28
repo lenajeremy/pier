@@ -521,7 +521,12 @@ function useRun(project: string, p: Panel, from: number, to: number, vars: Recor
               const label = keys.map((k) => s.labels[k] ?? '').join(', ')
               // A lone query keeps its letter only if nothing better names it.
               const qname = rs.length === 1 && /^[A-Z]$/.test(q.name) ? p.title : q.name
-              names.push(rs.length > 1 ? (label ? `${q.name} ${label}` : q.name) : label || qname)
+              // One line still names what it was split by: the one route
+              // that errored, say.
+              const own = ss.length === 1 ? Object.entries(s.labels).filter(([k]) => k !== '__name__') : []
+              const lone = own.length > 0 && own.length <= 3 ? own.map(([, v]) => v).join(', ') : ''
+              const named = label || lone
+              names.push(rs.length > 1 ? (named ? `${q.name} ${named}` : q.name) : named || qname)
             }
           }
           setRan({ series, names })

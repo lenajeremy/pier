@@ -16,7 +16,10 @@ import (
 // that doesn't parse are the caller's to fix; anything else is ours.
 func (a *API) telemetryFail(w http.ResponseWriter, err error) {
 	var qe telemetry.QueryError
+	var down telemetry.Down
 	switch {
+	case errors.As(err, &down):
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": err.Error(), "down": down.Server})
 	case errors.Is(err, telemetry.ErrOff):
 		writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error(), "off": true})
 	case errors.Is(err, telemetry.ErrNoTrace):

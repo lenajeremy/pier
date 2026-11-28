@@ -6414,3 +6414,10 @@ button.lg-n:hover {
   align-items: center;
   gap: 8px;
 }
+.tl-problem {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 17px;
+  color: var(--d-red-text);
+  overflow-wrap: anywhere;
+}

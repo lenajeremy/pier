@@ -75,7 +75,8 @@ func (m *Manager) grafanaSpec(ctx context.Context) (apphost.ServiceSpec, error) 
 	if err != nil {
 		return apphost.ServiceSpec{}, err
 	}
-	if _, err := m.writeDatasources(ctx); err != nil {
+	sources, _, err := m.writeDatasources(ctx)
+	if err != nil {
 		return apphost.ServiceSpec{}, err
 	}
 	root := m.GrafanaURL
@@ -105,10 +106,10 @@ func (m *Manager) grafanaSpec(ctx context.Context) (apphost.ServiceSpec, error) 
 		"GF_PLUGINS_PREINSTALL_DISABLED=true",
 		"GF_LOG_LEVEL=warn",
 	}
-	sum := sha256.Sum256([]byte(images[Grafana] + strings.Join(env, "\n")))
+	sum := sha256.Sum256([]byte(images[Grafana] + strings.Join(env, "\n") + "copied"))
 	return apphost.ServiceSpec{
 		Name: Grafana, Image: images[Grafana], Ports: []int{grafanaPort}, Env: env, Data: "/var/lib/grafana", MemoryMB: 256, Shared: true,
-		Files:  map[string]string{m.grafanaDir(): "/etc/grafana/provisioning/datasources"},
+		Files:  map[string][]byte{datasourcesAt: sources},
 		Config: hex.EncodeToString(sum[:8]),
 	}, nil
 }
@@ -125,14 +126,18 @@ type datasource struct {
 	SecureJSONData map[string]any `json:"secureJsonData,omitempty"`
 }
 
-// writeDatasources writes the data sources for every project, and says
-// whether they changed. JSON is YAML, which Grafana reads.
-func (m *Manager) writeDatasources(ctx context.Context) (bool, error) {
+// datasourcesAt is where Grafana reads the data sources pierd writes.
+const datasourcesAt = "/etc/grafana/provisioning/datasources/pier.yaml"
+
+// writeDatasources writes the data sources for every project, keeps a copy
+// in pierd's folder, and says whether they changed. JSON is YAML, which
+// Grafana reads.
+func (m *Manager) writeDatasources(ctx context.Context) ([]byte, bool, error) {
 	var projects []string
 	if m.Projects != nil {
 		var err error
 		if projects, err = m.Projects(ctx); err != nil {
-			return false, err
+			return nil, false, err
 		}
 	}
 	ds := []datasource{{Name: "Metrics", UID: MetricsUID, Type: "prometheus", URL: "http://prometheus:9090", Access: "proxy", IsDefault: true,
@@ -157,16 +162,16 @@ func (m *Manager) writeDatasources(ctx context.Context) (bool, error) {
 	}
 	body, err := json.MarshalIndent(map[string]any{"apiVersion": 1, "prune": true, "datasources": ds}, "", "  ")
 	if err != nil {
-		return false, err
+		return nil, false, err
 	}
-	if err := os.MkdirAll(m.grafanaDir(), 0o755); err != nil {
-		return false, err
+	if err := os.MkdirAll(m.grafanaDir(), 0o700); err != nil {
+		return nil, false, err
 	}
 	path := filepath.Join(m.grafanaDir(), "pier.yaml")
 	if old, err := os.ReadFile(path); err == nil && string(old) == string(body) {
-		return false, nil
+		return body, false, nil
 	}
-	return true, os.WriteFile(path, body, 0o644)
+	return body, true, os.WriteFile(path, body, 0o600)
 }
 
 var grafanaSync sync.Mutex
@@ -175,8 +180,11 @@ var grafanaSync sync.Mutex
 func (m *Manager) SyncGrafana(ctx context.Context) error {
 	grafanaSync.Lock()
 	defer grafanaSync.Unlock()
-	changed, err := m.writeDatasources(ctx)
+	body, changed, err := m.writeDatasources(ctx)
 	if err != nil || !changed {
+		return err
+	}
+	if err := m.Containers.CopyFile(ctx, Grafana, datasourcesAt, body); err != nil {
 		return err
 	}
 	addr, err := m.address(ctx, Grafana, grafanaPort)

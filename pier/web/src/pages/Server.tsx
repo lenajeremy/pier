@@ -303,7 +303,11 @@ export function Server({ version: pierd }: { version?: string }) {
 type TelemetryState = {
   available: boolean
   doing?: '' | 'starting' | 'stopping'
-  status?: { on: boolean; retention_days: number; servers: { name: string; image: string; state: { state: string; memory_bytes?: number } }[] }
+  status?: {
+    on: boolean
+    retention_days: number
+    servers: { name: string; image: string; state: { state: string; memory_bytes?: number; restarts?: number; oom_killed?: boolean; problem?: string; started_at?: string } }[]
+  }
 }
 const keeps: Record<string, string> = { tempo: 'Keeps traces.', loki: 'Keeps app logs.', prometheus: 'Keeps metrics.', grafana: 'Grafana’s own views, signed in as you.' }
 
@@ -345,22 +349,37 @@ function Telemetry({ owner }: { owner: boolean }) {
           Pier runs Grafana's Tempo, Loki and Prometheus on this server, and Grafana itself, and every deploy sends its OpenTelemetry to them, each project kept apart. They use up to 1.6 GB of memory and keep {d.status.retention_days} days.
         </p>
       ) : (
-        d.status.servers.map((s) => (
-          <div className="service-row" key={s.name}>
-            <i className={'swatch ' + (s.state.state === 'running' ? 'ready' : doing ? 'building' : 'failed')} />
-            <div className="what">
-              <span className="t-small">{s.name[0].toUpperCase() + s.name.slice(1)}</span>
-              <span className="t-note">
-                {keeps[s.name]} <span className="mono">{s.image}</span>
+        d.status.servers.map((s) => {
+          const st = s.state
+          // Running, but restarted in the last few minutes: it keeps stopping.
+          const flapping = st.state === 'running' && !!st.restarts && !!st.started_at && Date.now() - Date.parse(st.started_at) < 5 * 60_000
+          const ok = st.state === 'running' && !flapping
+          const label =
+            doing === 'starting' && st.state !== 'running'
+              ? 'Starting'
+              : st.state === 'restarting' || flapping
+                ? `Restarting${st.restarts ? `, ${st.restarts} ${st.restarts === 1 ? 'time' : 'times'}` : ''}`
+                : st.state === 'running'
+                  ? `Running${st.memory_bytes ? `, ${size(st.memory_bytes)}` : ''}`
+                  : 'Not running'
+          return (
+            <div className="service-row" key={s.name}>
+              <i className={'swatch ' + (ok ? 'ready' : doing ? 'building' : 'failed')} />
+              <div className="what">
+                <span className="t-small">{s.name[0].toUpperCase() + s.name.slice(1)}</span>
+                <span className="t-note">
+                  {keeps[s.name]} <span className="mono">{s.image}</span>
+                </span>
+                {!ok && !doing && (st.oom_killed || st.problem) && (
+                  <span className="tl-problem mono">{st.oom_killed ? `Ran out of memory. ${st.problem ?? ''}` : st.problem}</span>
+                )}
+              </div>
+              <span className="service-end">
+                <span className={'t-caption' + (ok || doing ? ' t-muted' : ' bad')}>{label}</span>
               </span>
             </div>
-            <span className="service-end">
-              <span className="t-caption t-muted">
-                {s.state.state === 'running' ? `Running${s.state.memory_bytes ? `, ${size(s.state.memory_bytes)}` : ''}` : doing === 'starting' ? 'Starting' : 'Not running'}
-              </span>
-            </span>
-          </div>
-        ))
+          )
+        })
       )}
     </section>
   )

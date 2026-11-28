@@ -35,7 +35,7 @@ func (m *Manager) get(ctx context.Context, server string, port int, path string,
 	}
 	addr, err := m.address(ctx, server, port)
 	if err != nil {
-		return nil, fmt.Errorf("%s isn't running: %w", server, err)
+		return nil, err
 	}
 	u := "http://" + addr + path
 	if len(q) > 0 {

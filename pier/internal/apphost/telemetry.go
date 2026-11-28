@@ -1,11 +1,15 @@
 package apphost
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"net"
+	"path"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/containerd/errdefs"
@@ -17,9 +21,13 @@ import (
 
 // The telemetry stack is a few servers pierd runs for the whole machine:
 // Tempo keeps traces, Loki logs, Prometheus metrics. Each has its data on a
-// volume of its own, its settings in files pierd writes, and its ports on
+// volume of its own, its settings in files pierd copies in, and its ports on
 // loopback, where only pierd reaches them; apps send to pierd, which says
 // which project the data belongs to.
+//
+// Settings are copied into the container rather than mounted from pierd's
+// data folder: that folder is open only to pierd's user, and the servers
+// run as users of their own.
 
 const (
 	telemetryLabel = "io.pier.telemetry"
@@ -32,7 +40,7 @@ type ServiceSpec struct {
 	Image    string            // pinned, like grafana/tempo:2.8.2
 	Cmd      []string          // the server's arguments
 	Ports    []int             // the container's ports pierd reaches
-	Files    map[string]string // a file on this machine -> where the server reads it
+	Files    map[string][]byte // where the server reads a file -> what's in it
 	Data     string            // where the server keeps its data, on the volume
 	Env      []string
 	MemoryMB int
@@ -85,12 +93,11 @@ func (h *Host) StartService(ctx context.Context, spec ServiceSpec) error {
 		if labels[ownerLabel] != h.owner || labels[telemetryLabel] != spec.Name {
 			return fmt.Errorf("the container %s belongs to something else", name)
 		}
-		if labels[configLabel] == spec.Config {
-			if res.Container.State != nil && (res.Container.State.Running || res.Container.State.Restarting) {
-				return nil
-			}
-			_, err = c.ContainerStart(ctx, res.Container.ID, client.ContainerStartOptions{})
-			return err
+		// Keep one that's running as it should. One that stopped or keeps
+		// stopping is made again: its data is on the volume, and a fresh
+		// container gets a fresh copy of its settings.
+		if st := res.Container.State; labels[configLabel] == spec.Config && st != nil && st.Running && !st.Restarting {
+			return nil
 		}
 		if _, err := c.ContainerRemove(ctx, res.Container.ID, client.ContainerRemoveOptions{Force: true}); err != nil {
 			return err
@@ -121,9 +128,6 @@ func (h *Host) StartService(ctx context.Context, spec ServiceSpec) error {
 		bindings[port] = []network.PortBinding{{HostIP: loopback, HostPort: free}}
 	}
 	mounts := []mount.Mount{{Type: mount.TypeVolume, Source: name, Target: spec.Data}}
-	for src, dst := range spec.Files {
-		mounts = append(mounts, mount.Mount{Type: mount.TypeBind, Source: src, Target: dst, ReadOnly: true})
-	}
 	stop := 30
 	pids := int64(512)
 	resources := container.Resources{PidsLimit: &pids}
@@ -147,8 +151,47 @@ func (h *Host) StartService(ctx context.Context, spec ServiceSpec) error {
 	if err != nil {
 		return err
 	}
+	for at, content := range spec.Files {
+		if err := copyIn(ctx, c, created.ID, at, content); err != nil {
+			return fmt.Errorf("copy %s into %s: %w", at, name, err)
+		}
+	}
 	_, err = c.ContainerStart(ctx, created.ID, client.ContainerStartOptions{})
 	return err
+}
+
+// copyIn writes one file into a container, readable by anyone in it.
+func copyIn(ctx context.Context, c *client.Client, id, at string, content []byte) error {
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	if err := tw.WriteHeader(&tar.Header{Name: path.Base(at), Mode: 0o644, Size: int64(len(content)), ModTime: time.Now()}); err != nil {
+		return err
+	}
+	if _, err := tw.Write(content); err != nil {
+		return err
+	}
+	if err := tw.Close(); err != nil {
+		return err
+	}
+	_, err := c.CopyToContainer(ctx, id, client.CopyToContainerOptions{DestinationPath: path.Dir(at), Content: &buf})
+	return err
+}
+
+// CopyFile writes a file into one of the stack's running servers, for
+// settings it reloads on its own word, like Grafana's data sources.
+func (h *Host) CopyFile(ctx context.Context, name, at string, content []byte) error {
+	c, err := h.engine(ctx)
+	if err != nil {
+		return err
+	}
+	res, err := c.ContainerInspect(ctx, h.ServiceContainer(name), client.ContainerInspectOptions{})
+	if err != nil {
+		return err
+	}
+	if res.Container.Config.Labels[ownerLabel] != h.owner || res.Container.Config.Labels[telemetryLabel] != name {
+		return errors.New("the container belongs to something else")
+	}
+	return copyIn(ctx, c, res.Container.ID, at, content)
 }
 
 func freePort() (string, error) {
@@ -189,6 +232,10 @@ type ServiceState struct {
 	State       string    `json:"state"` // running, restarting, exited or missing
 	StartedAt   time.Time `json:"started_at,omitzero"`
 	MemoryBytes uint64    `json:"memory_bytes,omitempty"`
+	Restarts    int       `json:"restarts,omitempty"`
+	OOMKilled   bool      `json:"oom_killed,omitempty"`
+	// Problem is the last thing a server that keeps stopping printed.
+	Problem string `json:"problem,omitempty"`
 }
 
 // ServiceStatus reads one server's state and memory.
@@ -204,16 +251,32 @@ func (h *Host) ServiceStatus(ctx context.Context, name string) (ServiceState, er
 	if err != nil {
 		return ServiceState{}, err
 	}
-	s := ServiceState{State: "exited"}
+	s := ServiceState{State: "exited", Restarts: res.Container.RestartCount}
 	if st := res.Container.State; st != nil {
+		// Docker counts a container it's restarting as running too.
 		switch {
-		case st.Running:
-			s.State = "running"
 		case st.Restarting:
 			s.State = "restarting"
+		case st.Running:
+			s.State = "running"
 		}
+		s.OOMKilled = st.OOMKilled
 		if t, err := time.Parse(time.RFC3339Nano, st.StartedAt); err == nil {
 			s.StartedAt = t
+		}
+	}
+	// A server that's down, or keeps going down, says why in its last lines.
+	if s.State != "running" || (s.Restarts > 0 && time.Since(s.StartedAt) < 5*time.Minute) {
+		if lines, err := h.Logs(ctx, h.ServiceContainer(name), 20, ""); err == nil {
+			for i := len(lines) - 1; i >= 0; i-- {
+				if t := strings.TrimSpace(lines[i].Text); t != "" {
+					s.Problem = t
+					if len(s.Problem) > 300 {
+						s.Problem = s.Problem[:300]
+					}
+					break
+				}
+			}
 		}
 	}
 	if s.State == "running" {
