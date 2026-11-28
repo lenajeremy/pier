@@ -14,9 +14,11 @@ require (
 	github.com/moby/moby/api v1.57.0
 	github.com/moby/moby/client v0.6.3
 	github.com/shirou/gopsutil/v4 v4.26.10
+	go.opentelemetry.io/proto/otlp v1.11.0
 	golang.org/x/crypto v0.59.0
 	golang.org/x/net v0.62.0
 	golang.org/x/term v0.48.0
+	google.golang.org/protobuf v1.36.12
 	modernc.org/sqlite v1.62.0
 )
 
@@ -157,6 +159,11 @@ require (
 	go.opentelemetry.io/contrib/bridges/prometheus v0.71.0 // indirect
 	go.opentelemetry.io/contrib/exporters/autoexport v0.71.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.71.0 // indirect
+	go.opentelemetry.io/contrib/propagators/autoprop v0.71.0 // indirect
+	go.opentelemetry.io/contrib/propagators/aws v1.46.0 // indirect
+	go.opentelemetry.io/contrib/propagators/b3 v1.46.0 // indirect
+	go.opentelemetry.io/contrib/propagators/jaeger v1.46.0 // indirect
+	go.opentelemetry.io/contrib/propagators/ot v1.46.0 // indirect
 	go.opentelemetry.io/otel v1.46.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc v0.22.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp v0.22.0 // indirect
@@ -175,7 +182,6 @@ require (
 	go.opentelemetry.io/otel/sdk/log v0.22.0 // indirect
 	go.opentelemetry.io/otel/sdk/metric v1.46.0 // indirect
 	go.opentelemetry.io/otel/trace v1.46.0 // indirect
-	go.opentelemetry.io/proto/otlp v1.11.0 // indirect
 	go.step.sm/crypto v0.91.0 // indirect
 	go.uber.org/automaxprocs v1.6.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
@@ -194,7 +200,6 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260921155816-b14227669459 // indirect
 	google.golang.org/grpc v1.83.2 // indirect
 	google.golang.org/grpc/cmd/protoc-gen-go-grpc v1.6.2 // indirect
-	google.golang.org/protobuf v1.36.12 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	howett.net/plist v1.0.1 // indirect
 	modernc.org/libc v1.80.1 // indirect

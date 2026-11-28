@@ -490,6 +490,7 @@ func (h *Host) Ready(ctx context.Context, name string) error {
 					if err != nil {
 						return err
 					}
+					req.Header.Set("Traceparent", unsampled())
 					resp, err := probeClient.Do(req)
 					if err == nil {
 						resp.Body.Close()

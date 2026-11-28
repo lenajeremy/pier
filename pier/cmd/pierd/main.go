@@ -49,6 +49,7 @@ import (
 	"pier/internal/secrets"
 	"pier/internal/storage"
 	"pier/internal/store"
+	"pier/internal/telemetry"
 	"pier/internal/upgrade"
 	"pier/internal/version"
 	"pier/internal/web"
@@ -206,6 +207,15 @@ func serve(args []string) int {
 		scheme = "https"
 	}
 	caddyCfg := router.Caddy{Admin: *caddyAdmin, Storage: filepath.Join(*data, "caddy"), Listen: []string{*httpAddr}, HTTPS: *https, BaseDomain: *domain, AccessLog: paths.accessSock}
+	// Apps' traces, metrics and logs, made below once the deployer is.
+	// Caddy starts a trace for every request to a server app while they're
+	// on; pierd sends Caddy's spans itself, from the access log, under each
+	// project, so Caddy exports none. An external Caddy has its own setup.
+	var tel *telemetry.Manager
+	if *caddyAdmin == "" {
+		os.Setenv("OTEL_TRACES_EXPORTER", "none")
+		caddyCfg.Traces = func() bool { return tel != nil && tel.On(context.Background()) }
+	}
 	// External URLs are on for a server with HTTPS on a real domain, or
 	// when -postgres is given. No site asks for db.<domain>'s certificate,
 	// so the router asks for it.
@@ -286,6 +296,30 @@ func serve(args []string) int {
 	dep.Storage = buckets
 	// Apps post their own events to the dashboard's address with a token
 	// for their project and environment.
+	// Apps' traces, metrics and logs, through Grafana's Tempo, Prometheus
+	// and Loki, once the owner turns them on in Server.
+	tel = &telemetry.Manager{Store: st, Containers: dep.Apps, Dir: filepath.Join(*data, "telemetry"), Log: log,
+		Apps: func(ctx context.Context) ([]telemetry.App, error) {
+			running, err := dep.Apps.Running(ctx)
+			if err != nil {
+				return nil, err
+			}
+			ready, err := st.ReadyDeployments(ctx)
+			if err != nil {
+				return nil, err
+			}
+			var apps []telemetry.App
+			for _, d := range ready {
+				if d.Runtime != "" && running[d.Runtime] {
+					apps = append(apps, telemetry.App{Container: d.Runtime, Project: d.Project, Env: d.Target, Deployment: d.ID})
+				}
+			}
+			return apps, nil
+		},
+		OpenLogs: func(ctx context.Context, container, since string) (io.ReadCloser, bool, error) {
+			return dep.Apps.OpenLogs(ctx, container, 1000, since, true)
+		},
+	}
 	dep.EventVars = func(ctx context.Context, project, target string) ([]string, error) {
 		if *address == "" {
 			return nil, nil
@@ -294,7 +328,20 @@ func serve(args []string) int {
 		if err != nil {
 			return nil, err
 		}
-		return []string{"PIER_EVENTS_URL=" + dep.URL(*address) + "/api/events", "PIER_EVENTS_TOKEN=" + token}, nil
+		base := dep.URL(*address)
+		vars := []string{"PIER_EVENTS_URL=" + base + "/api/events", "PIER_EVENTS_TOKEN=" + token}
+		if tel.On(ctx) {
+			// What every OpenTelemetry SDK reads, so an app sends with no
+			// setup of its own. pierd writes the project onto what it sends.
+			vars = append(vars,
+				"OTEL_EXPORTER_OTLP_ENDPOINT="+base+"/otlp",
+				"OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf",
+				"OTEL_EXPORTER_OTLP_HEADERS=authorization=Bearer%20"+token,
+				"OTEL_SERVICE_NAME="+project,
+				"OTEL_RESOURCE_ATTRIBUTES=deployment.environment="+target,
+			)
+		}
+		return vars, nil
 	}
 
 	self, err := os.Executable()
@@ -337,6 +384,15 @@ func serve(args []string) int {
 	}
 	defer reqs.Close()
 	reqs.Target = func(id string) string { _, t := deployment(id); return t }
+	reqs.Traced = func(lines []requests.Line) {
+		out := make([]telemetry.Request, len(lines))
+		for i, l := range lines {
+			out[i] = telemetry.Request{Project: l.Project, Env: l.Env, Deployment: l.Deployment, Trace: l.Trace, Span: l.Span,
+				Method: l.Method, Path: l.Path, Host: l.Host, Status: l.Status, Bytes: l.Bytes,
+				Start: l.Began, Duration: time.Duration(l.MS * float64(time.Millisecond))}
+		}
+		go tel.SendRequests(ctx, out)
+	}
 	dep.Visited = reqs.LastSeen
 	waker := &http.Server{Handler: dep.WakeHandler(), ReadHeaderTimeout: 5 * time.Second}
 	go waker.Serve(wakeLn)
@@ -374,7 +430,7 @@ func serve(args []string) int {
 		Commands: dep.Apps, Sites: dialable(*httpAddr), HTTPS: *https,
 	}
 	a := &api.API{StartedAt: time.Now(), Store: st, Deployer: dep, Token: tok, Log: log, Web: web.Handler(), Requests: reqs, SiteListener: dialable(*httpAddr), Alerts: notifier, Jobs: scheduler,
-		Databases: dbs, Storage: buckets, Releases: releases, Data: abs, UpgradeUnit: *upgradeUnit}
+		Databases: dbs, Storage: buckets, Releases: releases, Data: abs, UpgradeUnit: *upgradeUnit, Telemetry: tel}
 	events := &http.Server{Handler: a.BrowserEvents(), ReadHeaderTimeout: 5 * time.Second}
 	go events.Serve(eventsLn)
 	defer events.Close()
@@ -399,6 +455,8 @@ func serve(args []string) int {
 	go func() { defer close(jobsDone); scheduler.Run(ctx) }()
 	defer func() { stop(); <-jobsDone }()
 	go a.SampleServer(ctx)
+	go tel.Ensure(ctx)
+	go tel.FollowLogs(ctx)
 	go dbs.Run(ctx)
 	if externalDB {
 		if ln, err := net.Listen("tcp", *pgAddr); err != nil {

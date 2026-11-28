@@ -67,6 +67,12 @@ type Caddy struct {
 	// Events is pierd's listener for /_pier/event, host:port; every app's
 	// address sends that path there, saying which deployment it came from.
 	Events string
+	// Traces says whether Caddy starts a trace for every request to a
+	// server app: it passes traceparent on, so the app's spans join it,
+	// and writes the trace and span IDs into the access log, where pierd
+	// reads them to send the request's own span. Caddy exports nothing
+	// itself (OTEL_TRACES_EXPORTER=none).
+	Traces func() bool
 	// Certify names hosts with no site that still need a certificate in
 	// storage: the public Postgres port's.
 	Certify   []string
@@ -124,20 +130,24 @@ func (c Caddy) Config(routes []Route) ([]byte, error) {
 				h["headers"] = map[string]any{"response": map[string]any{"set": map[string][]string{"X-Pier-Deployment": {r.DeploymentID}}}}
 			}
 		}
+		handle := []any{h}
+		if c.Traces != nil && c.Traces() && r.DeploymentID != "" && r.Redirect == "" && !r.Unavailable && (r.Upstream != "" || r.Wake != "") {
+			handle = []any{map[string]any{"handler": "tracing", "span": "{http.request.method} {http.request.uri.path}"}, h}
+		}
 		if c.Events != "" && r.DeploymentID != "" && r.Redirect == "" {
-			h = map[string]any{"handler": "subroute", "routes": []any{
+			handle = []any{map[string]any{"handler": "subroute", "routes": []any{
 				map[string]any{
 					"match": []any{map[string]any{"path": []string{EventPath}}},
 					"handle": []any{map[string]any{"handler": "reverse_proxy", "upstreams": []any{map[string]any{"dial": c.Events}},
 						"headers": map[string]any{"request": map[string]any{"set": map[string][]string{EventHeader: {r.DeploymentID}}}}}},
 					"terminal": true,
 				},
-				map[string]any{"handle": []any{h}},
-			}}
+				map[string]any{"handle": handle},
+			}}}
 		}
 		handlers = append(handlers, map[string]any{
 			"match":    []any{map[string]any{"host": []string{r.Host}}},
-			"handle":   []any{h},
+			"handle":   handle,
 			"terminal": true,
 		})
 	}

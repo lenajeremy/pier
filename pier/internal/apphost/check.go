@@ -2,6 +2,8 @@ package apphost
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
@@ -95,6 +97,7 @@ func (h *Host) Check(ctx context.Context, name string, p Probe) (CheckResult, er
 		return res, err
 	}
 	req.Header.Set("User-Agent", "Pier-Health-Check")
+	req.Header.Set("Traceparent", unsampled())
 	resp, err := healthClient.Do(req)
 	if err != nil {
 		var nerr net.Error
@@ -142,4 +145,12 @@ func cause(err error) string {
 		err = oerr.Err
 	}
 	return err.Error()
+}
+
+// unsampled is a W3C traceparent that says not to record: an app's
+// OpenTelemetry SDK then keeps Pier's health checks out of its traces.
+func unsampled() string {
+	var b [24]byte
+	rand.Read(b[:])
+	return "00-" + hex.EncodeToString(b[:16]) + "-" + hex.EncodeToString(b[16:]) + "-00"
 }

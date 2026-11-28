@@ -54,6 +54,7 @@ func (a *API) routes() []route {
 		{"GET /healthz", public, "", func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "ok\n") }},
 		{"POST /api/session", public, "", a.signIn},
 		{"POST /api/events", public, "", a.sendEvents},
+		{"POST /otlp/v1/{signal}", public, "", a.receiveTelemetry},
 		{"POST /api/cli/login", public, "", a.cliStart},
 		{"POST /api/cli/login/poll", public, "", a.cliPoll},
 		{"POST /api/invites/lookup", public, "", a.lookupInvite},
@@ -114,6 +115,7 @@ func (a *API) routes() []route {
 		{"GET /api/members", viewer, "", a.members},
 		{"GET /api/server", viewer, "", a.health},
 		{"GET /api/server/history", viewer, "", a.history},
+		{"GET /api/server/telemetry", viewer, "", a.telemetryStatus},
 		{"GET /api/settings", viewer, "", a.serverSettings},
 		// Checking the server's DNS only looks the addresses up.
 		{"POST /api/settings/dns", viewer, "", a.checkAddresses},
@@ -184,6 +186,7 @@ func (a *API) routes() []route {
 		// The server itself, for the owner alone.
 		{"PUT /api/settings", owner, "change the server's addresses", a.serverSettings},
 		{"POST /api/server/cleanup/{kind}", owner, "clean up the server", a.cleanup},
+		{"PUT /api/server/telemetry", owner, "turn traces, metrics and logs on or off", a.setTelemetry},
 		{"GET /api/server/upgrade", owner, "see server updates", a.upgradeInfo},
 		{"POST /api/server/upgrade", owner, "update the server", a.requestUpgrade},
 		{"POST /api/github/manifest", owner, "connect a GitHub App", a.ghManifest},

@@ -122,6 +122,24 @@ digits and _ . : / -; up to 20 properties of text, numbers or true/false;
 user (optional) ties server events to one person for funnels. Events are
 kept 90 days.
 
+## Traces, metrics and app logs
+
+When the server's owner turns them on (Server in the dashboard), every
+deploy gets the standard OpenTelemetry variables, so any OpenTelemetry SDK
+sends with no setup: OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_EXPORTER_OTLP_HEADERS
+(the token), OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf, OTEL_SERVICE_NAME
+(the project) and OTEL_RESOURCE_ATTRIBUTES (the environment). For Node:
+
+    // otel.js, run with: node --require ./otel.js server.js
+    const { NodeSDK } = require("@opentelemetry/sdk-node")
+    const { HttpInstrumentation } = require("@opentelemetry/instrumentation-http")
+    new NodeSDK({ instrumentations: [new HttpInstrumentation()] }).start()
+
+Pier starts a trace for every request to a server app and passes it on in
+the traceparent header, so the app's spans join it. What an app prints is
+kept as its logs; a JSON line with trace_id (or traceId, trace) is linked to
+that trace, and level is read from level or severity. Kept 14 days.
+
 ## Jobs
 
     pier jobs                 # scheduled jobs and their last runs

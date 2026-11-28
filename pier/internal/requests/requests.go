@@ -73,6 +73,12 @@ type Line struct {
 	Device   string `json:"device,omitempty"`
 	Referrer string `json:"referrer,omitempty"`
 	Country  string `json:"country,omitempty"`
+	// Trace is the trace Caddy started for the request, when traces are
+	// on; Span is Caddy's span in it, which pierd sends but doesn't keep.
+	Trace string `json:"trace,omitempty"`
+	Span  string `json:"-"`
+	// Began is when the request came in, to the microsecond Caddy logs.
+	Began time.Time `json:"-"`
 }
 
 // columns added after the first release; Open adds any an older database
@@ -81,13 +87,14 @@ var columns = []struct{ name, def string }{
 	{"host", "TEXT NOT NULL DEFAULT ''"}, {"env", "TEXT NOT NULL DEFAULT ''"}, {"visitor", "INTEGER NOT NULL DEFAULT 0"},
 	{"page", "INTEGER NOT NULL DEFAULT 0"}, {"bot", "TEXT NOT NULL DEFAULT ''"}, {"browser", "TEXT NOT NULL DEFAULT ''"},
 	{"device", "TEXT NOT NULL DEFAULT ''"}, {"referrer", "TEXT NOT NULL DEFAULT ''"}, {"country", "TEXT NOT NULL DEFAULT ''"},
+	{"trace", "TEXT NOT NULL DEFAULT ''"},
 }
 
-const lineCols = `id, deployment, ts, method, path, status, ms, bytes, host, env, page, bot, browser, device, referrer, country`
+const lineCols = `id, deployment, ts, method, path, status, ms, bytes, host, env, page, bot, browser, device, referrer, country, trace`
 
 func scanLine(row interface{ Scan(...any) error }) (Line, error) {
 	var r Line
-	err := row.Scan(&r.ID, &r.Deployment, &r.At, &r.Method, &r.Path, &r.Status, &r.MS, &r.Bytes, &r.Host, &r.Env, &r.Page, &r.Bot, &r.Browser, &r.Device, &r.Referrer, &r.Country)
+	err := row.Scan(&r.ID, &r.Deployment, &r.At, &r.Method, &r.Path, &r.Status, &r.MS, &r.Bytes, &r.Host, &r.Env, &r.Page, &r.Bot, &r.Browser, &r.Device, &r.Referrer, &r.Country, &r.Trace)
 	return r, err
 }
 
@@ -100,6 +107,9 @@ type Log struct {
 	// Target says whether a deployment was built for production or a
 	// preview; nil leaves a request's environment empty.
 	Target func(deployment string) string
+	// Traced gets every written batch's requests that have a trace, to
+	// send as spans. It runs on the writer, so it mustn't wait.
+	Traced func([]Line)
 
 	mu            sync.Mutex
 	pending       []Line
@@ -171,6 +181,8 @@ type entry struct {
 	Size        int64               `json:"size"`
 	Status      int                 `json:"status"`
 	RespHeaders map[string][]string `json:"resp_headers"`
+	TraceID     string              `json:"traceID"`
+	SpanID      string              `json:"spanID"`
 }
 
 // parse turns one access log line into a request, or false for requests
@@ -212,6 +224,11 @@ func (l *Log) parse(raw []byte) (Line, bool) {
 		Project: project, Deployment: dep, At: at, Method: e.Request.Method,
 		Path: path, Status: e.Status, MS: e.Duration * 1000, Bytes: e.Size,
 		Host: hostOnly(e.Request.Host), Page: v.Page, Bot: v.Bot, Browser: v.Browser, Device: v.Device, Referrer: v.Referrer, Country: v.Country,
+	}
+	if isHex(e.TraceID, 32) && isHex(e.SpanID, 16) {
+		line.Trace, line.Span = e.TraceID, e.SpanID
+		// Caddy logs when the request finished.
+		line.Began = time.UnixMicro(int64((e.TS - e.Duration) * 1e6))
 	}
 	if v.Bot == "" && l.salts != nil {
 		line.Visitor = visitor(l.salts.get(time.UnixMilli(at)), ip, agent)
@@ -337,9 +354,9 @@ func (l *Log) Flush(ctx context.Context) error {
 	defer tx.Rollback()
 	for _, r := range batch {
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO requests(project, deployment, ts, method, path, status, ms, bytes, host, env, visitor, page, bot, browser, device, referrer, country)
-			VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			r.Project, r.Deployment, r.At, r.Method, r.Path, r.Status, r.MS, r.Bytes, r.Host, r.Env, r.Visitor, r.Page, r.Bot, r.Browser, r.Device, r.Referrer, r.Country); err != nil {
+			`INSERT INTO requests(project, deployment, ts, method, path, status, ms, bytes, host, env, visitor, page, bot, browser, device, referrer, country, trace)
+			VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			r.Project, r.Deployment, r.At, r.Method, r.Path, r.Status, r.MS, r.Bytes, r.Host, r.Env, r.Visitor, r.Page, r.Bot, r.Browser, r.Device, r.Referrer, r.Country, r.Trace); err != nil {
 			requeue()
 			return err
 		}
@@ -365,6 +382,17 @@ func (l *Log) Flush(ctx context.Context) error {
 	if err := tx.Commit(); err != nil {
 		requeue()
 		return err
+	}
+	if l.Traced != nil {
+		var traced []Line
+		for _, r := range batch {
+			if r.Trace != "" {
+				traced = append(traced, r)
+			}
+		}
+		if len(traced) > 0 {
+			l.Traced(traced)
+		}
 	}
 	l.mu.Lock()
 	close(l.changed)
@@ -733,4 +761,18 @@ func (l *Log) Values(ctx context.Context, project, field string, f Filter, top i
 		}
 	}
 	return out, rest, rows.Err()
+}
+
+// isHex reports whether s is n lowercase hex digits and not all zeros, as
+// a trace or span ID is.
+func isHex(s string, n int) bool {
+	if len(s) != n || strings.Trim(s, "0") == "" {
+		return false
+	}
+	for _, c := range s {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
 }

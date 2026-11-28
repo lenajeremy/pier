@@ -293,9 +293,75 @@ export function Server({ version: pierd }: { version?: string }) {
               )
             })}
           </section>
+          <Telemetry owner={owner} />
         </>
       )}
     </main>
+  )
+}
+
+type TelemetryState = {
+  available: boolean
+  doing?: '' | 'starting' | 'stopping'
+  status?: { on: boolean; retention_days: number; servers: { name: string; image: string; state: { state: string; memory_bytes?: number } }[] }
+}
+const keeps: Record<string, string> = { tempo: 'Keeps traces.', loki: 'Keeps app logs.', prometheus: 'Keeps metrics.' }
+
+// Telemetry turns on the servers that keep apps' traces, metrics and logs.
+function Telemetry({ owner }: { owner: boolean }) {
+  const t = useData<TelemetryState>('/api/server/telemetry', (d) => !!d.doing, 2000)
+  const d = t.data
+  if (!d?.available || !d.status) return null
+  const on = d.status.on
+  const doing = d.doing
+  const change = async () => {
+    if (on && !(await confirm({ title: 'Turn off traces, metrics and app logs?', body: 'Apps stop sending them on their next deploy. What was kept stays, and comes back if you turn them on again.', action: 'Turn off' }))) return
+    try {
+      await api('/api/server/telemetry', { method: 'PUT', body: JSON.stringify({ on: !on }) })
+      t.reload()
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Couldn't change it", { tone: 'failed' })
+    }
+  }
+  return (
+    <section className="panel">
+      <div className="panel-head">
+        <h2 className="t-small t-strong">Traces, metrics and app logs</h2>
+        <span className="end">
+          <Gate allow={owner} reason={onlyOwner('turn these on or off')}>
+            <button className={'btn medium ' + (on ? 'quiet' : 'primary')} disabled={!!doing} onClick={change}>
+              {doing === 'starting' ? 'Starting' : doing === 'stopping' ? 'Stopping' : on ? 'Turn off' : 'Turn on'}
+            </button>
+          </Gate>
+        </span>
+      </div>
+      {!on && doing !== 'starting' ? (
+        <div className="service-row">
+          <div className="what">
+            <span className="t-note">
+              Pier runs Grafana's Tempo, Loki and Prometheus on this server and every deploy sends its OpenTelemetry to them, each project kept apart. They use up to 1.3 GB of memory and keep {d.status.retention_days} days.
+            </span>
+          </div>
+        </div>
+      ) : (
+        d.status.servers.map((s) => (
+          <div className="service-row" key={s.name}>
+            <i className={'swatch ' + (s.state.state === 'running' ? 'ready' : doing ? 'building' : 'failed')} />
+            <div className="what">
+              <span className="t-small">{s.name[0].toUpperCase() + s.name.slice(1)}</span>
+              <span className="t-note">
+                {keeps[s.name]} <span className="mono">{s.image}</span>
+              </span>
+            </div>
+            <span className="service-end">
+              <span className="t-caption t-muted">
+                {s.state.state === 'running' ? `Running${s.state.memory_bytes ? `, ${size(s.state.memory_bytes)}` : ''}` : doing === 'starting' ? 'Starting' : 'Not running'}
+              </span>
+            </span>
+          </div>
+        ))
+      )}
+    </section>
   )
 }
 

@@ -220,6 +220,10 @@ A project's Analytics tab reads the requests Pier already logs. Overview counts 
 
 Apps send their own events, shown under Events with a breakdown by any property and a funnel of steps. Every deploy gets `PIER_EVENTS_URL` and `PIER_EVENTS_TOKEN` for sending from the server; a page posts to `/_pier/event` on its own address, which Caddy hands to pierd with the deployment it came from. Events are kept 90 days and limited to 6,000 a minute per project. `pier docs` has the details.
 
+### Traces, metrics and app logs
+
+The owner turns these on in Server. pierd then runs Grafana's Tempo, Loki and Prometheus as containers (pinned images, up to 1.3 GB of memory, 14 days kept), with their ports on loopback only. Every deploy gets the standard `OTEL_*` variables pointing at pierd's `/otlp/v1/{traces,metrics,logs}` with a token for its project and environment; pierd writes the project onto every resource, whatever the app claims, and hands the data on, with each project a tenant of Tempo and Loki and a label in Prometheus. Caddy starts a trace for every request to a server app (its exporter is off; pierd sends Caddy's span itself from the access log, which also keeps the trace ID beside the request), and pierd follows every app container's output into Loki. Turning them off stops the containers and keeps their data. The code is in `internal/telemetry`.
+
 ## For coding agents
 
 `pier docs` prints a short guide to everything an agent needs, with no network: deploying (`pier deploy --project NAME --create`), variables (`pier env set`), Postgres (`pier db`), buckets (`pier storage`), the variables apps get, and code for using them. It's `cmd/pier/guide.md`. Every command works without a terminal: output is plain when it isn't one, and deleting needs `--yes`. A machine signs in with `PIER_SERVER` and `PIER_TOKEN`.

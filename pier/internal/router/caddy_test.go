@@ -364,3 +364,28 @@ func TestEventsGoToPierd(t *testing.T) {
 		t.Fatalf("the deployment's events don't reach pierd:\n%s", s)
 	}
 }
+
+func TestTracesStartAtCaddy(t *testing.T) {
+	t.Setenv("OTEL_TRACES_EXPORTER", "none")
+	on := false
+	c := Caddy{Listen: []string{":8088"}, Storage: t.TempDir(), Events: "127.0.0.1:41999", Traces: func() bool { return on }}
+	routes := []Route{
+		{Host: "api.pier.localhost", Upstream: "127.0.0.1:41001", DeploymentID: "d00002"},
+		{Host: "shop.pier.localhost", Root: t.TempDir(), DeploymentID: "d00001"},
+		{Host: "pier.localhost", Upstream: "127.0.0.1:41000"},
+	}
+	count := func() int {
+		raw := mustConfig(t, c, routes)
+		if err := validate(raw); err != nil {
+			t.Fatal(err)
+		}
+		return strings.Count(string(raw), `"handler": "tracing"`)
+	}
+	if n := count(); n != 0 {
+		t.Fatalf("traced %d routes while traces are off", n)
+	}
+	on = true
+	if n := count(); n != 1 {
+		t.Fatalf("traced %d routes; only the server app should be", n)
+	}
+}
